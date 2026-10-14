@@ -66,7 +66,9 @@ data class PairedDevice(
     val pubB64: String,
     val originIp: String,
     val originPort: Int,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** The user read the 6-digit safety code aloud on both devices and confirmed it matches. */
+    val verified: Boolean = false
 )
 
 data class IncomingPairRequest(

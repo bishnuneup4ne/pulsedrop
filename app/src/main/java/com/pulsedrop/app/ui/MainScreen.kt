@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
@@ -93,8 +94,10 @@ fun MainScreen(viewModel: MainViewModel) {
     val callState by viewModel.callState.collectAsState()
     val incomingCall by viewModel.incomingCall.collectAsState()
     val remoteFrame by viewModel.remoteFrame.collectAsState()
+    val remoteFrames by viewModel.remoteFrames.collectAsState()
     val chatGroups by viewModel.groups.collectAsState()
     val webCall by viewModel.webCall.collectAsState()
+    val webClients by viewModel.webClients.collectAsState()
     val lastReadAt by viewModel.lastReadAt.collectAsState()
     val colorScheme = MaterialTheme.colorScheme
 
@@ -105,6 +108,7 @@ fun MainScreen(viewModel: MainViewModel) {
     var showSecurityDialog by remember { mutableStateOf(false) }
     var selectedThreadId by remember { mutableStateOf<String?>(null) }
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showShareConsent by remember { mutableStateOf(false) }
 
     var pendingChatAttachThread by remember { mutableStateOf<String?>(null) }
     val chatAttachLauncher = rememberLauncherForActivityResult(
@@ -144,6 +148,8 @@ fun MainScreen(viewModel: MainViewModel) {
         val data = result.data
         if (result.resultCode == android.app.Activity.RESULT_OK && data != null) {
             viewModel.startScreenShare(result.resultCode, data)
+        } else {
+            viewModel.cancelScreenShare()
         }
     }
 
@@ -167,9 +173,10 @@ fun MainScreen(viewModel: MainViewModel) {
     fun requestScreenShare() {
         if (callState.sharing) {
             viewModel.stopScreenShare()
+        } else if (!callState.connected) {
+            viewModel.toastCallMessage("Connect the call before sharing your screen")
         } else {
-            val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-            if (mgr != null) projectionLauncher.launch(mgr.createScreenCaptureIntent())
+            showShareConsent = true
         }
     }
 
@@ -197,7 +204,7 @@ fun MainScreen(viewModel: MainViewModel) {
     }
 
     // Merge broadcast + scanned peers, dedupe by ip:port, prefer the PulseDrop app entry.
-    val displayPeers = remember(nearbyPeers, scannedPeers) {
+    val displayPeers = remember(nearbyPeers, scannedPeers, webClients) {
         val combined = mutableListOf<PeerDevice>()
         val seen = HashMap<String, Int>()
         fun key(p: PeerDevice) = "${p.ip}:${p.port}"
@@ -212,6 +219,25 @@ fun MainScreen(viewModel: MainViewModel) {
             if (idx == null) { seen[k] = combined.size; combined.add(p) }
             else if (p.appKind == "LocalDrop" && combined[idx].appKind != "LocalDrop") {
                 combined[idx] = p
+            }
+        }
+        // A desktop with the web page open is a device too — it just cannot be dialled back.
+        webClients.forEach { c ->
+            if (combined.any { it.ip == c.ip && it.appKind == "LocalDrop" }) return@forEach
+            val k = "${c.ip}:0"
+            if (!seen.containsKey(k)) {
+                seen[k] = combined.size
+                combined.add(
+                    PeerDevice(
+                        id = "web:${c.ip}",
+                        name = c.name,
+                        ip = c.ip,
+                        port = 0,
+                        requiresPin = false,
+                        lastSeen = c.lastSeen,
+                        appKind = "Browser"
+                    )
+                )
             }
         }
         combined
@@ -282,7 +308,12 @@ fun MainScreen(viewModel: MainViewModel) {
                         pendingOutgoing = pendingOutgoingPair,
                         scanning = radarScanning,
                         onSendFilesToPeer = { peer, uris, peerPin ->
-                            viewModel.sendFilesToPeer(peer, uris, peerPin) { _, _ -> }
+                            if (peer.appKind == "Browser") {
+                                // No listener on a browser tab: host the file for that address alone.
+                                uris.forEach { uri -> viewModel.sendFileToBrowser(peer.ip, uri) }
+                            } else {
+                                viewModel.sendFilesToPeer(peer, uris, peerPin) { _, _ -> }
+                            }
                         },
                         onConnectToAddress = { address -> viewModel.connectToPeer(address) },
                         onDisconnectPeer = { viewModel.disconnectPeer() },
@@ -290,7 +321,9 @@ fun MainScreen(viewModel: MainViewModel) {
                         onCancelPairRequest = { viewModel.cancelPairingRequest() },
                         onAcceptPair = { req -> viewModel.acceptPairing(req) },
                         onDeclinePair = { req -> viewModel.declinePairing(req) },
-                        onUnpair = { pid -> viewModel.unpair(pid) }
+                        onUnpair = { pid -> viewModel.unpair(pid) },
+                        safetyCodeOf = { pid -> viewModel.pairSafetyCode(pid) },
+                        onToggleVerified = { pid, verified -> viewModel.setPairVerified(pid, verified) }
                     )
 
                     PulseNavTab.CHAT -> ChatScreen(
@@ -305,6 +338,12 @@ fun MainScreen(viewModel: MainViewModel) {
                         onSelectThread = { selectedThreadId = it },
                         onStartCall = { pid, video ->
                             withCallPermissions(video) { viewModel.startCall(pid, video) }
+                        },
+                        onStartGroupCall = { pids, video ->
+                            withCallPermissions(video) { viewModel.startGroupCall(pids, video) }
+                        },
+                        onStartBrowserCall = { ip, name, video ->
+                            viewModel.callWebClient(ip, name, video)
                         },
                         onSend = { text, threadId ->
                             viewModel.sendClipMessage(text, threadId?.takeIf { it != "room" })
@@ -343,25 +382,37 @@ fun MainScreen(viewModel: MainViewModel) {
             CallOverlay(
                 state = callState,
                 remoteFrame = remoteFrame,
+                remoteFrames = remoteFrames,
                 onToggleMute = { viewModel.toggleCallMute() },
-                onToggleCamera = { viewModel.toggleCallCamera() },
+                onToggleCamera = {
+                    // Turning the camera on mid-call needs the same permission as a video call.
+                    val missing = if (callState.cameraOn) emptyList() else missingCallPermissions(true)
+                    if (missing.isEmpty()) viewModel.toggleCallCamera()
+                    else {
+                        pendingCallAction = { viewModel.toggleCallCamera() }
+                        callPermissionLauncher.launch(missing.toTypedArray())
+                    }
+                },
                 onToggleScreenShare = { requestScreenShare() },
-                onHangUp = { viewModel.hangUpCall() }
+                onHangUp = { viewModel.hangUpCall() },
+                onAttachPreview = { viewModel.attachCallPreview(it) }
             )
         }
 
         val browserCall = webCall
         if (browserCall != null && !callState.active) {
-            BackHandler {
-                if (browserCall.state == "accepted") viewModel.endWebCall()
+            val leaveBrowserCall: () -> Unit = {
+                // Cancelling our own dial must clear the shared record, not "decline" it.
+                if (browserCall.outgoing || browserCall.state == "accepted") viewModel.endWebCall()
                 else viewModel.answerWebCall(false)
             }
+            BackHandler(onBack = leaveBrowserCall)
             WebCallScreen(
                 call = browserCall,
                 onAccept = {
                     withCallPermissions(browserCall.video) { viewModel.answerWebCall(true) }
                 },
-                onDecline = { viewModel.answerWebCall(false) },
+                onDecline = leaveBrowserCall,
                 onHangUp = { viewModel.endWebCall() }
             )
         }
@@ -378,11 +429,21 @@ fun MainScreen(viewModel: MainViewModel) {
                     tint = colorScheme.primary
                 )
             },
-            title = { Text("Incoming ${if (incoming.video) "video" else "voice"} call") },
+            title = {
+                Text(
+                    if (incoming.confId.isNotBlank()) "Incoming group call"
+                    else "Incoming ${if (incoming.video) "video" else "voice"} call"
+                )
+            },
             text = {
                 Text(
-                    "${incoming.name} is calling you over your encrypted pairing. " +
-                            "Accept to connect audio${if (incoming.video) ", video and screen sharing" else ""}."
+                    if (incoming.confId.isNotBlank()) {
+                        "${incoming.name} has started a group call. Everyone you have both paired with " +
+                                "is being invited; the call bridges through their device."
+                    } else {
+                        "${incoming.name} is calling you over your encrypted pairing. " +
+                                "Accept to connect audio${if (incoming.video) ", video and screen sharing" else ""}."
+                    }
                 )
             },
             confirmButton = {
@@ -402,6 +463,52 @@ fun MainScreen(viewModel: MainViewModel) {
                     modifier = Modifier.testTag("decline_call_btn")
                 ) {
                     Text("Decline", color = colorScheme.error)
+                }
+            }
+        )
+    }
+
+    if (showShareConsent) {
+        AlertDialog(
+            onDismissRequest = { showShareConsent = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.ScreenShare,
+                    contentDescription = null,
+                    tint = colorScheme.primary
+                )
+            },
+            title = { Text("Share your screen with ${callState.peerName.ifBlank { "this device" }}?") },
+            text = {
+                Text(
+                    "Everything on your screen goes to the other side while the call is up - " +
+                            "including messages, photos and codes that pop up. Android will ask you to " +
+                            "confirm once more. You can stop at any time with the same button."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showShareConsent = false
+                        val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+                            as? MediaProjectionManager
+                        if (mgr != null) {
+                            viewModel.armScreenShare()
+                            projectionLauncher.launch(mgr.createScreenCaptureIntent())
+                        } else viewModel.toastCallMessage("Screen capture is not available on this device")
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.testTag("confirm_screen_share_btn")
+                ) {
+                    Text("Share screen")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showShareConsent = false },
+                    modifier = Modifier.testTag("cancel_screen_share_btn")
+                ) {
+                    Text("Cancel")
                 }
             }
         )

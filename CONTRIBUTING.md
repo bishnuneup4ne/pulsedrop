@@ -85,4 +85,5 @@ it as a versioned change that still accepts the old value.
   commits do not need to be tidy.
 
 By submitting a pull request you confirm that you have the right to contribute the code under
-the project's licence, and you agree that it is licensed under GPL-3.0-or-later.
+the project's licence, and you agree that it is licensed under the PolyForm Noncommercial
+License 1.0.0.

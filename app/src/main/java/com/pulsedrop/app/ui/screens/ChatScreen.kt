@@ -76,6 +76,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -113,6 +114,8 @@ fun ChatScreen(
     selectedThreadId: String?,
     onSelectThread: (String?) -> Unit,
     onStartCall: (String, Boolean) -> Unit,
+    onStartGroupCall: (List<String>, Boolean) -> Unit,
+    onStartBrowserCall: (String, String, Boolean) -> Unit,
     onSend: (String, String?) -> Unit,
     onTyping: (Boolean) -> Unit,
     onAttach: (String?) -> Unit,
@@ -139,7 +142,17 @@ fun ChatScreen(
             myName = myName,
             typingUsers = typingUsers,
             onBack = { onSelectThread(null) },
-            onStartCall = { video -> active.pid?.let { onStartCall(it, video) } },
+            onStartCall = { audience, video ->
+                val pid = active.pid
+                val ip = active.browserIp
+                when {
+                    pid != null -> onStartCall(pid, video)
+                    audience == "browser" && ip != null ->
+                        onStartBrowserCall(ip, active.browserName ?: active.title, video)
+                    active.memberPids.isNotEmpty() -> onStartGroupCall(active.memberPids, video)
+                    ip != null -> onStartBrowserCall(ip, active.browserName ?: active.title, video)
+                }
+            },
             onSend = { text -> onSend(text, active.id) },
             onAttach = { onAttach(active.id) },
             onTyping = onTyping,
@@ -183,7 +196,12 @@ private data class ChatThread(
     val encrypted: Boolean,
     val isGroup: Boolean,
     val memberNames: List<String>,
+    val memberPids: List<String>,
     val pid: String?,
+    /** Set when the other end is a browser tab rather than a PulseDrop app. */
+    val browserIp: String?,
+    /** Display name for [browserIp]; the room borrows its liveliest tab as a dial target. */
+    val browserName: String? = null,
     val messages: List<ClipMessage>,
     val unread: Int
 ) {
@@ -205,15 +223,55 @@ private fun buildThreads(
 
     val out = mutableListOf<ChatThread>()
 
+    // Browser tabs first: the room borrows the liveliest one as its dial-a-browser target.
+    val browserThreads = messages.asSequence()
+        .mapNotNull { it.threadId }
+        .filter { it.startsWith("ip:") }
+        .distinct()
+        .map { tid ->
+            val ip = tid.removePrefix("ip:")
+            val list = messages.filter { it.threadId == tid }
+            val named = lanPeers.firstOrNull { it.ip == ip }?.name
+                ?: list.firstOrNull { it.sender != myName }?.sender
+            // A paired device already owns its private thread; its browser tab is not a second chat.
+            if (named != null && paired.any { it.name == named }) null
+            else {
+                val loopback = ip == "127.0.0.1" || ip == "::1" || ip == "::ffff:127.0.0.1"
+                ChatThread(
+                    id = tid,
+                    title = named ?: if (loopback) "Browser tab" else ip,
+                    hint = if (loopback) "Web client on this device" else "Web client \u00b7 direct message",
+                    encrypted = false,
+                    isGroup = false,
+                    memberNames = emptyList(),
+                    memberPids = emptyList(),
+                    pid = null,
+                    browserIp = ip,
+                    messages = list,
+                    unread = unreadFor(tid, list)
+                )
+            }
+        }
+        .filterNotNull()
+        .toList()
+
     val room = messages.filter { it.threadId == null }
+    val dialable = browserThreads.maxByOrNull { it.lastActivity }
+    // A tab that only ever posted to the room owns no "ip:" thread of its own, so the room
+    // falls back to any browser the server is currently seeing. Without this the phone has
+    // nobody to dial and a web call can only ever go one way.
+    val webPeer = lanPeers.firstOrNull { it.appKind == "Browser" }
     out += ChatThread(
         id = ROOM_ID,
         title = "Everyone",
-        hint = if (room.isEmpty()) "Open LAN room · say hi" else "Open LAN room",
+        hint = if (room.isEmpty()) "Open LAN room \u00b7 say hi" else "Open LAN room",
         encrypted = false,
         isGroup = false,
         memberNames = emptyList(),
+        memberPids = paired.map { it.pid },
         pid = null,
+        browserIp = dialable?.browserIp ?: webPeer?.ip,
+        browserName = dialable?.title ?: webPeer?.name,
         messages = room,
         unread = unreadFor(null, room)
     )
@@ -225,11 +283,13 @@ private fun buildThreads(
         out += ChatThread(
             id = tid,
             title = g.name,
-            hint = "${names.size + 1} members · encrypted",
+            hint = "${names.size + 1} members \u00b7 encrypted",
             encrypted = true,
             isGroup = true,
             memberNames = listOf(myName) + names,
+            memberPids = g.memberPids,
             pid = null,
+            browserIp = null,
             messages = list,
             unread = unreadFor(tid, list)
         )
@@ -241,37 +301,19 @@ private fun buildThreads(
         out += ChatThread(
             id = tid,
             title = p.name,
-            hint = "Private · only these two devices",
+            hint = "Private \u00b7 only these two devices",
             encrypted = true,
             isGroup = false,
             memberNames = listOf(myName, p.name),
+            memberPids = listOf(p.pid),
             pid = p.pid,
+            browserIp = null,
             messages = list,
             unread = unreadFor(tid, list)
         )
     }
 
-    messages.asSequence()
-        .mapNotNull { it.threadId }
-        .filter { it.startsWith("ip:") }
-        .distinct()
-        .forEach { tid ->
-            val ip = tid.removePrefix("ip:")
-            val list = messages.filter { it.threadId == tid }
-            val named = lanPeers.firstOrNull { it.ip == ip }?.name
-                ?: list.firstOrNull { it.sender != myName }?.sender
-            out += ChatThread(
-                id = tid,
-                title = named ?: ip,
-                hint = if (named != null) "Direct · $ip" else "Direct message to $ip",
-                encrypted = false,
-                isGroup = false,
-                memberNames = emptyList(),
-                pid = null,
-                messages = list,
-                unread = unreadFor(tid, list)
-            )
-        }
+    out += browserThreads
 
     return out.sortedWith(
         compareByDescending<ChatThread> { it.lastActivity }
@@ -297,10 +339,16 @@ private fun InboxView(
     var showGroupDialog by remember { mutableStateOf(false) }
     var showIpDialog by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    var showPrivateThreads by remember { mutableStateOf(false) }
 
-    val visible = remember(threads, query) {
-        if (query.isBlank()) threads
-        else threads.filter {
+    // The inbox is for direct conversations: the open room and one-to-one IP threads.
+    // Private pair and group channels stay reachable through the filter toggle.
+    val visible = remember(threads, query, showPrivateThreads) {
+        val scoped = if (showPrivateThreads) threads else threads.filter {
+            it.id == ROOM_ID || it.id?.startsWith("ip:") == true
+        }
+        if (query.isBlank()) scoped
+        else scoped.filter {
             it.title.contains(query.trim(), ignoreCase = true) ||
                 it.messages.lastOrNull()?.text.orEmpty().contains(query.trim(), ignoreCase = true)
         }
@@ -377,6 +425,31 @@ private fun InboxView(
                 .testTag("chat_search")
         )
 
+        val privateCount = threads.count {
+            it.id != null && !it.id.startsWith("ip:") && it.id != ROOM_ID
+        }
+        if (privateCount > 0) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ThreadFilterChip(
+                    label = "Direct",
+                    selected = !showPrivateThreads,
+                    onClick = { showPrivateThreads = false }
+                )
+                ThreadFilterChip(
+                    label = "Private & groups ($privateCount)",
+                    selected = showPrivateThreads,
+                    onClick = { showPrivateThreads = true }
+                )
+            }
+        }
+
         if (visible.isEmpty()) {
             EmptyState(
                 icon = {
@@ -424,12 +497,7 @@ private fun InboxView(
                         .padding(horizontal = 20.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = null,
-                        tint = colorScheme.primary,
-                        modifier = Modifier.size(15.dp)
-                    )
+                    ThreadAvatar(name = p.name, size = 26.dp)
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = "Message ${p.name} privately",
@@ -462,6 +530,27 @@ private fun InboxView(
                 showIpDialog = false
                 onOpen("ip:$ip")
             }
+        )
+    }
+}
+
+@Composable
+private fun ThreadFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val colorScheme = MaterialTheme.colorScheme
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (selected) colorScheme.secondaryContainer else colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) colorScheme.onSecondaryContainer else colorScheme.onSurfaceVariant
         )
     }
 }
@@ -508,15 +597,6 @@ private fun ThreadRow(
                     color = colorScheme.onSurface,
                     modifier = Modifier.weight(1f, fill = false)
                 )
-                if (thread.encrypted) {
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Encrypted",
-                        tint = colorScheme.primary,
-                        modifier = Modifier.size(13.dp)
-                    )
-                }
                 if (last != null) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -677,7 +757,8 @@ private fun IpDialog(
                                 Column {
                                     Text(peer.name, style = MaterialTheme.typography.bodyMedium)
                                     Text(
-                                        text = "${peer.ip}:${peer.port}",
+                                        text = if (peer.port > 0) "${peer.ip}:${peer.port}"
+                                        else "${peer.ip} · ${peer.appKind?.lowercase() ?: "browser"}, chat only",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -711,12 +792,39 @@ private fun IpDialog(
 // ------------------------------------------------------------------ conversation
 
 @Composable
+private fun HeaderCallButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    tag: String,
+    container: Color = MaterialTheme.colorScheme.secondaryContainer,
+    content: Color = MaterialTheme.colorScheme.onSecondaryContainer,
+    onClick: () -> Unit
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(42.dp)
+            .clip(CircleShape)
+            .background(container)
+            .testTag(tag)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            tint = content,
+            modifier = Modifier.size(19.dp)
+        )
+    }
+}
+
+@Composable
 private fun ConversationView(
     thread: ChatThread,
     myName: String,
     typingUsers: List<String>,
     onBack: () -> Unit,
-    onStartCall: (Boolean) -> Unit,
+    /** Dial one audience on this thread: "pair", "group" or "browser". */
+    onStartCall: (String, Boolean) -> Unit,
     onSend: (String) -> Unit,
     onAttach: () -> Unit,
     onTyping: (Boolean) -> Unit,
@@ -726,9 +834,11 @@ private fun ConversationView(
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var input by remember { mutableStateOf("") }
+    var emojiOpen by remember(thread.id) { mutableStateOf(false) }
     var lastTypingSent by remember { mutableLongStateOf(0L) }
     var previewAttachment by remember { mutableStateOf<ChatAttachment?>(null) }
     val listState = rememberLazyListState()
+    val focusManager = LocalFocusManager.current
     val rows = remember(thread.messages, myName) { layoutRows(thread.messages, myName) }
 
     previewAttachment?.let { att ->
@@ -780,39 +890,50 @@ private fun ConversationView(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            if (thread.pid != null) {
-                IconButton(
-                    onClick = { onStartCall(false) },
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(colorScheme.secondaryContainer)
-                        .testTag("call_audio_btn")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Call,
-                        contentDescription = "Voice call",
-                        tint = colorScheme.onSecondaryContainer,
-                        modifier = Modifier.size(19.dp)
-                    )
+            // Every thread with somebody on the other end gets a dial: paired devices ring as
+            // calls, browser tabs ring as web calls. The room is both at once, so it carries a
+            // pair of buttons for each audience rather than letting one hide the other.
+            val isPair = thread.pid != null
+            val dials = when {
+                isPair -> listOf(Triple("call_audio_btn", "call_video_btn", "pair"))
+                else -> buildList {
+                    if (thread.memberPids.isNotEmpty()) {
+                        add(Triple("group_call_btn", "group_video_btn", "group"))
+                    }
+                    if (thread.browserIp != null) {
+                        add(Triple("browser_call_btn", "browser_video_btn", "browser"))
+                    }
                 }
+            }
+            if (dials.isNotEmpty()) {
+                dials.forEachIndexed { index, (voiceTag, videoTag, audience) ->
+                    if (index > 0) Spacer(modifier = Modifier.width(10.dp))
+                    val tint = if (isPair) colorScheme.secondaryContainer else colorScheme.primaryContainer
+                    val content = if (isPair) colorScheme.onSecondaryContainer else colorScheme.onPrimaryContainer
+                    val whom = when (audience) {
+                        "group" -> "everyone"
+                        "browser" -> "browser"
+                        else -> ""
+                    }
+                    HeaderCallButton(
+                        icon = Icons.Default.Call,
+                        description = if (whom.isEmpty()) "Voice call" else "Call $whom",
+                        tag = voiceTag,
+                        container = tint,
+                        content = content
+                    ) { onStartCall(audience, false) }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    HeaderCallButton(
+                        icon = Icons.Default.Videocam,
+                        description = if (whom.isEmpty()) "Video call" else "Call $whom with video",
+                        tag = videoTag,
+                        container = tint,
+                        content = content
+                    ) { onStartCall(audience, true) }
+                }
+            }
+            if (onDisband != null) {
                 Spacer(modifier = Modifier.width(6.dp))
-                IconButton(
-                    onClick = { onStartCall(true) },
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(colorScheme.secondaryContainer)
-                        .testTag("call_video_btn")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Videocam,
-                        contentDescription = "Video call",
-                        tint = colorScheme.onSecondaryContainer,
-                        modifier = Modifier.size(19.dp)
-                    )
-                }
-            } else if (onDisband != null) {
                 TextButton(onClick = onDisband, modifier = Modifier.testTag("chat_delete_group_btn")) {
                     Text("Disband", color = colorScheme.error)
                 }
@@ -829,8 +950,7 @@ private fun ConversationView(
                 EmptyState(
                     icon = {
                         Icon(
-                            imageVector = if (thread.encrypted) Icons.Default.Lock
-                            else Icons.AutoMirrored.Filled.Chat,
+                            imageVector = Icons.AutoMirrored.Filled.Chat,
                             contentDescription = null,
                             tint = colorScheme.onSurfaceVariant
                         )
@@ -911,13 +1031,21 @@ private fun ConversationView(
                     onTyping(true)
                 }
             },
+            emojiOpen = emojiOpen,
+            onToggleEmoji = { emojiOpen = !emojiOpen },
             canAttach = true,
-            onAttach = onAttach,
+            onAttach = {
+                emojiOpen = false
+                focusManager.clearFocus()
+                onAttach()
+            },
             onSend = {
                 val text = input.trim()
                 if (text.isNotEmpty()) {
                     onSend(text)
                     input = ""
+                    emojiOpen = false
+                    focusManager.clearFocus()
                     onTyping(false)
                     lastTypingSent = 0L
                 }
@@ -932,12 +1060,13 @@ private fun ConversationView(
 private fun ChatComposer(
     input: String,
     onInputChange: (String) -> Unit,
+    emojiOpen: Boolean,
+    onToggleEmoji: () -> Unit,
     canAttach: Boolean,
     onAttach: () -> Unit,
     onSend: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    var emojiOpen by remember { mutableStateOf(false) }
 
     Column {
         if (emojiOpen) {
@@ -970,7 +1099,7 @@ private fun ChatComposer(
             verticalAlignment = Alignment.Bottom
         ) {
             IconButton(
-                onClick = { emojiOpen = !emojiOpen },
+                onClick = onToggleEmoji,
                 modifier = Modifier.testTag("chat_emoji_btn")
             ) {
                 Icon(
@@ -1175,23 +1304,11 @@ private fun MessageRow(
                         if (msg.text.isNotEmpty()) Spacer(modifier = Modifier.height(8.dp))
                     }
                     if (msg.text.isNotEmpty() || msg.attachment == null) {
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            Text(
-                                text = msg.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (mine) colorScheme.onPrimary else colorScheme.onSurface
-                            )
-                            if (msg.encrypted) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = "Encrypted",
-                                    tint = if (mine) colorScheme.onPrimary.copy(alpha = 0.85f)
-                                    else colorScheme.primary.copy(alpha = 0.85f),
-                                    modifier = Modifier.size(12.dp)
-                                )
-                            }
-                        }
+                        Text(
+                            text = msg.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (mine) colorScheme.onPrimary else colorScheme.onSurface
+                        )
                     }
                 }
             }

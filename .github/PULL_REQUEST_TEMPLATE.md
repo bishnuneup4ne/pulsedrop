@@ -42,6 +42,7 @@ If a protocol path is involved, state that you checked BOTH ends.
 ---
 
 By submitting this pull request I confirm I have the right to contribute this code under the
-project's licence, and I license my contributions under GPL-3.0-or-later.
+project's licence, and I license my contributions under the PolyForm Noncommercial License
+1.0.0.
 
 - [ ] I have read CONTRIBUTING.md and SECURITY.md, and I agree to the above.

@@ -30,15 +30,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.GppMaybe
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -62,7 +68,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.pulsedrop.app.model.IncomingPairRequest
@@ -91,10 +99,13 @@ fun RadarScreen(
     onAcceptPair: (IncomingPairRequest) -> Unit,
     onDeclinePair: (IncomingPairRequest) -> Unit,
     onUnpair: (String) -> Unit,
+    safetyCodeOf: (String) -> String?,
+    onToggleVerified: (String, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
+    var verifying by remember { mutableStateOf<PairedDevice?>(null) }
     var selectedPeerForSend by remember { mutableStateOf<PeerDevice?>(null) }
     var pendingUrisForPeer by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var peerRequiringPin by remember { mutableStateOf<PeerDevice?>(null) }
@@ -318,7 +329,8 @@ fun RadarScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (peer.name.contains("PC", ignoreCase = true) || peer.name.contains("Mac", ignoreCase = true))
+                                imageVector = if (peer.appKind == "Browser") Icons.Default.Language
+                                else if (peer.name.contains("PC", ignoreCase = true) || peer.name.contains("Mac", ignoreCase = true))
                                     Icons.Default.Computer
                                 else
                                     Icons.Default.Smartphone,
@@ -349,15 +361,20 @@ fun RadarScreen(
                                 }
                             }
                             Text(
-                                text = "${peer.ip}:${peer.port}",
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                text = if (peer.appKind == "Browser") peer.ip else "${peer.ip}:${peer.port}",
+                                style = MaterialTheme.typography.bodySmall,
                                 color = colorScheme.onSurfaceVariant
                             )
-                            if (peer.appKind == "LocalDrop") {
-                                Text(
+                            when (peer.appKind) {
+                                "LocalDrop" -> Text(
                                     text = "PulseDrop app",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colorScheme.primary
+                                )
+                                "Browser" -> Text(
+                                    text = "Browser session on this network",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colorScheme.secondary
                                 )
                             }
                         }
@@ -420,6 +437,11 @@ fun RadarScreen(
                                         Text("Cancel", style = MaterialTheme.typography.labelMedium)
                                     }
                                 }
+                                peer.appKind == "Browser" -> Text(
+                                    text = "Web session",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = colorScheme.onSurfaceVariant
+                                )
                                 else -> FilledTonalButton(
                                     onClick = { onPair(peer) },
                                     shape = RoundedCornerShape(12.dp),
@@ -484,8 +506,35 @@ fun RadarScreen(
                             )
                             Text(
                                 text = "Pair ${paired.pid.take(6).uppercase()} · ${paired.originIp}:${paired.originPort}",
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                style = MaterialTheme.typography.bodySmall,
                                 color = colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (paired.verified) Icons.Default.VerifiedUser
+                                    else Icons.Default.GppMaybe,
+                                    contentDescription = null,
+                                    tint = if (paired.verified) colorScheme.primary else colorScheme.error,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = if (paired.verified) "Safety code confirmed"
+                                    else "Not verified · tap to compare codes",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (paired.verified) colorScheme.primary else colorScheme.error
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = { verifying = paired },
+                            modifier = Modifier.testTag("verify_btn_${paired.pid}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Key,
+                                contentDescription = "Compare safety codes",
+                                tint = if (paired.verified) colorScheme.onSurfaceVariant else colorScheme.error,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                         IconButton(
@@ -563,34 +612,46 @@ fun RadarScreen(
                         }
                     }
 
+                    OutlinedTextField(
+                        value = manualIp,
+                        onValueChange = { manualIp = it },
+                        placeholder = { Text("192.168.1.55:8080") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Uri,
+                            imeAction = ImeAction.Go
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onGo = {
+                                val clean = manualIp.trim()
+                                if (clean.isNotBlank()) onConnectToAddress(clean)
+                                else Toast.makeText(context, "Enter an address or scan a QR", Toast.LENGTH_SHORT).show()
+                            }
+                        ),
+                        leadingIcon = { Icon(Icons.Default.Link, null, tint = colorScheme.onSurfaceVariant) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("manual_ip_input")
+                    )
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        OutlinedTextField(
-                            value = manualIp,
-                            onValueChange = { manualIp = it },
-                            placeholder = { Text("192.168.1.55 or 192.168.1.55:8080") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("manual_ip_input")
-                        )
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
                         FilledTonalButton(
                             onClick = { launchScanner() },
-                            shape = RoundedCornerShape(14.dp),
+                            shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
-                                .height(56.dp)
+                                .height(52.dp)
+                                .weight(1f)
                                 .testTag("scan_qr_btn")
                         ) {
                             Icon(Icons.Default.QrCodeScanner, "Scan QR", modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Scan QR", style = MaterialTheme.typography.labelLarge)
                         }
-
-                        Spacer(modifier = Modifier.width(8.dp))
 
                         Button(
                             onClick = {
@@ -602,9 +663,10 @@ fun RadarScreen(
                                 }
                             },
                             enabled = !peerConnecting,
-                            shape = RoundedCornerShape(14.dp),
+                            shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
-                                .height(56.dp)
+                                .height(52.dp)
+                                .weight(1f)
                                 .testTag("connect_peer_btn")
                         ) {
                             if (peerConnecting) {
@@ -665,7 +727,7 @@ fun RadarScreen(
                     )
                     Text(
                         text = "From ${incoming.myIp}:${incoming.myPort}",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        style = MaterialTheme.typography.bodySmall,
                         color = colorScheme.onSurfaceVariant
                     )
                     Card(
@@ -685,7 +747,7 @@ fun RadarScreen(
                             )
                             Text(
                                 text = incoming.safetyCode,
-                                style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Monospace),
+                                style = MaterialTheme.typography.headlineMedium,
                                 color = colorScheme.primary
                             )
                             Text(
@@ -712,6 +774,72 @@ fun RadarScreen(
                     modifier = Modifier.testTag("decline_pair_btn")
                 ) {
                     Text("Decline", color = colorScheme.error, style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        )
+    }
+
+    val verifyTarget = verifying
+    if (verifyTarget != null) {
+        val code = safetyCodeOf(verifyTarget.pid)
+        AlertDialog(
+            onDismissRequest = { verifying = null },
+            icon = {
+                Icon(
+                    imageVector = if (verifyTarget.verified) Icons.Default.VerifiedUser else Icons.Default.Key,
+                    contentDescription = null,
+                    tint = if (verifyTarget.verified) colorScheme.primary else colorScheme.error
+                )
+            },
+            title = { Text("Safety code") },
+            text = {
+                Column {
+                    Text(
+                        text = "Read these six digits aloud on ${verifyTarget.name} and check they match " +
+                                "what that device shows for this pairing. Equal codes mean nobody is " +
+                                "in the middle; different codes mean the channel is being intercepted.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = code?.chunked(3)?.joinToString(" ") ?: "Unavailable",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = if (code != null) colorScheme.onSurface else colorScheme.error,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("safety_code_value")
+                    )
+                    if (verifyTarget.verified) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "You already confirmed this pairing.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorScheme.primary
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onToggleVerified(verifyTarget.pid, !verifyTarget.verified)
+                        verifying = null
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    enabled = code != null,
+                    modifier = Modifier.testTag("confirm_safety_code_btn")
+                ) {
+                    Text(if (verifyTarget.verified) "Mark unverified" else "Codes match")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { verifying = null },
+                    modifier = Modifier.testTag("close_safety_code_btn")
+                ) {
+                    Text("Close")
                 }
             }
         )
@@ -763,7 +891,7 @@ private fun ConnectedPeerPanel(
                     if (connection != null) {
                         Text(
                             text = connection.peer.let { "${it.ip}:${it.port}" },
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            style = MaterialTheme.typography.bodySmall,
                             color = colorScheme.onSurfaceVariant
                         )
                     }

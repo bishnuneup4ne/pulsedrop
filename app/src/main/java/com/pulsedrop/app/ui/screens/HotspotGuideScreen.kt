@@ -61,7 +61,6 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -432,7 +431,7 @@ fun HotspotGuideScreen(
                         label = "Security",
                         value = if (serverState.isPinRequired) "PIN required" else "Open access"
                     )
-                    DiagnosticsRow(label = "Engine", value = "NanoHTTPD", mono = true, last = true)
+                    DiagnosticsRow(label = "Engine", value = "NanoHTTPD", last = true)
                 }
             }
         }
@@ -533,7 +532,6 @@ private fun CredentialRow(
             Text(
                 text = if (visible) value else "••••••••",
                 style = MaterialTheme.typography.titleMedium.copy(
-                    fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.SemiBold
                 ),
                 color = colorScheme.onSurface,
@@ -614,7 +612,7 @@ private fun StepRow(number: Int, title: String, description: String) {
 }
 
 @Composable
-private fun DiagnosticsRow(label: String, value: String, mono: Boolean = false, last: Boolean = false) {
+private fun DiagnosticsRow(label: String, value: String, last: Boolean = false) {
     val colorScheme = MaterialTheme.colorScheme
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -631,9 +629,7 @@ private fun DiagnosticsRow(label: String, value: String, mono: Boolean = false, 
             )
             Text(
                 text = value,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default
-                ),
+                style = MaterialTheme.typography.bodyMedium,
                 color = colorScheme.onSurface
             )
         }

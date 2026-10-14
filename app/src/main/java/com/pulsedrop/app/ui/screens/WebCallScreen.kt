@@ -24,10 +24,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -62,8 +58,8 @@ fun WebCallScreen(
     onHangUp: () -> Unit
 ) {
     val accepted = call.state == "accepted"
-    var muted by remember(call.cid) { mutableStateOf(false) }
-    var cameraOn by remember(call.cid) { mutableStateOf(call.video) }
+    // Outgoing means this phone dialled the browser and is waiting on the other end.
+    val outgoing = call.outgoing
     var elapsed by remember(call.cid) { mutableLongStateOf(0L) }
 
     LaunchedEffect(accepted, call.cid) {
@@ -120,7 +116,7 @@ fun WebCallScreen(
 
             AnimatedVisibility(visible = !accepted, enter = fadeIn(), exit = fadeOut()) {
                 Text(
-                    text = "Ringing…",
+                    text = if (outgoing) "Ringing ${call.name.ifBlank { "the browser" }}…" else "Ringing…",
                     style = MaterialTheme.typography.titleMedium,
                     color = SheetBlue
                 )
@@ -128,7 +124,7 @@ fun WebCallScreen(
             AnimatedVisibility(visible = accepted, enter = fadeIn(), exit = fadeOut()) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "Connected",
+                        text = if (outgoing) "Answered" else "Connected",
                         style = MaterialTheme.typography.titleMedium,
                         color = Color(0xFF34D399)
                     )
@@ -147,25 +143,9 @@ fun WebCallScreen(
                 enter = scaleIn() + fadeIn(),
                 exit = scaleOut() + fadeOut()
             ) {
+                // The live mute/camera/share controls belong to CallOverlay once media is up;
+                // this sheet only needs a way out if the answer is slow to land.
                 Row(horizontalArrangement = Arrangement.Center) {
-                    WebCallControl(
-                        icon = if (muted) Icons.Default.MicOff else Icons.Default.Mic,
-                        label = if (muted) "Unmute" else "Mute",
-                        selected = muted,
-                        onClick = { muted = !muted },
-                        tag = "web_call_mute_btn"
-                    )
-                    if (call.video) {
-                        Spacer(modifier = Modifier.width(18.dp))
-                        WebCallControl(
-                            icon = if (cameraOn) Icons.Default.Videocam else Icons.Default.VideocamOff,
-                            label = if (cameraOn) "Cam on" else "Cam off",
-                            selected = !cameraOn,
-                            onClick = { cameraOn = !cameraOn },
-                            tag = "web_call_camera_btn"
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(18.dp))
                     WebCallControl(
                         icon = Icons.Default.CallEnd,
                         label = "End",
@@ -183,34 +163,47 @@ fun WebCallScreen(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = if (outgoing) Arrangement.Center else Arrangement.SpaceEvenly
                 ) {
-                    WebCallControl(
-                        icon = Icons.Default.CallEnd,
-                        label = "Decline",
-                        danger = true,
-                        onClick = onDecline,
-                        tag = "web_call_decline_btn"
-                    )
-                    WebCallControl(
-                        icon = Icons.Default.Call,
-                        label = "Accept",
-                        accept = true,
-                        onClick = onAccept,
-                        tag = "web_call_accept_btn"
-                    )
+                    if (outgoing) {
+                        WebCallControl(
+                            icon = Icons.Default.CallEnd,
+                            label = "Cancel",
+                            danger = true,
+                            onClick = onDecline,
+                            tag = "web_call_cancel_btn"
+                        )
+                    } else {
+                        WebCallControl(
+                            icon = Icons.Default.CallEnd,
+                            label = "Decline",
+                            danger = true,
+                            onClick = onDecline,
+                            tag = "web_call_decline_btn"
+                        )
+                        WebCallControl(
+                            icon = Icons.Default.Call,
+                            label = "Accept",
+                            accept = true,
+                            onClick = onAccept,
+                            tag = "web_call_accept_btn"
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(18.dp))
 
             Text(
-                text = if (accepted)
-                    "PulseDrop opens the call channel between this phone and the browser. " +
-                        "Voice and video need both sides in the PulseDrop app — a browser tab can ring, " +
-                        "answer and hang up, but cannot carry the media yet."
-                else
-                    "Accept to open the call screen, or decline to send the browser back to the chat.",
+                text = when {
+                    !accepted && outgoing ->
+                        "Waiting for the browser to answer. Cancel any time."
+                    accepted ->
+                        "Opening the live call with ${call.name.ifBlank { "the browser" }} — " +
+                            "voice and video flow over the secure link."
+                    else ->
+                        "Accept to open the call screen, or decline to send the browser back to the chat."
+                },
                 style = MaterialTheme.typography.labelMedium,
                 color = SheetMuted,
                 textAlign = TextAlign.Center,

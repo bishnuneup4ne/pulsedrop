@@ -42,7 +42,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -184,7 +183,7 @@ fun TransferProgressItemCard(
                         isFailed -> "Failed"
                         else -> "$progressPercent%"
                     },
-                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
+                    style = MaterialTheme.typography.titleMedium,
                     color = progressColor,
                     modifier = Modifier.testTag("transfer_percentage_${item.id}")
                 )
@@ -227,7 +226,7 @@ fun TransferProgressItemCard(
                     if (isInProgress) {
                         Text(
                             text = NetworkUtils.formatSpeed(item.speedBytesPerSec),
-                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                            style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = colorScheme.primary
                         )

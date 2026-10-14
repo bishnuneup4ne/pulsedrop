@@ -6,7 +6,8 @@ or hotspot can then send files, chat, and start a call with screen sharing strai
 browser. Two PulseDrop phones can additionally pair end-to-end encrypted, so traffic between
 them is AES-GCM sealed even while it crosses the LAN.
 
-Free software, licensed under GPL-3.0-or-later.
+Source-available and free to use for anything non-commercial, under the PolyForm
+Noncommercial License 1.0.0.
 
 ## What it does
 
@@ -87,13 +88,19 @@ GET|POST /api/messages      chat poll / send    GET  /api/typing   typing indica
 POST /chatupload            chat attachment     GET  /chatfile/{id}
 POST /api/pair/*            pairing handshake   GET  /api/peers    discovered peers
 POST /api/call/*            call signalling     POST /api/call/web browser-side signalling
+GET  /api/webcall/down      browser media downlink (chunked frames)
+POST /api/webcall/up        browser media uplink (batched frames)
 ```
 
 ### Security model
 
 - **Transport:** cleartext HTTP over the LAN. `usesCleartextTraffic` is on deliberately — this
   is a local-network tool with no certificate authority available to it. Threat model is a
-  trusted Wi-Fi/hotspot, not a hostile network.
+  trusted Wi-Fi/hotspot, not a hostile network. A TLS side-listener also runs on the HTTP
+  port + 1 (8081 by default) with a process-lifetime self-signed certificate: browsers only
+  expose `getUserMedia`/`getDisplayMedia` on a secure origin, so voice/video/screen-share
+  calls with a PC require the `https://` address shown in the app (accept the certificate
+  warning once per browser).
 - **PIN:** 4 digits, enforced per client IP. Eight *distinct* wrong values trigger a 60 s
   lockout that doubles on further bursts (capped at ~16 min). A stale token repeated by an old
   browser tab counts once, not once per poll.
@@ -126,16 +133,43 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) first — branch layout, code style, and
 Security vulnerabilities are handled off-list; see [SECURITY.md](SECURITY.md). Contributors are
 expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-By contributing you agree that your contributions are licensed under GPL-3.0-or-later, the same
-terms as the rest of the project.
+By contributing you agree that your contributions are licensed under the same terms as the
+rest of the project — the PolyForm Noncommercial License 1.0.0.
 
 ## License
 
-Copyright (C) 2026 The PulseDrop authors
+Copyright (c) 2026 The PulseDrop authors
 
-This program is free software: you can redistribute it and/or modify it under the terms of the
-GNU General Public License as published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version. See [LICENSE](LICENSE).
+PulseDrop is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). In plain
+terms: you may read it, run it, change it, build your own version and share it with anyone —
+as long as none of that is commercial. Selling PulseDrop, a build of it, or a hosted service
+running it for pay is not allowed without a separate agreement from the authors.
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
-without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+Every copy you distribute has to carry the licence text and this notice:
+
+```
+Required Notice: Copyright (c) 2026 The PulseDrop authors
+```
+
+This is not an open-source licence in the OSI sense — it restricts commercial use on purpose.
+
+### Third-party terms that travel with the app
+
+The licence above covers PulseDrop's own source. Bundled components keep their own terms and
+are **not** relicensed:
+
+| Component | Licence | Where it sits |
+| --- | --- | --- |
+| Google Sans (4 weights) | SIL Open Font License 1.1 | `app/src/main/res/font/`, text at `app/src/main/assets/fonts/GOOGLE_SANS_OFL.txt` |
+| AndroidX / Compose / Material | Apache-2.0 | Gradle dependencies |
+| OkHttp | Apache-2.0 | Gradle dependency |
+| NanoHTTPD | BSD-3-Clause | Gradle dependency |
+| Bouncy Castle (bcpkix) | MIT | Gradle dependency — self-signed LAN TLS for browser calls |
+| ZXing core | Apache-2.0 | Gradle dependency |
+| Coil | Apache-2.0 | Gradle dependency |
+| Room / KSP | Apache-2.0 | Gradle dependencies |
+
+The OFL is viral in one specific way worth knowing: the font files themselves may be sold or
+used commercially by anyone, but only as fonts — you cannot take them out of the app and
+relicense them, and any modified font must be renamed. If you fork PulseDrop for a commercial
+product, drop the Google Sans assets and swap in another family.

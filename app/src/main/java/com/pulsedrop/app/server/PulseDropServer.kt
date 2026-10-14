@@ -2,13 +2,16 @@ package com.pulsedrop.app.server
 
 import android.content.Context
 import android.net.Uri
+import com.pulsedrop.app.R
 import com.pulsedrop.app.model.ChatAttachment
 import com.pulsedrop.app.model.ClipMessage
 import com.pulsedrop.app.model.SharedFile
 import com.pulsedrop.app.model.TransferDirection
+import com.pulsedrop.app.util.NetworkUtils
 import fi.iki.elonen.NanoHTTPD
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
@@ -17,14 +20,26 @@ import java.util.UUID
 /** A chat thread the embedded web client is allowed to list and post into. */
 data class WebThread(val id: String, val title: String, val kind: String, val members: List<String>)
 
-/** A call requested from a browser. Media still needs two PulseDrop apps; this drives the ringing UI. */
+/** A browser session currently pointed at this server, as the phone sees it. */
+data class WebClientInfo(
+    val ip: String,
+    val name: String,
+    val userAgent: String,
+    val lastSeen: Long,
+    /** Reached over loopback: a browser on the phone itself, or one tunnelled in by adb. */
+    val local: Boolean = false
+)
+
+/** A call requested from a browser tab. This record drives the ringing/answered UI on both ends. */
 data class WebCall(
     val cid: String,
     val name: String,
     val ip: String,
     val video: Boolean,
     val state: String,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    /** True when the phone dialled the browser, so each side knows which end it is. */
+    val outgoing: Boolean = false
 )
 
 interface ServerTransferListener {
@@ -41,6 +56,9 @@ private const val PIN_LOCKOUT_MS = 60_000L
 private const val PIN_LOCKOUT_MAX_STEPS = 4
 private const val SERVER_CHAT_RETENTION = 2000
 private const val TYPING_SENDER_LIMIT = 64
+private const val WEB_CLIENT_TTL = 90_000L
+// Matches CallEngine.RING_TIMEOUT_MS so a browser and a paired app are given up on alike.
+private const val WEB_RING_TIMEOUT_MS = 35_000L
 
 class PulseDropServer(
     val port: Int,
@@ -89,6 +107,54 @@ class PulseDropServer(
     @Volatile
     var webCall: WebCall? = null
 
+    /**
+     * Browsers currently looking at this server. A desktop is not a PulseDrop host — it has
+     * no listener to dial — so it can only ever appear here, and the phone reaches it by
+     * pushing files into its own hosted list.
+     */
+    private class WebClientSlot(var name: String, var ua: String, var lastSeen: Long)
+
+    private val webClients = LinkedHashMap<String, WebClientSlot>()
+
+    /** The server object is built when the session starts, so this doubles as "phone came online". */
+    private val startedAtMs: Long = System.currentTimeMillis()
+
+    private fun noteWebClient(ip: String, name: String?, userAgent: String?) {
+        if (ip.isBlank()) return
+        // The app polls its own server over loopback for typing state - that is not a browser.
+        if (isLoopback(ip) && userAgent?.startsWith("okhttp") == true) return
+        val now = System.currentTimeMillis()
+        val local = isLoopback(ip)
+        val fallback = if (local) "Browser tab" else "Browser"
+        synchronized(webClients) {
+            val slot = webClients[ip]
+            if (slot == null) webClients[ip] = WebClientSlot(name ?: fallback, userAgent ?: "", now)
+            else {
+                slot.lastSeen = now
+                if (!name.isNullOrBlank()) slot.name = name
+                if (!userAgent.isNullOrBlank()) slot.ua = userAgent
+            }
+        }
+    }
+
+    private fun isLoopback(ip: String): Boolean =
+        ip == "127.0.0.1" || ip == "::1" || ip.startsWith("::ffff:127.")
+
+    /** What the browser called itself, if it ever told us. */
+    private fun webClientName(ip: String): String =
+        synchronized(webClients) { webClients[ip]?.name }
+            ?: if (isLoopback(ip)) "Browser tab" else "Browser"
+
+    fun webClientsSnapshot(ttlMs: Long = WEB_CLIENT_TTL): List<WebClientInfo> {
+        val now = System.currentTimeMillis()
+        return synchronized(webClients) {
+            val stale = webClients.filterValues { now - it.lastSeen > ttlMs }.keys
+            stale.forEach { webClients.remove(it) }
+            webClients.entries.sortedByDescending { it.value.lastSeen }
+                .map { (ip, s) -> WebClientInfo(ip, s.name, s.ua, s.lastSeen, isLoopback(ip)) }
+        }
+    }
+
     private val sharedFiles = mutableListOf<SharedFile>()
     private val messages = mutableListOf<ClipMessage>()
     private val typingSenders = mutableMapOf<String, Long>()
@@ -114,10 +180,110 @@ class PulseDropServer(
     private fun chatDir(): File =
         File(context.getExternalFilesDir(null) ?: context.filesDir, "WebDrop_Chat").apply { if (!exists()) mkdirs() }
 
+    private val fontCache = HashMap<Int, ByteArray>()
+
+    private fun fontBytes(resId: Int): ByteArray = synchronized(fontCache) {
+        fontCache.getOrPut(resId) {
+            context.resources.openRawResource(resId).use { it.readBytes() }
+        }
+    }
+
     /** The phone app answers or rejects a browser call; the browser polls for this. */
     fun updateWebCall(cid: String, state: String) {
         val c = webCall ?: return
-        if (c.cid == cid) webCall = c.copy(state = state, updatedAt = System.currentTimeMillis())
+        if (c.cid != cid) return
+        val next = c.copy(state = state, updatedAt = System.currentTimeMillis())
+        webCall = next
+        syncWebCallMedia(next)
+        listener.onWebCall(next)
+    }
+
+    /**
+     * A browser tab is a media endpoint like any other device: 16 kHz PCM and JPEG frames both
+     * ways. It cannot open the raw socket the apps dial, so its frames ride this server instead
+     * — one chunked response down, one short POST up.
+     */
+    private fun syncWebCallMedia(call: WebCall) {
+        val engine = callEngine ?: return
+        when (call.state) {
+            "accepted" -> if (!engine.state.value.active) {
+                markActivity()
+                engine.startWebCall(call.video, webClientName(call.ip))
+            }
+            "ended", "declined" -> if (engine.state.value.peerPid ==
+                com.pulsedrop.app.call.CallEngine.WEB_PID
+            ) {
+                engine.stopWebCall(if (call.state == "declined") "Call declined" else "Call ended")
+            }
+        }
+    }
+
+    /** Frames headed to the tab, as one endless body. Ends with the leg. */
+    private inner class WebMediaStream(private val cid: String) : InputStream() {
+        private var carry: ByteArray? = null
+        private var at = 0
+
+        override fun read(): Int {
+            val one = ByteArray(1)
+            return if (read(one, 0, 1) <= 0) -1 else one[0].toInt() and 0xFF
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            while (true) {
+                val c = carry
+                if (c != null && at < c.size) {
+                    val n = minOf(len, c.size - at)
+                    System.arraycopy(c, at, b, off, n)
+                    at += n
+                    if (at >= c.size) { carry = null; at = 0 }
+                    return n
+                }
+                val call = webCall
+                if (call == null || call.cid != cid || call.state != "accepted") return -1
+                val engine = callEngine ?: return -1
+                val frame = engine.nextWebOutFrame(2000)
+                if (frame == null) {
+                    if (!engine.hasWebLeg()) return -1
+                    continue
+                }
+                carry = frame
+            }
+        }
+    }
+
+    /** The phone dials a browser tab: same channel, opposite direction. */
+    fun ringWebClient(ip: String, name: String, video: Boolean): WebCall {
+        val call = WebCall(
+            cid = UUID.randomUUID().toString(),
+            name = name,
+            ip = ip,
+            video = video,
+            state = "ringing",
+            outgoing = true
+        )
+        webCall = call
+        listener.onWebCall(call)
+        armWebRingExpiry(call)
+        return call
+    }
+
+    /**
+     * A tab that rings the phone and then vanishes — closed, crashed, walked off the Wi-Fi — has
+     * nobody left to poll this record, so nothing would ever clear the ringing screen. CallEngine
+     * solves the same problem for app-to-app calls with a coroutine; the server has no scope.
+     */
+    private fun armWebRingExpiry(call: WebCall) {
+        Thread {
+            val woken = try {
+                Thread.sleep(WEB_RING_TIMEOUT_MS); true
+            } catch (e: InterruptedException) {
+                false
+            }
+            val current = if (woken) webCall else null
+            if (current != null && current.cid == call.cid && current.state == "ringing") {
+                updateWebCall(current.cid, "ended")
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     fun updatePinSecurity(required: Boolean, pin: String?) {
@@ -129,31 +295,87 @@ class PulseDropServer(
 
     init {
         // Essential on Android: redirect temp files away from read-only /data/local/tmp to context.cacheDir
-        tempFileManagerFactory = TempFileManagerFactory {
-            object : TempFileManager {
-                private val tempFiles = ArrayList<TempFile>()
-                override fun createTempFile(filename_hint: String?): TempFile {
-                    val file = File.createTempFile("WebDrop-", ".tmp", context.cacheDir)
-                    val tempFile = object : TempFile {
-                        override fun delete() {
-                            try { file.delete() } catch (ignored: Exception) {}
-                        }
-                        override fun getName(): String = file.absolutePath
-                        override fun open(): java.io.OutputStream = java.io.FileOutputStream(file)
-                    }
-                    tempFiles.add(tempFile)
-                    return tempFile
-                }
-                override fun clear() {
-                    for (file in tempFiles) {
-                        try { file.delete() } catch (ignored: Exception) {}
-                    }
-                    tempFiles.clear()
-                }
-            }
-        }
+        tempFileManagerFactory = androidTempFiles()
         // Messages live in memory, so a previous run's attachments are unreachable orphans.
         File(context.getExternalFilesDir(null) ?: context.filesDir, "WebDrop_Chat").deleteRecursively()
+    }
+
+    private fun androidTempFiles(): TempFileManagerFactory = TempFileManagerFactory {
+        object : TempFileManager {
+            private val tempFiles = ArrayList<TempFile>()
+            override fun createTempFile(filename_hint: String?): TempFile {
+                val file = File.createTempFile("WebDrop-", ".tmp", context.cacheDir)
+                val tempFile = object : TempFile {
+                    override fun delete() {
+                        try { file.delete() } catch (ignored: Exception) {}
+                    }
+                    override fun getName(): String = file.absolutePath
+                    override fun open(): java.io.OutputStream = java.io.FileOutputStream(file)
+                }
+                tempFiles.add(tempFile)
+                return tempFile
+            }
+            override fun clear() {
+                for (file in tempFiles) {
+                    try { file.delete() } catch (ignored: Exception) {}
+                }
+                tempFiles.clear()
+            }
+        }
+    }
+
+    // ---- secure side listener (browser media needs a https origin) --------------
+
+    /** The https counterpart of [port], where browsers get full mic/camera/screen access. */
+    val tlsPort: Int = port + 1
+
+    @Volatile private var tlsServer: NanoHTTPD? = null
+    @Volatile private var tlsHosts: List<String> = emptyList()
+
+    override fun start() {
+        super.start()
+        ensureTls()
+    }
+
+    override fun stop() {
+        synchronized(this) { tlsServer?.stop(); tlsServer = null }
+        super.stop()
+    }
+
+    /** Call whenever the LAN address changes; the certificate carries the SAN list. */
+    fun refreshTls(hosts: List<String>) {
+        if (hosts.filter { it.isNotBlank() } == tlsHosts.filter { it.isNotBlank() }) return
+        restartTls()
+    }
+
+    private fun restartTls() {
+        synchronized(this) {
+            tlsServer?.stop()
+            tlsServer = null
+        }
+        ensureTls()
+    }
+
+    private fun ensureTls() {
+        if (tlsServer != null) return
+        // RSA keypair generation is not free, and start() can be reached from a click handler.
+        Thread {
+            try {
+                val hosts = listOf(NetworkUtils.getLocalIpAddress()).filter { it.isNotBlank() } + tlsHosts
+                val factory = WebTls.socketFactory(hosts)
+                val delegate = object : NanoHTTPD(tlsPort) {
+                    override fun serve(session: IHTTPSession): Response =
+                        this@PulseDropServer.serve(session)
+                }
+                delegate.tempFileManagerFactory = androidTempFiles()
+                delegate.makeSecure(factory, null)
+                delegate.start(SOCKET_READ_TIMEOUT, false)
+                tlsHosts = hosts
+                tlsServer = delegate
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     fun setSharedFiles(files: List<SharedFile>) {
@@ -309,6 +531,18 @@ class PulseDropServer(
         val method = session.method
         val clientIp = session.remoteIpAddress ?: "127.0.0.1"
 
+        // Every HTTP hit is a browser still sitting on the page, so the phone can list the
+        // desktops connected to it. A browser has no listener, so this is the only way in.
+        if (method != Method.OPTIONS) {
+            noteWebClient(
+                clientIp,
+                session.headers["x-pulse-client"]
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it } },
+                session.headers["user-agent"]
+            )
+        }
+
         // Passive browser polling (page, info, file list, beam polling) must not keep the server alive
         val isPassivePolling = uri == "/" || uri == "/index.html" ||
                 (uri == "/api/info" && method == Method.GET) ||
@@ -319,6 +553,21 @@ class PulseDropServer(
 
         if (method == Method.OPTIONS) {
             val res = newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "")
+            addCorsHeaders(res)
+            return res
+        }
+
+        // Google Sans, served by this device so the browser client is typed identically
+        // to the app on a network with no upstream.
+        WEB_FONTS[uri]?.let { resId ->
+            val bytes = fontBytes(resId)
+            val res = newFixedLengthResponse(
+                Response.Status.OK,
+                "font/ttf",
+                ByteArrayInputStream(bytes),
+                bytes.size.toLong()
+            )
+            res.addHeader("Cache-Control", "public, max-age=604800")
             addCorsHeaders(res)
             return res
         }
@@ -403,12 +652,26 @@ class PulseDropServer(
             // incoming-call screen over the visitor's own session.
             if (!isAuthorized(session)) return unauthorized()
             if (method == Method.GET) {
-                val c = webCall
+                var c = webCall
+                var live = c != null && c.state != "ended" && c.state != "declined"
+                // The phone hanging up ends the live call, not this record; without the
+                // cross-check the tab would sit on a call screen with no media behind it.
+                if (c != null && c.state == "accepted" && callEngine?.hasWebLeg() != true) {
+                    c = c.copy(state = "ended", updatedAt = System.currentTimeMillis())
+                    webCall = c
+                    live = false
+                }
                 val json = JSONObject().apply {
                     put("success", true)
-                    put("active", c != null && c.state != "ended" && c.state != "declined")
+                    put("active", live)
                     if (c != null) {
                         put("cid", c.cid); put("state", c.state); put("video", c.video)
+                        // One shared record, two ends: tell this tab whether it is the caller
+                        // or the one being rung, so neither renders the other's screen.
+                        val mine = c.ip == clientIp
+                        put("incoming", live && c.outgoing && mine)
+                        put("self", live && !c.outgoing && mine)
+                        put("media", live && c.state == "accepted")
                     }
                 }
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
@@ -422,21 +685,41 @@ class PulseDropServer(
                     val json = JSONObject(map["postData"] ?: "{}")
                     when (json.optString("action")) {
                         "ring" -> {
-                            val call = WebCall(
-                                cid = json.optString("cid", UUID.randomUUID().toString()),
-                                name = json.optString("name", "Browser $clientIp"),
-                                ip = clientIp,
-                                video = json.optBoolean("video", false),
-                                state = "ringing"
-                            )
-                            webCall = call
-                            listener.onWebCall(call)
-                            jsonResponse(true, "cid" to call.cid)
+                            if (webCall?.state == "ringing" || webCall?.state == "accepted" ||
+                                callEngine?.state?.value?.active == true
+                            ) {
+                                jsonResponse(false, "error" to "A call is already up")
+                            } else {
+                                val call = WebCall(
+                                    cid = json.optString("cid", UUID.randomUUID().toString()),
+                                    name = json.optString("name", "Browser $clientIp"),
+                                    ip = clientIp,
+                                    video = json.optBoolean("video", false),
+                                    state = "ringing"
+                                )
+                                webCall = call
+                                listener.onWebCall(call)
+                                armWebRingExpiry(call)
+                                jsonResponse(true, "cid" to call.cid)
+                            }
+                        }
+                        "accept", "decline" -> {
+                            val wanted = json.optString("action")
+                            val c = webCall
+                            if (c == null || !c.outgoing || c.ip != clientIp || c.state != "ringing") {
+                                jsonResponse(false, "error" to "Nothing to answer")
+                            } else {
+                                updateWebCall(c.cid, if (wanted == "accept") "accepted" else "declined")
+                                jsonResponse(true, "cid" to c.cid)
+                            }
                         }
                         "end" -> {
-                            webCall?.let {
-                                val ended = it.copy(state = "ended", updatedAt = System.currentTimeMillis())
+                            val c = webCall
+                            if (c != null && (json.optString("cid").isBlank() || c.cid == json.optString("cid"))) {
+                                val ended = c.copy(state = "ended", updatedAt = System.currentTimeMillis())
                                 webCall = ended
+                                // The record alone would leave the phone talking to a tab that hung up.
+                                syncWebCallMedia(ended)
                                 listener.onWebCall(ended)
                             }
                             jsonResponse(true)
@@ -449,7 +732,50 @@ class PulseDropServer(
             }
         }
 
-        // Who has talked to this server recently (Details view)
+        // Browser media legs. `down` is one long chunked body, `up` a ~10 Hz batch POST.
+        if (uri == "/api/webcall/down" && method == Method.GET) {
+            if (!isAuthorized(session)) return unauthorized()
+            val cid = session.parameters["cid"]?.firstOrNull() ?: ""
+            val call = webCall
+            if (call == null || call.cid != cid || call.state != "accepted") {
+                return jsonResponse(false, "error" to "No open call")
+            }
+            markActivity()
+            val res = newChunkedResponse(
+                Response.Status.OK, "application/octet-stream", WebMediaStream(cid)
+            )
+            res.addHeader("Cache-Control", "no-store")
+            addCorsHeaders(res)
+            return res
+        }
+        if (uri == "/api/webcall/up" && method == Method.POST) {
+            if (!isAuthorized(session)) return unauthorized()
+            return try {
+                val map = HashMap<String, String>()
+                session.parseBody(map)
+                val json = JSONObject(map["postData"] ?: "{}")
+                val call = webCall
+                val engine = callEngine
+                if (call == null || call.cid != json.optString("cid") || call.state != "accepted" ||
+                    engine?.hasWebLeg() != true
+                ) {
+                    jsonResponse(false, "error" to "No open call")
+                } else {
+                    val frames = json.optString("frames")
+                    if (frames.isNotEmpty()) {
+                        engine.ingestWebFrames(
+                            android.util.Base64.decode(frames, android.util.Base64.DEFAULT)
+                        )
+                        markActivity()
+                    }
+                    jsonResponse(true)
+                }
+            } catch (e: Exception) {
+                jsonResponse(false, "error" to "Invalid frame batch")
+            }
+        }
+
+        // Who is on this server right now, plus who has talked to it recently.
         if (uri == "/api/peers" && method == Method.GET) {
             if (!isAuthorized(session)) return unauthorized()
             val byIp = LinkedHashMap<String, JSONObject>()
@@ -465,16 +791,47 @@ class PulseDropServer(
                     cur.put("files", cur.optInt("files") + files).put("bytes", cur.optLong("bytes") + bytes)
                 }
             }
+            // The phone hosting this server is a device too. Its own messages carry no client
+            // IP, so fold them under its LAN address — otherwise browsers cannot reply to it.
+            val selfIp = NetworkUtils.getLocalIpAddress()
+            var selfTs = 0L
+            var selfFiles = 0
+            var selfBytes = 0L
             synchronized(messages) {
-                messages.forEach { m -> touch(m.clientIp ?: "", m.sender, m.timestamp, 0, 0) }
+                messages.forEach { m ->
+                    if (m.clientIp.isNullOrEmpty()) { if (m.timestamp > selfTs) selfTs = m.timestamp }
+                    else touch(m.clientIp, m.sender, m.timestamp, 0, 0)
+                }
             }
             synchronized(sharedFiles) {
                 sharedFiles.forEach { f ->
-                    touch(f.uploadedByIp ?: "", null, f.dateAdded, 1, f.size)
+                    if (f.uploadedByIp.isNullOrEmpty()) {
+                        selfFiles++; selfBytes += f.size
+                        if (f.dateAdded > selfTs) selfTs = f.dateAdded
+                    } else touch(f.uploadedByIp, null, f.dateAdded, 1, f.size)
                 }
             }
+            if (selfIp.isNotBlank()) touch(selfIp, deviceName, maxOf(selfTs, startedAtMs), selfFiles, selfBytes)
+            // A browser that still has the page open is active, whether or not it has sent anything.
+            val live = webClientsSnapshot().associateBy { it.ip }
+            live.values.forEach { c ->
+                touch(c.ip, c.name, c.lastSeen, 0, 0)
+                byIp[c.ip]?.put("name", c.name)
+                byIp[c.ip]?.put("lastSeen", maxOf(c.lastSeen, byIp.getValue(c.ip).optLong("lastSeen")))
+            }
+            byIp.values.forEach { o ->
+                val c = live[o.optString("ip")]
+                val self = o.optString("ip") == selfIp
+                o.put("kind", if (c != null) "browser" else "app")
+                o.put("active", c != null || self)
+                if (self) o.put("self", true)
+                if (c?.local == true) o.put("local", true)
+            }
             val arr = JSONArray()
-            byIp.values.sortedByDescending { it.optLong("lastSeen") }.forEach { arr.put(it) }
+            byIp.values.sortedWith(
+                compareByDescending<JSONObject> { it.optBoolean("active") }
+                    .thenByDescending { it.optLong("lastSeen") }
+            ).forEach { arr.put(it) }
             val res = newFixedLengthResponse(Response.Status.OK, "application/json", arr.toString())
             addCorsHeaders(res)
             return res
@@ -654,8 +1011,17 @@ class PulseDropServer(
         if (uri == "/api/messages") {
             if (method == Method.GET) {
                 val arr = JSONArray()
+                val groupIds = webThreads.map { it.id }.toSet()
                 synchronized(messages) {
                     for (m in messages) {
+                        // A browser sees the public room, its own address book, the groups
+                        // the phone opened to browsers, and anything it sent itself - so a
+                        // browser-to-browser thread reads the same on both sides. Never
+                        // another host's direct thread, and never a pair conversation,
+                        // which stays on the phones.
+                        val thread = m.threadId
+                        val mine = m.clientIp == clientIp
+                        if (thread != null && !mine && thread != "ip:$clientIp" && thread !in groupIds) continue
                         arr.put(JSONObject().apply {
                             put("id", m.id)
                             put("text", m.text)
@@ -686,8 +1052,12 @@ class PulseDropServer(
                     // "to" turns the broadcast room into a per-IP direct thread.
                     val to = json.optString("to", "").trim()
                     val explicit = json.optString("thread", "").trim()
+                    // Only threads this server actually offers: a group the phone opened, or
+                    // a direct thread addressed to some host. Anything else lands in the room.
+                    val knownGroup = explicit.startsWith("group:") &&
+                            webThreads.any { it.id == explicit }
                     val threadId = when {
-                        explicit.startsWith("group:") || explicit.startsWith("ip:") -> explicit
+                        knownGroup || explicit.startsWith("ip:") -> explicit
                         explicit.isNotEmpty() || to.isEmpty() -> null
                         else -> "ip:$to"
                     }
@@ -765,7 +1135,7 @@ class PulseDropServer(
                 FileInputStream(File(file.uriString))
             }
 
-            listener.onTransferStarted(transferId, file.name, file.size, TransferDirection.OUTGOING, "Web Client ($clientIp)", clientIp)
+            listener.onTransferStarted(transferId, file.name, file.size, TransferDirection.OUTGOING, webClientName(clientIp), clientIp)
 
             // Wrap stream with progress tracking
             val trackingStream = object : InputStream() {
@@ -806,7 +1176,7 @@ class PulseDropServer(
                     super.close()
                     inputStream.close()
                     if (bytesRead >= file.size || file.size == 0L) {
-                        listener.onTransferCompleted(transferId, file.name, file.size, null, TransferDirection.OUTGOING, "Web Client ($clientIp)", clientIp)
+                        listener.onTransferCompleted(transferId, file.name, file.size, null, TransferDirection.OUTGOING, webClientName(clientIp), clientIp)
                     } else {
                         // A cancelled download must still settle its transfer, otherwise the
                         // entry stays IN_PROGRESS and pins the idle watchdog open.
@@ -918,7 +1288,7 @@ class PulseDropServer(
                     sharedFiles.add(sharedItem)
                 }
 
-                val remoteDeviceLabel = if (pairedSender != null) "Paired • ${pairedSender.name}" else "Client ($clientIp)"
+                val remoteDeviceLabel = pairedSender?.name ?: webClientName(clientIp)
                 listener.onTransferStarted(transferId, savedFileName, fileSize, TransferDirection.INCOMING, remoteDeviceLabel, clientIp)
                 listener.onTransferProgress(transferId, fileSize, fileSize, fileSize)
                 listener.onTransferCompleted(transferId, savedFileName, fileSize, finalFile.absolutePath, TransferDirection.INCOMING, remoteDeviceLabel, clientIp)
@@ -1161,5 +1531,14 @@ class PulseDropServer(
         response.addHeader("Access-Control-Allow-Origin", "*")
         response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         response.addHeader("Access-Control-Allow-Headers", "Content-Type, X-Pulse-Auth")
+    }
+
+    private companion object {
+        val WEB_FONTS = mapOf(
+            "/fonts/google-sans-regular.ttf" to R.font.google_sans_regular,
+            "/fonts/google-sans-medium.ttf" to R.font.google_sans_medium,
+            "/fonts/google-sans-semibold.ttf" to R.font.google_sans_semibold,
+            "/fonts/google-sans-bold.ttf" to R.font.google_sans_bold
+        )
     }
 }

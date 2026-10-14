@@ -14,8 +14,8 @@ android {
     applicationId = "com.pulsedrop.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -65,7 +65,14 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      // BouncyCastle reaches into InetAddress internals during the TLS handshake.
+      // ART does not enforce module boundaries, so this only gates the desktop test JVM.
+      all { it.jvmArgs("--add-opens", "java.base/java.net=ALL-UNNAMED") }
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
@@ -91,6 +98,9 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.nanohttpd)
+  // Self-signed LAN TLS: browsers only hand over mic/camera/screen on a secure origin,
+  // and the embedded server is the only way a PC reaches this phone.
+  implementation(libs.bcpkix)
   implementation(libs.okhttp)
   implementation(libs.zxing.android.embedded)
   implementation(libs.zxing.core)

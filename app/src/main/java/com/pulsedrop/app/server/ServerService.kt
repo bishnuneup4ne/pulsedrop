@@ -25,8 +25,15 @@ class ServerService : Service() {
 
     override fun onDestroy() {
         // The system can stop a dataSync service on its own schedule (Android 15 quota).
-        // Never keep serving from the background without the foreground notification.
-        stopHostedServer()
+        // Never keep serving from the background without the foreground notification -
+        // but only tear down the server this instance actually brought up. Toggling the
+        // server off and on destroys the old instance asynchronously, after the
+        // replacement is already published, and stopping that one leaves the UI showing
+        // "Live" over a closed socket.
+        if (owner === this) {
+            owner = null
+            stopHostedServer()
+        }
         super.onDestroy()
     }
 
@@ -57,6 +64,7 @@ class ServerService : Service() {
         currentServerUrl = intent?.getStringExtra(EXTRA_URL) ?: currentServerUrl
         val notification = buildIdleNotification(currentServerUrl)
         startForeground(NOTIFICATION_ID, notification)
+        owner = this
 
         return START_STICKY
     }
@@ -164,6 +172,19 @@ class ServerService : Service() {
          */
         @Volatile
         var hostedServer: PulseDropServer? = null
+
+        /** The service instance currently responsible for [hostedServer]; see onDestroy. */
+        @Volatile
+        private var owner: ServerService? = null
+
+        /**
+         * Publish a freshly started server. Ownership deliberately goes to null here: the
+         * instance that is about to be destroyed must not treat this server as its own.
+         */
+        fun publishServer(server: PulseDropServer) {
+            hostedServer = server
+            owner = null
+        }
 
         fun stopHostedServer() {
             val server = hostedServer

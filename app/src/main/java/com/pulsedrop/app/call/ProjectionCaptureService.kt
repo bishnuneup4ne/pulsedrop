@@ -31,11 +31,25 @@ class ProjectionCaptureService : Service() {
         @Volatile
         var engine: CallEngine? = null
 
+        fun arm(context: Context) {
+            // Android 15+ hands the projection result back only after the app that will be
+            // captured is in front, which leaves PulseDrop cached and frozen - so the service
+            // never runs startForeground() and the system kills the whole process with
+            // ForegroundServiceDidNotStartInTimeException. Claiming the foreground slot while
+            // the user is still looking at PulseDrop avoids that entirely.
+            startWith(context, Intent(context, ProjectionCaptureService::class.java)
+                .setAction(ACTION_ARM))
+        }
+
         fun start(context: Context, resultCode: Int, data: Intent) {
             val intent = Intent(context, ProjectionCaptureService::class.java)
                 .setAction(ACTION_START)
                 .putExtra("resultCode", resultCode)
                 .putExtra("captureData", data)
+            startWith(context, intent)
+        }
+
+        private fun startWith(context: Context, intent: Intent) {
             try {
                 // startForegroundService only exists on API 26+; on older devices a plain
                 // startService is fine because there is no background-start restriction.
@@ -60,20 +74,32 @@ class ProjectionCaptureService : Service() {
         }
 
         private const val ACTION_START = "start"
+        private const val ACTION_ARM = "arm"
+        private const val ARM_TIMEOUT_MS = 60_000L
         private const val CHANNEL_ID = "localdrop_screen_share"
         private const val NOTIF_ID = 4455
     }
 
+    private val handler = Handler(Looper.getMainLooper())
     private var projection: MediaProjection? = null
     private var reader: ImageReader? = null
     private var display: VirtualDisplay? = null
     private var grabThread: Thread? = null
     @Volatile private var grabbing = false
 
+    private val disarm = Runnable {
+        if (projection == null) stopSelf()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundCompat()
+        if (intent?.action == ACTION_ARM) {
+            handler.postDelayed(disarm, ARM_TIMEOUT_MS)
+            return START_NOT_STICKY
+        }
+        handler.removeCallbacks(disarm)
         val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
         @Suppress("DEPRECATION")
         val data = intent?.getParcelableExtra<Intent>("captureData")

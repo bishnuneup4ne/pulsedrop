@@ -177,7 +177,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                     .put("myIp", myIp)
                     .put("myPort", myPort)
                     .toString()
-                    .toRequestBody("application/json".toMediaType())
+                    .toRequestBody("application/json; charset=utf-8".toMediaType())
                 client.newCall(
                     Request.Builder()
                         .url("http://${peer.ip}:${peer.port}/api/pair/request")
@@ -208,17 +208,20 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
 
     fun acceptIncoming(request: IncomingPairRequest) {
         val (myIp, myPort) = endpointProvider()
-        addPairing(
-            PairedDevice(
-                pid = Crypto.pairId(myPubB64(), request.pubB64),
-                name = request.name,
-                pubB64 = request.pubB64,
-                originIp = request.myIp,
-                originPort = request.myPort,
-            )
+        val paired = PairedDevice(
+            pid = Crypto.pairId(myPubB64(), request.pubB64),
+            name = request.name,
+            pubB64 = request.pubB64,
+            originIp = request.myIp,
+            originPort = request.myPort,
         )
+        // Keep the key the user already confirmed; accepting again from the same device is a
+        // network hiccup far more often than it is a genuine rekey.
+        val existing = _paired.value.firstOrNull { it.pid == paired.pid }
+        val device = if (existing != null) paired.copy(verified = existing.verified) else paired
+        val replaced = addPairing(device)
         _incomingRequests.update { list -> list.filterNot { it.reqId == request.reqId } }
-        _pairEvent.value = "Paired with ${request.name} — end-to-end encrypted"
+        _pairEvent.value = pairingOutcome(request.name, replaced)
         scope.launch(Dispatchers.IO) {
             respondToPair(request.reqId, true, request.myIp, request.myPort, myIp, myPort)
         }
@@ -243,7 +246,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                 .put("myIp", myIp)
                 .put("myPort", myPort)
                 .toString()
-                .toRequestBody("application/json".toMediaType())
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
             client.newCall(
                 Request.Builder().url("http://$peerIp:$peerPort/api/pair/response")
                     .post(body).build()
@@ -267,7 +270,20 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         _pairEvent.value = "Unpaired ${p.name}"
     }
 
-    private fun addPairing(device: PairedDevice) {
+    /**
+     * Stores a pairing and returns the previously-trusted device it appears to displace, if any.
+     * The callers share one message builder so a success toast can never stomp the rekey warning.
+     */
+    private fun addPairing(device: PairedDevice): PairedDevice? {
+        // Re-pairing under a new identity is exactly what a downgrade looks like from here, so
+        // say so out loud instead of silently replacing the trusted key. Same name or same
+        // address, different pairwise id: the device changed keys and needs re-verifying.
+        val clash = _paired.value.firstOrNull {
+            it.pid != device.pid && (
+                it.originIp == device.originIp ||
+                    it.name.equals(device.name, ignoreCase = true)
+                )
+        }
         _paired.update { list ->
             if (list.any { it.pid == device.pid }) {
                 list.map { if (it.pid == device.pid) device else it }
@@ -275,6 +291,29 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                 list + device
             }
         }
+        save()
+        return clash
+    }
+
+    private fun pairingOutcome(name: String, clash: PairedDevice?): String =
+        if (clash == null) "Paired with $name — end-to-end encrypted"
+        else "Paired with $name, but this is a new key. " +
+            "Check the safety code matches the old one before trusting it."
+
+    /** The 6-digit code to read aloud on both devices; equal on both sides for a given pair. */
+    fun safetyCodeFor(pid: String): String? {
+        val device = findPairing(pid) ?: return null
+        return try {
+            Crypto.safetyCode(myPubB64(), device.pubB64)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun setVerified(pid: String, verified: Boolean) {
+        val current = findPairing(pid) ?: return
+        if (current.verified == verified) return
+        _paired.update { list -> list.map { if (it.pid == pid) it.copy(verified = verified) else it } }
         save()
     }
 
@@ -317,7 +356,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         }
         val peerPub = json.optString("pub")
         if (peerPub.isBlank()) return
-        addPairing(
+        val replaced = addPairing(
             PairedDevice(
                 pid = Crypto.pairId(myPubB64(), peerPub),
                 name = json.optString("name", pending.peer.name),
@@ -326,7 +365,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                 originPort = json.optInt("myPort", pending.peer.port)
             )
         )
-        _pairEvent.value = "Paired with ${pending.peer.name} — end-to-end encrypted"
+        _pairEvent.value = pairingOutcome(pending.peer.name, replaced)
     }
 
     /** Handles POST /api/pair/msg: decrypt with stored pairing key, route to chat. */
@@ -379,7 +418,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
             .put("iv", ivB64)
             .put("ct", ctB64)
             .toString()
-            .toRequestBody("application/json".toMediaType())
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
         return client.newCall(
             Request.Builder()
                 .url("http://${pairing.originIp}:${pairing.originPort}/api/pair/msg")
@@ -479,7 +518,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                     pubB64 = o.getString("pub"),
                     originIp = o.optString("ip"),
                     originPort = o.optInt("port", 8080),
-                    createdAt = o.optLong("created", System.currentTimeMillis())
+                    createdAt = o.optLong("created", System.currentTimeMillis()),
+                    verified = o.optBoolean("verified", false)
                 )
             }
         } catch (e: Exception) {
@@ -533,6 +573,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                     .put("ip", p.originIp)
                     .put("port", p.originPort)
                     .put("created", p.createdAt)
+                    .put("verified", p.verified)
             )
         }
         prefs.edit().putString("pairs", arr.toString()).apply()

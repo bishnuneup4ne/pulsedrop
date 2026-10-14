@@ -48,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -80,9 +81,10 @@ fun ShareScreen(
     onSendClip: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val colorScheme = MaterialTheme.colorScheme
     var textMessage by remember { mutableStateOf("") }
+
+    // The beam feed is the public room: private and group conversations stay in Chat.
+    val beams = remember(clipMessages) { clipMessages.filter { it.threadId == null } }
 
     val documentPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
@@ -106,10 +108,19 @@ fun ShareScreen(
         }
 
         item {
+            HostedFilesCard(
+                sharedFiles = sharedFiles,
+                onAddFiles = { documentPickerLauncher.launch(arrayOf("*/*")) },
+                onRemoveFile = onRemoveFile,
+                onClearFiles = onClearFiles
+            )
+        }
+
+        item {
             SessionStatsCard(
                 serverState = serverState,
                 sharedFiles = sharedFiles,
-                clipMessages = clipMessages,
+                clipMessages = beams,
                 activeTransfers = activeTransfers,
                 pairedCount = pairedCount,
                 peersCount = peersCount
@@ -126,176 +137,248 @@ fun ShareScreen(
             }
         }
 
-        // Hosted files — one big upload control
         item {
-            SectionCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        SectionTitle(
-                            "Hosted files",
-                            if (sharedFiles.isEmpty())
-                                "Files clients can download from your browser server"
-                            else
-                                "${sharedFiles.size} file${if (sharedFiles.size == 1) "" else "s"} • " +
-                                    NetworkUtils.formatBytes(sharedFiles.sumOf { it.size }) +
-                                    " hosted"
-                        )
+            TextBeamCard(
+                textMessage = textMessage,
+                onTextChange = { textMessage = it },
+                onSend = {
+                    if (textMessage.isNotBlank()) {
+                        onSendClip(textMessage.trim())
+                        textMessage = ""
                     }
-                    if (sharedFiles.isNotEmpty()) {
-                        TextButton(
-                            onClick = onClearFiles,
-                            modifier = Modifier.testTag("clear_all_files_btn")
-                        ) {
-                            Text("Clear all", color = colorScheme.error, style = MaterialTheme.typography.labelLarge)
-                        }
-                    }
-                }
+                },
+                beams = beams.takeLast(3).asReversed()
+            )
+        }
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(168.dp)
-                        .clip(RoundedCornerShape(26.dp))
-                        .background(colorScheme.primaryContainer.copy(alpha = 0.30f))
-                        .border(
-                            width = 2.dp,
-                            color = colorScheme.primary.copy(alpha = 0.45f),
-                            shape = RoundedCornerShape(26.dp)
-                        )
-                        .clickable { documentPickerLauncher.launch(arrayOf("*/*")) }
-                        .testTag("pick_any_files_btn"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(60.dp)
-                                .clip(CircleShape)
-                                .background(colorScheme.primary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                                tint = colorScheme.onPrimary,
-                                modifier = Modifier.size(32.dp)
-                            )
-                        }
-                        Text(
-                            text = "Upload files",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Photos, video, docs — anything.\nThey go live on your server instantly.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorScheme.onSurfaceVariant,
-                            maxLines = 2
-                        )
-                    }
-                }
+        item { Spacer(modifier = Modifier.height(20.dp)) }
+    }
+}
 
-                if (sharedFiles.isEmpty()) {
-                    Text(
-                        text = "Nothing hosted yet. Tap the area above to add files.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        sharedFiles.forEach { file ->
-                            SharedFileItem(file = file, onRemove = { onRemoveFile(file.id) })
-                        }
-                    }
+@Composable
+private fun HostedFilesCard(
+    sharedFiles: List<SharedFile>,
+    onAddFiles: () -> Unit,
+    onRemoveFile: (String) -> Unit,
+    onClearFiles: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+
+    SectionCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                SectionTitle(
+                    "Hosted files",
+                    if (sharedFiles.isEmpty())
+                        "Files clients can download from your browser server"
+                    else
+                        "${sharedFiles.size} file${if (sharedFiles.size == 1) "" else "s"} • " +
+                            NetworkUtils.formatBytes(sharedFiles.sumOf { it.size }) +
+                            " hosted"
+                )
+            }
+            if (sharedFiles.isNotEmpty()) {
+                TextButton(
+                    onClick = onClearFiles,
+                    modifier = Modifier.testTag("clear_all_files_btn")
+                ) {
+                    Text("Clear all", color = colorScheme.error, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
 
-        // Text beam — quick send only; full conversation lives in Chat
-        item {
-            SectionCard {
-                SectionTitle("Text beam", "Push a note to every connected client — history lives in the Chat tab")
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = textMessage,
-                        onValueChange = { textMessage = it },
-                        placeholder = { Text("Type or paste a link…") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("clip_message_input")
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    IconButton(
-                        onClick = {
-                            if (textMessage.isNotBlank()) {
-                                onSendClip(textMessage.trim())
-                                textMessage = ""
-                            }
-                        },
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(colorScheme.primary)
-                            .testTag("send_clip_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send",
-                            tint = colorScheme.onPrimary
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(168.dp)
+                .clip(RoundedCornerShape(26.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            colorScheme.primaryContainer.copy(alpha = 0.16f)
                         )
-                    }
+                    )
+                )
+                .border(
+                    width = 1.5.dp,
+                    color = colorScheme.primary.copy(alpha = 0.35f),
+                    shape = RoundedCornerShape(26.dp)
+                )
+                .clickable(onClick = onAddFiles)
+                .testTag("pick_any_files_btn"),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(colorScheme.primary, colorScheme.tertiary)
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = colorScheme.onPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
                 }
+                Text(
+                    text = "Upload files",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = colorScheme.onSurface
+                )
+                Text(
+                    text = "Photos, video, docs — anything.\nThey go live on your server instantly.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorScheme.onSurfaceVariant,
+                    maxLines = 2
+                )
+            }
+        }
 
-                if (clipMessages.isNotEmpty()) {
-                    val last = clipMessages.last()
+        if (sharedFiles.isEmpty()) {
+            Text(
+                text = "Nothing hosted yet. Tap the area above to add files.",
+                style = MaterialTheme.typography.bodySmall,
+                color = colorScheme.onSurfaceVariant
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                sharedFiles.forEach { file ->
+                    SharedFileItem(file = file, onRemove = { onRemoveFile(file.id) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextBeamCard(
+    textMessage: String,
+    onTextChange: (String) -> Unit,
+    onSend: () -> Unit,
+    beams: List<ClipMessage>
+) {
+    val context = LocalContext.current
+    val colorScheme = MaterialTheme.colorScheme
+
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        Brush.linearGradient(listOf(colorScheme.primary, colorScheme.tertiary))
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = null,
+                    tint = colorScheme.onPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            SectionTitle("Text beam", "Push a note to every client on this network")
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = textMessage,
+                onValueChange = onTextChange,
+                placeholder = { Text("Type or paste a link…") },
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("clip_message_input")
+            )
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(
+                        if (textMessage.isBlank()) {
+                            Brush.linearGradient(listOf(colorScheme.surfaceVariant, colorScheme.surfaceVariant))
+                        } else {
+                            Brush.linearGradient(listOf(colorScheme.primary, colorScheme.tertiary))
+                        }
+                    )
+                    .clickable(enabled = textMessage.isNotBlank()) { onSend() }
+                    .testTag("send_clip_btn"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Send",
+                    tint = if (textMessage.isBlank()) colorScheme.onSurfaceVariant else colorScheme.onPrimary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+
+        if (beams.isEmpty()) {
+            Text(
+                text = "No beams sent yet. Anything you push here lands on every connected browser and device.",
+                style = MaterialTheme.typography.bodySmall,
+                color = colorScheme.onSurfaceVariant
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                beams.forEach { beam ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(colorScheme.surfaceVariant)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                            .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Last beam • ${last.sender}",
-                                style = MaterialTheme.typography.labelMedium,
+                                text = beam.sender,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
                                 color = colorScheme.primary
                             )
                             Text(
-                                text = last.text,
+                                text = beam.text,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-
                         IconButton(
                             onClick = {
                                 val clipboard =
-                                    context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("PulseDrop", last.text))
+                                    context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("PulseDrop", beam.text))
                                 Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
                             },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
@@ -308,8 +391,6 @@ fun ShareScreen(
                 }
             }
         }
-
-        item { Spacer(modifier = Modifier.height(20.dp)) }
     }
 }
 

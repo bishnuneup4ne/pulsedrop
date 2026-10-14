@@ -444,8 +444,21 @@ private fun StatTile(
     }
 }
 
-private fun fileTypeOf(fileName: String): String {
-    val ext = fileName.substringAfterLast('.', "").lowercase()
+/**
+ * Rows stored before the server kept plain peer names read "Client (10.0.0.5)" or
+ * "Paired • study-laptop"; the address only earns a place when it is the whole identity.
+ */
+private fun peerLabel(raw: String, ip: String?): String {
+    val stripped = raw.substringBefore(" (").trim()
+    val name = stripped.removePrefix("Paired •").trim()
+    return when {
+        name.isNotBlank() && name != "Client" && name != "Web Client" -> name
+        !ip.isNullOrBlank() -> "Browser · $ip"
+        else -> "Browser"
+    }
+}
+
+private fun fileTypeOf(fileName: String): String {    val ext = fileName.substringAfterLast('.', "").lowercase()
     return when (ext) {
         "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "svg" -> "IMAGES"
         "mp4", "mkv", "mov", "webm", "avi", "3gp" -> "VIDEOS"
@@ -518,10 +531,7 @@ fun HistoryItemCard(
                     Text(
                         text = buildString {
                             append(if (isIncoming) "From " else "To ")
-                            append(item.remoteDevice)
-                            if (!item.clientIp.isNullOrBlank()) {
-                                append(" • ").append(item.clientIp)
-                            }
+                            append(peerLabel(item.remoteDevice, item.clientIp))
                             append(" • ").append(timeFormatted)
                         },
                         style = MaterialTheme.typography.bodySmall,

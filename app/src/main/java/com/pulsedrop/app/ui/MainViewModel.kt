@@ -61,7 +61,7 @@ data class UiServerState(
     val isRunning: Boolean = false,
     val ipAddress: String = "127.0.0.1",
     val port: Int = 8080,
-    val serverUrl: String = "http://127.0.0.1:8080",
+    val serverUrl: String = "https://127.0.0.1:8081",
     val isPinRequired: Boolean = false,
     val pin: String = "1234",
     val deviceName: String = "PulseDrop Phone",
@@ -119,6 +119,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var typingPollJob: kotlinx.coroutines.Job? = null
 
+    /** Desktop browsers currently pointed at this phone's server. */
+    private val _webClients = MutableStateFlow<List<com.pulsedrop.app.server.WebClientInfo>>(emptyList())
+    val webClients: StateFlow<List<com.pulsedrop.app.server.WebClientInfo>> = _webClients.asStateFlow()
+    private var webClientJob: kotlinx.coroutines.Job? = null
+
     private val settingsPrefs = context.getSharedPreferences("localdrop_settings", Context.MODE_PRIVATE)
 
     val pairManager = PairManager(context, viewModelScope)
@@ -137,6 +142,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val callState = callEngine.state
     val incomingCall = callEngine.incomingCall
     val remoteFrame = callEngine.remoteFrame
+    val remoteFrames = callEngine.remoteFrames
 
     private val _scannedPeers = MutableStateFlow<List<PeerDevice>>(emptyList())
     val scannedPeers: StateFlow<List<PeerDevice>> = _scannedPeers.asStateFlow()
@@ -153,12 +159,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 deviceName = settingsPrefs.getString("deviceName", null) ?: defaultDeviceName,
                 ipAddress = initialIp,
-                serverUrl = "http://$initialIp:${it.port}",
+                serverUrl = "https://$initialIp:${it.port + 1}",
                 isPinRequired = settingsPrefs.getBoolean("pinRequired", false),
                 pin = settingsPrefs.getString("pin", null) ?: generateRandomPin()
             )
         }
-        updateQrCode("http://$initialIp:8080")
+        updateQrCode("https://$initialIp:${_serverState.value.port + 1}")
         startIdleWatchdog()
 
         pairManager.nameProvider = { _serverState.value.deviceName }
@@ -233,6 +239,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         pairManager.unpair(pid)
     }
 
+    fun pairSafetyCode(pid: String): String? = pairManager.safetyCodeFor(pid)
+
+    fun setPairVerified(pid: String, verified: Boolean) {
+        pairManager.setVerified(pid, verified)
+        _uiMessage.value = if (verified) "Pairing marked verified" else "Pairing marked unverified"
+    }
+
     fun consumePairEvent() {
         pairManager.consumeEvent()
     }
@@ -249,11 +262,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         callEngine.invite(pid, video)
     }
 
+    fun startGroupCall(pids: List<String>, video: Boolean) {
+        if (!_serverState.value.isRunning) {
+            _uiMessage.value = "Turn your server on first - calls signal over it"
+            return
+        }
+        if (pids.isEmpty()) {
+            _uiMessage.value = "Pair a device first - browsers can only be rung from their chat"
+            return
+        }
+        // Calling "everyone" with a single device behind is just a one-to-one call.
+        if (pids.size == 1) callEngine.invite(pids.first(), video)
+        else callEngine.inviteConference(pids, video)
+    }
+
     fun respondToCall(accept: Boolean) {
         callEngine.respondIncoming(accept)
     }
 
     fun hangUpCall() {
+        // A browser leg has no socket to notify: the shared call record is how the tab learns.
+        if (callEngine.state.value.peerPid == CallEngine.WEB_PID) {
+            if (_webCall.value != null) endWebCall() else dismissWebCall()
+        }
         callEngine.hangup()
     }
 
@@ -261,7 +292,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleCallCamera() = callEngine.toggleCamera()
 
+    fun attachCallPreview(holder: android.view.SurfaceHolder?) = callEngine.attachPreview(holder)
+
     fun stopScreenShare() = callEngine.stopScreenShare()
+
+    fun toastCallMessage(message: String) {
+        _uiMessage.value = message
+    }
+
+    fun armScreenShare() {
+        callEngine.armScreenShare()
+    }
+
+    /** The user backed out of the system picker; drop the reserved foreground slot. */
+    fun cancelScreenShare() {
+        callEngine.abandonScreenShare()
+    }
 
     fun startScreenShare(resultCode: Int, data: Intent) {
         callEngine.startScreenShare(resultCode, data)
@@ -385,6 +431,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun startWebClientWatch() {
+        if (webClientJob?.isActive == true) return
+        webClientJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                // The server records every browser hit itself; this only lifts it into state.
+                _webClients.value = serverInstance?.webClientsSnapshot() ?: emptyList()
+                delay(2500)
+            }
+        }
+    }
+
     private fun startTypingPolling() {
         typingPollJob?.cancel()
         typingPollJob = viewModelScope.launch(Dispatchers.IO) {
@@ -418,7 +475,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .put("sender", _serverState.value.deviceName)
                     .put("typing", active)
                     .toString()
-                    .toRequestBody("application/json".toMediaType())
+                    .toRequestBody("application/json; charset=utf-8".toMediaType())
                 probeClient.newCall(
                     Request.Builder()
                         .url("http://127.0.0.1:${_serverState.value.port}/api/typing")
@@ -545,7 +602,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val ip = NetworkUtils.getLocalIpAddress()
         val currentPort = _serverState.value.port
         val previous = _serverState.value.ipAddress
-        val url = "http://$ip:$currentPort"
+        val url = "https://$ip:${currentPort + 1}"
         _serverState.update {
             it.copy(
                 ipAddress = ip,
@@ -556,6 +613,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Discovery announced the address captured at start-up, so after a Wi-Fi switch
         // peers kept dialling the phone's old IP. Re-broadcast, and re-point the notification.
         if (ip != previous && _serverState.value.isRunning) {
+            serverInstance?.refreshTls(listOf(ip))
             val state = _serverState.value
             discoveryManager.startDiscovery(
                 deviceName = state.deviceName,
@@ -638,14 +696,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             server.setSharedFiles(_sharedFiles.value)
             server.pairManager = pairManager
             server.callEngine = callEngine
+            // A browser call that outlived the old ViewModel must re-appear on this one,
+            // otherwise the phone forgets a ringing tab while the browser keeps waiting.
+            server.webCall?.takeIf { it.state == "ringing" || it.state == "accepted" }?.let {
+                _webCall.value = it
+            }
             if (!server.isAlive) server.start()
             serverInstance = server
-            ServerService.hostedServer = server
+            ServerService.publishServer(server)
             syncWebThreads()
 
             _serverState.update { it.copy(isRunning = true, startedAt = System.currentTimeMillis()) }
             ServerService.startService(context, state.serverUrl)
             if (chatVisible) startTypingPolling()
+            startWebClientWatch()
 
             discoveryManager.startDiscovery(
                 deviceName = state.deviceName,
@@ -666,6 +730,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopServer() {
         typingPollJob?.cancel()
         typingPollJob = null
+        webClientJob?.cancel()
+        webClientJob = null
+        _webClients.value = emptyList()
         _typingUsers.value = emptyList()
         // Signaling rides on this socket, so a live call cannot outlive it: end it here
         // instead of leaving the call sheet up over a dead connection.
@@ -691,8 +758,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addFiles(uris: List<Uri>) {
+    /**
+     * A browser cannot be dialed back, so "sending" to one means hosting the file for that
+     * address alone: it lands in their list and nowhere else on the network.
+     */
+    fun sendFileToBrowser(ip: String, uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
+            val meta = resolveFileMetadata(uri)
+            val item = SharedFile(
+                id = UUID.randomUUID().toString(),
+                name = meta.first,
+                size = meta.second,
+                mimeType = meta.third,
+                uriString = uri.toString(),
+                targetClientIp = ip
+            )
+            _sharedFiles.update { current ->
+                val updated = current + item
+                serverInstance?.setSharedFiles(updated)
+                updated
+            }
+            _uiMessage.value = "Sent ${meta.first} to $ip — it is in their download list"
+        }
+    }
+
+    fun addFiles(uris: List<Uri>) {        viewModelScope.launch(Dispatchers.IO) {
             val newItems = mutableListOf<SharedFile>()
             for (uri in uris) {
                 val metadata = resolveFileMetadata(uri)
@@ -759,6 +849,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _webCall = MutableStateFlow<WebCall?>(null)
     val webCall: StateFlow<WebCall?> = _webCall.asStateFlow()
+
+    /** Dial the browser tab of a LAN visitor; the phone owns the ringing UI on both ends. */
+    fun callWebClient(ip: String, name: String, video: Boolean) {
+        val server = serverInstance ?: run {
+            _uiMessage.value = "Turn your server on first - calls signal over it"
+            return
+        }
+        if (_webCall.value != null || callEngine.state.value.active || callEngine.incomingCall.value != null) {
+            _uiMessage.value = "Another call is already up"
+            return
+        }
+        server.ringWebClient(ip, name, video)
+    }
 
     fun answerWebCall(accept: Boolean) {
         val call = _webCall.value ?: return

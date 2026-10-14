@@ -21,6 +21,13 @@ object WebClientHtml {
   <title>PulseDrop - Private Local File Share</title>
   <style>
     /* ===== Premium light app shell. No CDN, no dark mode, no gradients-as-decoration. ===== */
+    /* Google Sans is served by this device (same subset the app bundles), so the browser
+       client types identically to the phone with no upstream available. */
+    @font-face { font-family: "Google Sans"; font-weight: 400; font-display: swap; src: url("/fonts/google-sans-regular.ttf") format("truetype"); }
+    @font-face { font-family: "Google Sans"; font-weight: 500; font-display: swap; src: url("/fonts/google-sans-medium.ttf") format("truetype"); }
+    @font-face { font-family: "Google Sans"; font-weight: 600; font-display: swap; src: url("/fonts/google-sans-semibold.ttf") format("truetype"); }
+    @font-face { font-family: "Google Sans"; font-weight: 700; font-display: swap; src: url("/fonts/google-sans-bold.ttf") format("truetype"); }
+
     :root {
       --accent: #2563EB;
       --accent-hover: #1D4ED8;
@@ -49,14 +56,14 @@ object WebClientHtml {
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body {
-      font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-family: "Google Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
       -webkit-font-smoothing: antialiased;
       overflow: hidden;
     }
     svg { display: block; flex-shrink: 0; }
-    button, input, textarea { font-family: inherit; }
+    button, input, textarea, select { font-family: inherit; }
     :focus-visible {
       outline: 3px solid rgba(37,99,235,0.45);
       outline-offset: 2px;
@@ -119,30 +126,16 @@ object WebClientHtml {
     .brand-name em { font-style: normal; color: var(--accent); }
     .brand-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
 
-    /* ===== Stats grid ===== */
+    /* ===== Section heading ===== */
     .sec-title {
       font-size: 11px; font-weight: 700; letter-spacing: 0.7px; text-transform: uppercase;
       color: var(--muted); padding: 0 4px;
-    }
-    .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
-    .stat {
-      background: var(--surface); border: 1px solid var(--hairline);
-      border-radius: 14px; padding: 10px;
-      display: flex; align-items: center; gap: 9px;
-      box-shadow: var(--shadow-1); min-width: 0;
-    }
-    .stat-icon {
-      width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center;
     }
     .ic-blue { background: var(--t-blue-bg); color: var(--t-blue-fg); }
     .ic-green { background: var(--t-green-bg); color: var(--t-green-fg); }
     .ic-violet { background: var(--t-violet-bg); color: var(--t-violet-fg); }
     .ic-amber { background: var(--t-amber-bg); color: var(--t-amber-fg); }
     .ic-slate { background: var(--t-slate-bg); color: var(--t-slate-fg); }
-    .stat-body { min-width: 0; }
-    .stat-label { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--muted); }
-    .stat-value { font-size: 14px; font-weight: 700; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     /* ===== Dropzone ===== */
     .dropzone {
@@ -160,6 +153,47 @@ object WebClientHtml {
     .dropzone h3 { font-size: 13.5px; font-weight: 700; }
     .dropzone p { font-size: 12px; color: var(--muted); line-height: 1.45; }
     .dz-actions { display: flex; gap: 8px; margin-top: 6px; }
+
+    /* ===== Upload page ===== */
+    .upload-pane {
+      width: auto; max-width: 860px; margin: 0 auto; padding: 26px 22px 40px; gap: 18px;
+      border-right: none;
+    }
+    .up-head { padding: 0 4px; }
+    .up-title { font-size: 21px; font-weight: 800; letter-spacing: -0.5px; }
+    .up-sub { font-size: 12.5px; color: var(--muted); margin-top: 5px; line-height: 1.55; }
+    .dropzone-lg { padding: 44px 20px; gap: 8px; border-radius: 22px; }
+    .dropzone-lg .dropzone-icon { width: 52px; height: 52px; border-radius: 16px; }
+    .dropzone-lg h3 { font-size: 15px; }
+    .dropzone-lg p { font-size: 12.5px; max-width: 420px; }
+    .up-field {
+      background: var(--surface); border: 1px solid var(--hairline);
+      border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow-1);
+    }
+    .up-field .select { width: 100%; margin-top: 8px; }
+    .dev-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; font-size: 12px; color: var(--muted); }
+    .dev-chip {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+      border: 1px solid var(--hairline); border-radius: 999px; padding: 4px 10px; color: var(--text);
+    }
+    .dev-chip::before {
+      content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0;
+    }
+    .dev-chip.live::before { background: var(--success); }
+    .link-btn {
+      appearance: none; border: none; background: none; padding: 0; cursor: pointer;
+      font: inherit; font-weight: 700; color: var(--accent);
+    }
+    .link-btn:hover { text-decoration: underline; }
+    .up-hint { font-size: 11.5px; color: var(--muted); margin-top: 9px; line-height: 1.55; }
+
+    /* ===== Files filter bar ===== */
+    .filter-bar {
+      flex-shrink: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--hairline);
+    }
+    .filter-bar .search { flex: 1 1 240px; max-width: 360px; }
+    .filter-bar .chips { flex: 1 1 auto; }
 
     .btn {
       border: none; border-radius: 12px; cursor: pointer;
@@ -257,6 +291,61 @@ object WebClientHtml {
       padding: 34px 16px; text-align: center; color: var(--muted);
       display: flex; flex-direction: column; align-items: center; gap: 10px; font-size: 13px; line-height: 1.5;
     }
+    /* A grid would otherwise shrink-wrap the empty state into one cell. */
+    .file-list > .empty { grid-column: 1 / -1; }
+    .empty-cta {
+      appearance: none; cursor: pointer; font: inherit; font-weight: 700; font-size: 12.5px;
+      color: #fff; background: var(--accent); border: none; border-radius: 999px; padding: 9px 18px;
+    }
+    .empty-cta:hover { filter: brightness(1.07); }
+
+    /* ===== Files: the empty shelf ===== */
+    .files-empty {
+      grid-column: 1 / -1;
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+      padding: clamp(30px, 7vh, 72px) 20px 44px;
+    }
+    .fe-art { position: relative; width: 140px; height: 96px; margin-bottom: 26px; }
+    .fe-card {
+      position: absolute; top: 8px; left: 50%; width: 74px; height: 58px; margin-left: -37px;
+      border-radius: 12px; background: var(--surface);
+      border: 1px solid var(--hairline); box-shadow: var(--shadow-1);
+    }
+    .fe-card::after {
+      content: ""; position: absolute; top: 13px; left: 12px; right: 12px; height: 6px;
+      border-radius: 999px; background: var(--t-slate-bg);
+    }
+    .fe-card.c1 { transform: rotate(-15deg) translateX(-28px) translateY(9px); opacity: .5; }
+    .fe-card.c2 { transform: rotate(10deg) translateX(26px) translateY(5px); opacity: .72; }
+    .fe-card.c3 {
+      top: 14px; width: 86px; height: 68px; margin-left: -43px;
+      border-color: var(--hairline-strong); box-shadow: var(--shadow-2);
+    }
+    .fe-card.c3::after {
+      left: 14px; right: 30px;
+      box-shadow: 0 14px 0 var(--t-slate-bg), 0 28px 0 var(--t-blue-bg);
+    }
+    .fe-plus {
+      position: absolute; right: 2px; bottom: 0; width: 34px; height: 34px; border-radius: 50%;
+      background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center;
+      box-shadow: var(--shadow-2);
+    }
+    .fe-title { font-size: 19px; font-weight: 800; letter-spacing: -.3px; color: var(--text); }
+    .fe-sub { margin-top: 9px; max-width: 46ch; font-size: 13.5px; line-height: 1.62; color: var(--muted); }
+    .fe-ctas { margin-top: 22px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+    .fe-btn {
+      appearance: none; cursor: pointer; font: inherit; font-weight: 700; font-size: 13px;
+      display: inline-flex; align-items: center; gap: 7px; border-radius: 999px; padding: 11px 20px;
+      border: 1px solid transparent; transition: transform .12s ease, border-color .12s ease, color .12s ease;
+    }
+    .fe-btn:hover { transform: translateY(-1px); }
+    .fe-btn.primary { background: var(--accent); color: #fff; box-shadow: var(--shadow-2); }
+    .fe-btn.primary:hover { background: var(--accent-hover); }
+    .fe-btn.ghost { background: var(--surface); color: var(--text); border-color: var(--hairline-strong); }
+    .fe-btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .fe-hints { margin-top: 26px; display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center; }
+    .fe-hint { font-size: 11.5px; font-weight: 650; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+    .fe-hint i { width: 5px; height: 5px; border-radius: 50%; background: var(--success); }
     .side-foot { font-size: 11px; color: var(--muted); line-height: 1.55; padding: 0 4px; display: flex; flex-direction: column; gap: 6px; }
     .privacy-note {
       background: var(--t-green-bg); color: var(--t-green-fg);
@@ -286,12 +375,22 @@ object WebClientHtml {
       border: 1px solid var(--hairline); background: var(--bg); border-radius: 12px; padding: 9px 12px;
     }
     .rail-search input:focus { border-color: var(--accent); background: var(--surface); }
-    .rail-new { display: none; gap: 6px; padding: 0 14px 10px; }
+    .rail-new { display: none; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; }
     .rail-new.open { display: flex; }
     .rail-new input {
       flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); outline: none;
       border: 1px solid var(--accent); background: var(--surface); border-radius: 12px; padding: 8px 12px;
     }
+    .new-peers { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; margin-top: 2px; }
+    .new-peer {
+      appearance: none; cursor: pointer; font-size: 11.5px; font-weight: 600;
+      border: 1px solid var(--hairline); background: var(--bg); color: var(--text);
+      border-radius: 999px; padding: 5px 10px;
+    }
+    .new-peer:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
+    .new-peer.on { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
+    .new-peer.idle { color: var(--muted); }
+    .new-peers-empty { font-size: 11.5px; color: var(--muted); width: 100%; }
     .rail-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 10px; }
     .rail-empty { padding: 26px 16px; font-size: 12.5px; color: var(--muted); text-align: center; line-height: 1.55; }
     .rail-item {
@@ -359,7 +458,7 @@ object WebClientHtml {
     .bubble-row.mine .bubble-col { align-items: flex-end; }
     .bubble {
       max-width: 100%; padding: 10px 14px; border-radius: 18px;
-      font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif;
+      font-family: "Google Sans", system-ui, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif;
       font-size: 14px; line-height: 1.45; word-break: break-word; overflow-wrap: anywhere; white-space: pre-wrap;
       background: var(--hairline); color: var(--text);
       border-bottom-left-radius: 18px;
@@ -490,17 +589,25 @@ object WebClientHtml {
 
     /* ===== Left navigation rail ===== */
     .nav-rail {
-      width: 76px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
-      gap: 6px; padding: 12px 0; background: var(--surface); border-right: 1px solid var(--hairline);
+      width: 208px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
+      padding: 14px 12px; background: var(--surface); border-right: 1px solid var(--hairline);
     }
+    /* Chats needs the width for the thread list, so the sidebar folds to icons there. */
+    .nav-rail.mini { width: 74px; align-items: center; padding: 14px 0; gap: 6px; }
+    .nav-rail.mini .nav-btn { flex-direction: column; width: 58px; gap: 4px; padding: 8px 0 6px; font-size: 10px; }
+    .nav-rail.mini .nav-lab { display: none; }
+    .nav-rail.mini .nav-mark { margin-bottom: 8px; }
+    .nav-rail.mini #railToggle svg { transform: rotate(180deg); }
+    .nav-rail.mini #railToggle { margin-top: auto; }
+    .nav-rail.mini #railToggle svg { transform: rotate(180deg); }
     .nav-mark {
       width: 38px; height: 38px; border-radius: 13px; margin-bottom: 8px;
       background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center;
     }
     .nav-btn {
-      appearance: none; border: none; background: none; cursor: pointer; width: 60px; padding: 8px 0 6px;
-      border-radius: 14px; display: flex; flex-direction: column; align-items: center; gap: 4px;
-      color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.2px;
+      appearance: none; border: none; background: none; cursor: pointer;
+      border-radius: 13px; display: flex; align-items: center; gap: 12px; padding: 9px 12px;
+      color: var(--muted); font-size: 13px; font-weight: 700; letter-spacing: -0.1px;
       transition: background 0.15s, color 0.15s;
     }
     .nav-btn:hover { background: var(--bg); color: var(--text); }
@@ -522,6 +629,7 @@ object WebClientHtml {
     .stage-title { font-size: 17px; font-weight: 800; letter-spacing: -0.4px; }
     .stage-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
     .stage-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px 24px; }
+
     .spacer { margin-left: auto; }
     .seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 11px; overflow: hidden; background: var(--surface); }
     .seg button {
@@ -557,26 +665,100 @@ object WebClientHtml {
     .panel { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 16px 18px; }
     .panel + .panel { margin-top: 14px; }
     .panel h3 { font-size: 13.5px; font-weight: 800; letter-spacing: -0.2px; margin-bottom: 12px; }
+    .self-name-row { display: flex; gap: 8px; }
+    .self-name-row input {
+      flex: 1; min-width: 0; border: 1px solid var(--hairline); border-radius: 12px;
+      background: var(--bg); color: var(--text); font-size: 13px; padding: 9px 12px;
+    }
+    .self-name-row input:focus { outline: none; border-color: var(--accent); }
+    .self-name-hint { font-size: 11.5px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
 
-    /* ===== Call overlay ===== */
-    .call-card { width: min(420px, 92vw); text-align: center; }
-    .call-avatar {
-      width: 84px; height: 84px; border-radius: 50%; margin: 0 auto 12px;
+    /* ===== Call: a full-page stage, not a popup ===== */
+    .call-screen {
+      position: fixed; inset: 0; z-index: 130; background: #070B14; color: #fff;
+      display: none; flex-direction: column;
+    }
+    .call-screen.show { display: flex; }
+    .call-stage {
+      position: relative; flex: 1; min-height: 0; overflow: hidden;
       display: flex; align-items: center; justify-content: center;
-      font-size: 30px; font-weight: 800; color: #fff;
     }
-    .call-title { font-size: 19px; font-weight: 800; letter-spacing: -0.4px; }
-    .call-sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
-    .call-video { width: 100%; height: 190px; object-fit: cover; border-radius: 14px; background: #0F172A; margin-top: 14px; display: none; }
-    .call-actions { display: flex; gap: 12px; justify-content: center; margin-top: 18px; }
-    .call-btn {
+    .call-remote {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: contain; background: #070B14; display: none;
+    }
+    .call-remote.cover { object-fit: cover; }
+    .call-poster { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; padding: 24px; text-align: center; }
+    .call-poster.hide { display: none; }
+    .call-avatar {
+      width: 116px; height: 116px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 42px; font-weight: 800; color: #fff;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, .45);
+    }
+    .call-peer { font-size: 24px; font-weight: 800; letter-spacing: -.6px; margin-top: 16px; }
+    .call-status { font-size: 13.5px; color: #94A3B8; margin-top: 7px; }
+    .call-top {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 3;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
+      padding: 22px 26px; background: linear-gradient(180deg, rgba(7, 11, 20, .74), rgba(7, 11, 20, 0));
+      pointer-events: none;
+    }
+    .call-kicker { font-size: 10.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #93C5FD; }
+    .call-name { font-size: 17px; font-weight: 800; letter-spacing: -.3px; margin-top: 3px; }
+    .call-clock {
+      font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: #CBD5E1;
+      background: rgba(148, 163, 184, .16); border-radius: 999px; padding: 6px 13px;
+    }
+    .call-tag {
+      position: absolute; z-index: 3; left: 26px; bottom: 22px; display: none;
+      align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
+      background: rgba(6, 78, 59, .86); color: #6EE7B7; padding: 8px 14px; border-radius: 999px;
+    }
+    .call-tag.show { display: flex; }
+    .call-pip {
+      position: absolute; z-index: 4; right: 22px; bottom: 22px;
+      width: 172px; aspect-ratio: 4 / 3; border-radius: 16px; overflow: hidden;
+      background: #0F172A; border: 1px solid rgba(148, 163, 184, .3);
+      box-shadow: 0 16px 34px rgba(0, 0, 0, .5);
+    }
+    .call-pip video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
+    .call-pip-off {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      font-size: 11.5px; font-weight: 700; color: #94A3B8; text-align: center; padding: 8px;
+    }
+    .call-pip.live .call-pip-off { display: none; }
+    .call-dock {
+      position: relative; z-index: 5; display: flex; align-items: center; justify-content: center;
+      gap: 16px; padding: 22px 18px 30px;
+      background: linear-gradient(0deg, rgba(7, 11, 20, .92), rgba(7, 11, 20, .4) 65%, rgba(7, 11, 20, 0));
+    }
+    .dock-cell { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+    .dock-btn {
       appearance: none; border: none; cursor: pointer; width: 58px; height: 58px; border-radius: 50%;
-      display: inline-flex; align-items: center; justify-content: center; color: #fff; background: var(--hairline);
+      display: inline-flex; align-items: center; justify-content: center;
+      color: #E2E8F0; background: rgba(148, 163, 184, .18);
+      transition: transform .12s ease, background .12s ease;
     }
-    .call-btn.on { background: var(--accent); }
-    .call-btn.end { background: var(--error); }
-    .call-btn.off { background: var(--bg); color: var(--muted); border: 1px solid var(--hairline); }
-    .call-note { font-size: 11.5px; color: var(--muted); margin-top: 14px; line-height: 1.5; }
+    .dock-btn:hover { background: rgba(148, 163, 184, .3); }
+    .dock-btn:active { transform: scale(.93); }
+    .dock-btn.active { background: #fff; color: #0B1220; }
+    .dock-btn.danger { background: #DC2626; color: #fff; }
+    .dock-btn.good { background: #16A34A; color: #fff; }
+    .dock-btn[disabled] { opacity: .35; cursor: not-allowed; }
+    .dock-lab { font-size: 10.5px; font-weight: 700; letter-spacing: .2px; color: #94A3B8; }
+    .call-hint {
+      position: absolute; z-index: 4; left: 50%; transform: translateX(-50%); bottom: 128px;
+      font-size: 11.5px; color: #CBD5E1; background: rgba(15, 23, 42, .86);
+      border: 1px solid rgba(148, 163, 184, .22); padding: 9px 15px; border-radius: 999px;
+      display: none; max-width: min(520px, 90vw); text-align: center; line-height: 1.45;
+    }
+    .call-hint.show { display: block; }
+    @media (max-width: 720px) {
+      .call-pip { width: 116px; right: 14px; bottom: 14px; }
+      .dock-btn { width: 52px; height: 52px; }
+      .call-dock { gap: 12px; }
+    }
 
     /* ===== Chat attachments: the file is the message ===== */
     .att-card {
@@ -686,7 +868,6 @@ object WebClientHtml {
       .pane-chat.open-thread .rail { display: none; }
       .pane-chat:not(.open-thread) .convo { display: none; }
       .convo-back { display: inline-flex; }
-      .stats { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
       .bubble-col { max-width: 82%; }
       .emoji-pop { grid-template-columns: repeat(6, 1fr); }
     }
@@ -723,59 +904,54 @@ object WebClientHtml {
     <div class="shell">
 
       <!-- ===== Navigation rail ===== -->
-      <nav class="nav-rail" aria-label="Sections">
+      <nav class="nav-rail" id="navRail" aria-label="Sections">
         <div class="nav-mark">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v10"/><path d="m8 9 4 4 4-4"/><path d="M5 19h14"/></svg>
         </div>
-        <button class="nav-btn active" id="navFiles" data-view="files" aria-current="true" onclick="setView('files')">
+        <button class="nav-btn active" id="navFiles" aria-label="Files" data-view="files" aria-current="true" onclick="setView('files')">
           <span class="nav-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.6a2 2 0 0 1-1.7-.9L9.6 4.2A2 2 0 0 0 7.9 3.3H4a2 2 0 0 0-2 2v12.7A2 2 0 0 0 4 20Z"/></svg></span>
-          Files
+          <span class="nav-lab">Files</span>
         </button>
-        <button class="nav-btn" id="navChats" data-view="chats" aria-current="false" onclick="setView('chats')">
+        <button class="nav-btn" id="navUpload" aria-label="Upload" data-view="upload" aria-current="false" onclick="setView('upload')">
+          <span class="nav-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 20h16"/></svg></span>
+          <span class="nav-lab">Upload</span>
+        </button>
+        <button class="nav-btn" id="navChats" aria-label="Chats" data-view="chats" aria-current="false" onclick="setView('chats')">
           <span class="nav-ico">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/><path d="M9 11h6M9 14h4"/></svg>
             <span class="nav-badge" id="navChatsBadge">0</span>
           </span>
-          Chats
+          <span class="nav-lab">Chats</span>
         </button>
-        <button class="nav-btn" id="navHistory" data-view="history" aria-current="false" onclick="setView('history')">
+        <button class="nav-btn" id="navHistory" aria-label="History" data-view="history" aria-current="false" onclick="setView('history')">
           <span class="nav-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></span>
-          History
+          <span class="nav-lab">History</span>
         </button>
-        <button class="nav-btn" id="navDetails" data-view="details" aria-current="false" onclick="setView('details')">
-          <span class="nav-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg></span>
-          Details
+        <button class="nav-btn" id="railToggle" aria-label="Collapse or expand the menu" title="Collapse menu" onclick="toggleRail()" style="margin-top:auto">
+          <span class="nav-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 7-5 5 5 5"/></svg></span>
+          <span class="nav-lab">Collapse</span>
         </button>
       </nav>
 
-      <section class="view active" id="viewFiles">
-
-      <!-- ===== Files pane (desktop sidebar / mobile Files tab) ===== -->
-      <aside class="pane-files" id="paneFiles" aria-label="Files and stats">
+      <!-- ===== Upload view: drop files here and choose who receives them ===== -->
+      <section class="view" id="viewUpload">
+      <aside class="pane-files upload-pane" id="paneFiles" aria-label="Upload files">
         <div class="brand">
           <div class="brand-mark">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v10"/><path d="m8 9 4 4 4-4"/><path d="M5 19h14"/></svg>
           </div>
           <div>
-            <div class="brand-name">Local<em>Drop</em></div>
+            <div class="brand-name">Pulse<em>Drop</em></div>
             <div class="brand-sub" id="brandSub">Connected to ${safeDeviceName}</div>
           </div>
         </div>
 
-        <div class="sec-title">Overview</div>
-        <div class="stats" role="group" aria-label="Session statistics">
-          <div class="stat"><div class="stat-icon ic-blue"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></div><div class="stat-body"><div class="stat-label">Files</div><div class="stat-value" id="statFiles">0</div></div></div>
-          <div class="stat"><div class="stat-icon ic-green"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div><div class="stat-body"><div class="stat-label">Total size</div><div class="stat-value" id="statSize">0 B</div></div></div>
-          <div class="stat"><div class="stat-icon ic-violet"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></div><div class="stat-body"><div class="stat-label">Last sync</div><div class="stat-value" id="statSync">-</div></div></div>
-          <div class="stat"><div class="stat-icon ic-amber"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><div class="stat-body"><div class="stat-label">Access</div><div class="stat-value">${if (requiresPin) "PIN protected" else "Open"}</div></div></div>
-          <div class="stat"><div class="stat-icon ic-blue"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3 2.9-4.6 5.5-4.6s4.7 1.6 5.5 4.6"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.6c2.2.2 3.9 1.6 4.6 4"/></svg></div><div class="stat-body"><div class="stat-label">Visitors</div><div class="stat-value" id="statVisitors">0</div></div></div>
-          <div class="stat"><div class="stat-icon ic-violet"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg></div><div class="stat-body"><div class="stat-label">Messages</div><div class="stat-value" id="statMessages">0</div></div></div>
-          <div class="stat"><div class="stat-icon ic-green"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10 12 5l5 5"/><path d="M12 5v14"/><path d="m17 20-5 5-5-5" transform="translate(0 -5)"/></svg></div><div class="stat-body"><div class="stat-label">Transfers</div><div class="stat-value" id="statTransfers">0</div></div></div>
-          <div class="stat"><div class="stat-icon ic-amber"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div><div class="stat-body"><div class="stat-label">Uptime (session)</div><div class="stat-value" id="statUptime">0s</div></div></div>
-          <div class="stat"><div class="stat-icon ic-slate"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg></div><div class="stat-body"><div class="stat-label">Your IP</div><div class="stat-value" id="statYourIp">-</div></div></div>
+        <div class="up-head">
+          <div class="up-title">Upload</div>
+          <div class="up-sub">Drop files or folders anywhere on this page. They are hosted on this device right away - pick a device below to push them out.</div>
         </div>
 
-        <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Drop files here or press Enter to choose files">
+        <div id="dropzone" class="dropzone dropzone-lg" role="button" tabindex="0" aria-label="Drop files here or press Enter to choose files">
           <div class="dropzone-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="m8 17 4-4 4 4"/><path d="M20 8.8A5 5 0 0 0 15 5h-1.3A7 7 0 1 0 5 15.3"/></svg>
           </div>
@@ -808,34 +984,34 @@ object WebClientHtml {
           </div>
         </div>
 
-        <div class="search-row">
-          <div class="search">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-            <input id="searchInput" type="text" placeholder="Search files… (Ctrl+K)" aria-label="Search files" oninput="applyFilter()" />
-          </div>
+        <div class="up-field">
+          <div class="field-label">Send uploads to</div>
+          <select class="select" id="targetSelect" aria-label="Choose which device receives the files" onchange="saveTarget()">
+            <option value="">Everyone on the network</option>
+          </select>
+          <div class="up-hint">Pick a paired device to send straight into its inbox, or leave it on everyone - the phone pushes to every device you have paired.</div>
         </div>
 
-        <div class="chips" id="chips">
-          <button class="chip active" data-cat="all" aria-label="Show all files">All</button>
-          <button class="chip" data-cat="docs" aria-label="Show documents">Documents</button>
-          <button class="chip" data-cat="images" aria-label="Show images">Images</button>
-          <button class="chip" data-cat="videos" aria-label="Show videos">Videos</button>
-          <button class="chip" data-cat="audio" aria-label="Show audio">Audio</button>
-          <button class="chip" data-cat="archives" aria-label="Show archives">Archives</button>
-        </div>
-        <div class="chips">
-          <button class="chip" id="receivedChip" aria-pressed="false" aria-label="Filter to files received on the phone">On phone only</button>
+        <div class="up-field">
+          <div class="field-label">On this network</div>
+          <div class="dev-chips" id="uploadDevChips">Checking&hellip;</div>
+          <div class="up-hint">
+            Every device with this page open shows up here and can be messaged from Chats.
+            <button type="button" class="link-btn" onclick="setView('details')">See who is active</button>
+          </div>
         </div>
 
         <div class="side-foot">
           <div class="privacy-note">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v5c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6z"/><path d="m9 12 2 2 4-4"/></svg>
-            All transfers stay on your local network. No cloud, no accounts, no tracking.
+            Everything stays on this Wi-Fi network. No cloud, no accounts, no tracking.
           </div>
-          <div>Idle servers sleep after 30 minutes of no activity. Transfers stay on this Wi-Fi network.</div>
         </div>
       </aside>
+      </section>
 
+      <!-- ===== Files view: everything hosted on this device, full width ===== -->
+      <section class="view active" id="viewFiles">
       <div class="stage">
         <div class="stage-head">
           <div>
@@ -844,17 +1020,26 @@ object WebClientHtml {
           </div>
           <div class="spacer"></div>
           <div>
-            <div class="field-label" style="margin-bottom:4px">Send uploads to</div>
-            <select class="select" id="targetSelect" aria-label="Choose which device receives the files" onchange="saveTarget()">
-              <option value="">Everyone on the network</option>
-            </select>
-          </div>
-          <div>
             <div class="field-label" style="margin-bottom:4px">Layout</div>
             <div class="seg" role="group" aria-label="File layout">
               <button id="layoutGrid" class="active" onclick="setLayout('grid')">Grid</button>
               <button id="layoutList" onclick="setLayout('list')">List</button>
             </div>
+          </div>
+        </div>
+        <div class="filter-bar">
+          <div class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="searchInput" type="text" placeholder="Search files… (Ctrl+K)" aria-label="Search files" oninput="applyFilter()" />
+          </div>
+          <div class="chips" id="chips">
+            <button class="chip active" data-cat="all" aria-label="Show all files">All</button>
+            <button class="chip" data-cat="docs" aria-label="Show documents">Documents</button>
+            <button class="chip" data-cat="images" aria-label="Show images">Images</button>
+            <button class="chip" data-cat="videos" aria-label="Show videos">Videos</button>
+            <button class="chip" data-cat="audio" aria-label="Show audio">Audio</button>
+            <button class="chip" data-cat="archives" aria-label="Show archives">Archives</button>
+            <button class="chip" id="receivedChip" aria-pressed="false" aria-label="Filter to files received on the phone">On phone only</button>
           </div>
         </div>
         <div class="stage-body">
@@ -877,7 +1062,8 @@ object WebClientHtml {
             <input id="railSearch" type="text" placeholder="Search chats" aria-label="Search chats" oninput="renderThreadRail()" />
           </div>
           <div class="rail-new" id="railNew">
-            <input id="newIpInput" type="text" inputmode="decimal" placeholder="Direct message an IP" aria-label="Device IP address" onkeydown="if(event.key==='Enter')startIpThread()" />
+            <div class="new-peers" id="newPeerList"></div>
+            <input id="newIpInput" type="text" inputmode="decimal" placeholder="…or type an address" aria-label="Device IP address" onkeydown="if(event.key==='Enter')startIpThread()" />
             <button class="btn btn-filled" style="padding:8px 12px;font-size:12.5px" onclick="startIpThread()">Start</button>
           </div>
           <div class="rail-list" id="threadList" role="list"></div>
@@ -979,6 +1165,14 @@ object WebClientHtml {
           </div>
           <div class="stage-body">
             <div class="panel">
+              <h3>This device</h3>
+              <div class="self-name-row">
+                <input id="selfNameInput" type="text" maxlength="40" aria-label="Name shown to the phone" placeholder="Chrome on Windows" />
+                <button class="btn btn-filled" onclick="applySelfName()">Save</button>
+              </div>
+              <div class="self-name-hint">The phone lists every browser pointed at it as a device. This is the name it shows, and the name your messages arrive under.</div>
+            </div>
+            <div class="panel">
               <h3>This session</h3>
               <dl class="kv" id="sessionKv"></dl>
             </div>
@@ -997,11 +1191,15 @@ object WebClientHtml {
 
     <!-- Bottom tab bar (mobile only) -->
     <nav class="tabbar" role="tablist" aria-label="Sections">
-      <button class="tab-btn" id="tabFiles" role="tab" aria-current="true" aria-label="Show files" onclick="setView('files')">
+<button class="tab-btn" id="tabFiles" role="tab" aria-current="true" aria-label="Show files" onclick="setView('files')">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.6a2 2 0 0 1-1.7-.9L9.6 4.2A2 2 0 0 0 7.9 3.3H4a2 2 0 0 0-2 2v12.7A2 2 0 0 0 4 20Z"/></svg>
         Files
       </button>
-      <button class="tab-btn" id="tabChat" role="tab" aria-current="false" aria-label="Show chat" onclick="setView('chats')">
+<button class="tab-btn" id="tabUpload" role="tab" aria-current="false" aria-label="Show upload" onclick="setView('upload')">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 20h16"/></svg>
+        Upload
+      </button>
+            <button class="tab-btn" id="tabChat" role="tab" aria-current="false" aria-label="Show chat" onclick="setView('chats')">
         <span class="tab-wrap">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/><path d="M9 11h6M9 14h4"/></svg>
           <span class="tab-dot" id="tabChatDot" aria-hidden="true">0</span>
@@ -1019,25 +1217,69 @@ object WebClientHtml {
     </nav>
   </div><!-- /.app -->
 
-  <!-- Call overlay -->
-  <div id="callOverlay" class="overlay" style="display: none">
-    <div class="modal call-card" role="dialog" aria-modal="true" aria-labelledby="callTitle">
-      <div class="call-avatar" id="callAvatar">B</div>
-      <div class="call-title" id="callTitle">Calling…</div>
-      <div class="call-sub" id="callSub">Ringing on the other device</div>
-      <video id="callPreview" class="call-video" autoplay muted playsinline></video>
-      <div class="call-actions">
-        <button class="call-btn" id="callMic" aria-label="Mute microphone" title="Mute" onclick="toggleMic()">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
-        </button>
-        <button class="call-btn end" id="callEnd" aria-label="End call" title="End call" onclick="endCall()">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-17.6-17.6A2 2 0 0 1 4.2 2h3a2 2 0 0 1 2 1.7l.6 3a2 2 0 0 1-.6 1.9L7.6 9.9a16 16 0 0 0 6.5 6.5l1.5-1.5a2 2 0 0 1 1.9-.6l3 .6a2 2 0 0 1 1.5 2Z" transform="rotate(135 12 12)"/></svg>
-        </button>
-        <button class="call-btn" id="callCam" aria-label="Toggle camera" title="Camera" onclick="toggleCam()">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="13" height="12" rx="3"/><path d="m15.5 12 6-3.5v11L15.5 16"/></svg>
-        </button>
+  <!-- Call: full-page stage -->
+  <div id="callScreen" class="call-screen" role="dialog" aria-modal="true" aria-label="Call">
+    <div class="call-stage">
+      <img id="callRemote" class="call-remote" alt="Remote video" />
+      <div class="call-poster" id="callPoster">
+        <div class="call-avatar" id="callAvatar">B</div>
+        <div class="call-peer" id="callPeer">Device</div>
+        <div class="call-status" id="callStatus">Ringing on the other device</div>
       </div>
-      <p class="call-note" id="callNote"></p>
+      <div class="call-top">
+        <div>
+          <div class="call-kicker" id="callKind">Voice call</div>
+          <div class="call-name" id="callTitle">Calling</div>
+        </div>
+        <div class="call-clock" id="callTimer" style="display: none">0:00</div>
+      </div>
+      <div class="call-tag" id="callShareTag">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/></svg>
+        <span id="callShareTxt">Sharing screen</span>
+      </div>
+      <div class="call-hint" id="callHint"></div>
+      <div class="call-pip" id="callPip" style="display: none">
+        <video id="callSelf" autoplay playsinline muted></video>
+        <div class="call-pip-off" id="callPipOff">Camera off</div>
+      </div>
+    </div>
+    <div class="call-dock">
+      <div class="dock-cell" id="cellAccept" style="display: none">
+        <button class="dock-btn good" id="callAccept" aria-label="Answer call" title="Answer" onclick="acceptCall()">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-17.6-17.6A2 2 0 0 1 4.2 2h3a2 2 0 0 1 2 1.7l.6 3a2 2 0 0 1-.6 1.9L7.6 9.9a16 16 0 0 0 6.5 6.5l1.5-1.5a2 2 0 0 1 1.9-.6l3 .6a2 2 0 0 1 1.5 2Z"/></svg>
+        </button>
+        <span class="dock-lab">Answer</span>
+      </div>
+      <div class="dock-cell" id="cellDecline" style="display: none">
+        <button class="dock-btn danger" id="callDecline" aria-label="Decline call" title="Decline" onclick="declineCall()">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-17.6-17.6A2 2 0 0 1 4.2 2h3a2 2 0 0 1 2 1.7l.6 3a2 2 0 0 1-.6 1.9L7.6 9.9a16 16 0 0 0 6.5 6.5l1.5-1.5a2 2 0 0 1 1.9-.6l3 .6a2 2 0 0 1 1.5 2Z" transform="rotate(135 12 12)"/></svg>
+        </button>
+        <span class="dock-lab" id="callDeclineLab">Decline</span>
+      </div>
+      <div class="dock-cell" id="cellMute">
+        <button class="dock-btn" id="callMute" aria-label="Mute microphone" title="Mute" onclick="toggleCallMute()">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+        </button>
+        <span class="dock-lab">Mute</span>
+      </div>
+      <div class="dock-cell" id="cellCam">
+        <button class="dock-btn" id="callCam" aria-label="Turn camera on or off" title="Camera" onclick="toggleCallCamera()">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m23 7-7 5 7 5V7Z"/><rect x="1" y="5" width="15" height="14" rx="3"/></svg>
+        </button>
+        <span class="dock-lab">Camera</span>
+      </div>
+      <div class="dock-cell" id="cellShare">
+        <button class="dock-btn" id="callShareBtn" aria-label="Share your screen" title="Share screen" onclick="toggleCallShare()">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </button>
+        <span class="dock-lab" id="callShareLab">Share</span>
+      </div>
+      <div class="dock-cell" id="cellEnd">
+        <button class="dock-btn danger" id="callEnd" aria-label="End call" title="End call" onclick="endCall()">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-17.6-17.6A2 2 0 0 1 4.2 2h3a2 2 0 0 1 2 1.7l.6 3a2 2 0 0 1-.6 1.9L7.6 9.9a16 16 0 0 0 6.5 6.5l1.5-1.5a2 2 0 0 1 1.9-.6l3 .6a2 2 0 0 1 1.5 2Z" transform="rotate(135 12 12)"/></svg>
+        </button>
+        <span class="dock-lab" id="callEndLab">End</span>
+      </div>
     </div>
   </div>
 
@@ -1085,7 +1327,34 @@ object WebClientHtml {
   <script>
     var authToken = localStorage.getItem('pulse_token') || '';
     var REQUIRES_PIN = ${if (requiresPin) "true" else "false"};
-    var MY_NAME = 'Browser';
+    /* This tab's identity on the phone: the browser has no listener to dial, so the only
+       way it joins the mesh is by announcing itself on every request back to the server. */
+    function defaultClientName() {
+      var ua = navigator.userAgent || '';
+      var br = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox'
+        : /CriOS\//.test(ua) ? 'Chrome' : /Chrome\//.test(ua) ? 'Chrome'
+        : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+      var os = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android'
+        : /iPhone|iPad|iPod/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS'
+        : /CrOS/.test(ua) ? 'Chromebook' : /Linux|X11/.test(ua) ? 'Linux' : 'Device';
+      return br + ' on ' + os;
+    }
+    var MY_NAME = localStorage.getItem('pulse_client_name') || defaultClientName();
+    function setClientName(n) {
+      var v = String(n || '').trim().slice(0, 40);
+      if (!v) return;
+      MY_NAME = v;
+      try { localStorage.setItem('pulse_client_name', v); } catch (e) {}
+      var i = el('selfNameInput');
+      if (i) i.value = v;
+    }
+    function applySelfName() {
+      var i = el('selfNameInput');
+      var v = (i.value || '').trim();
+      if (!v) { toast('Give the device a name first'); return; }
+      setClientName(v);
+      toast('You now show up as "' + MY_NAME + '" on the phone');
+    }
     var myIp = '';
     var BOOT_TIME = Date.now();
 
@@ -1137,10 +1406,15 @@ object WebClientHtml {
     function authHeaders() {
       var h = {};
       if (authToken) h['X-Pulse-Auth'] = authToken;
+      h['X-Pulse-Client'] = encodeURIComponent(MY_NAME);
       return h;
     }
 
-    function revealApp() { el('appRoot').style.display = 'flex'; }
+    function revealApp() {
+      el('appRoot').style.display = 'flex';
+      var i = el('selfNameInput');
+      if (i && !i.value) i.value = MY_NAME;
+    }
 
     function lockOut() {
       localStorage.removeItem('pulse_token');
@@ -1162,7 +1436,7 @@ object WebClientHtml {
       try {
         var res = await fetch('/api/auth', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify({ pin: pin })
         });
         var data = await res.json();
@@ -1258,11 +1532,30 @@ object WebClientHtml {
 
     /* ===== Tabs (mobile) ===== */
     var currentView = 'files';
+    // null: follow the page (Chats folds the rail); true/false: the visitor pinned it by hand.
+    var railPinned = null;
+    try { var rp = localStorage.getItem('pulseRailPin'); if (rp === '1' || rp === '0') railPinned = rp === '1'; } catch (e) {}
+    function applyRailMode(view) {
+      var rail = el('navRail');
+      if (!rail) return;
+      var mini = railPinned === null ? view === 'chats' : railPinned;
+      rail.classList.toggle('mini', mini);
+      var btn = el('railToggle');
+      if (btn) btn.title = mini ? 'Expand menu' : 'Collapse menu';
+    }
+    function toggleRail() {
+      var rail = el('navRail');
+      if (!rail) return;
+      railPinned = !rail.classList.contains('mini');
+      try { localStorage.setItem('pulseRailPin', railPinned ? '1' : '0'); } catch (e) {}
+      applyRailMode(currentView);
+    }
     function setView(view) {
       currentView = view;
-      var map = { files: 'viewFiles', chats: 'paneChat', history: 'viewHistory', details: 'viewDetails' };
-      var tabs = { files: 'tabFiles', chats: 'tabChat', history: 'tabHistory', details: 'tabDetails' };
-      var navs = { files: 'navFiles', chats: 'navChats', history: 'navHistory', details: 'navDetails' };
+      applyRailMode(view);
+      var map = { files: 'viewFiles', upload: 'viewUpload', chats: 'paneChat', history: 'viewHistory', details: 'viewDetails' };
+      var tabs = { files: 'tabFiles', upload: 'tabUpload', chats: 'tabChat', history: 'tabHistory', details: 'tabDetails' };
+      var navs = { files: 'navFiles', upload: 'navUpload', chats: 'navChats', history: 'navHistory', details: 'navDetails' };
       Object.keys(map).forEach(function (k) {
         var node = el(map[k]);
         if (node) node.classList.toggle('active', k === view);
@@ -1302,10 +1595,8 @@ object WebClientHtml {
         if (!res.ok) return;
         var info = await res.json();
         myIp = info.clientIp || '';
-        el('statYourIp').textContent = myIp || '-';
         if (info.version) el('brandSub').textContent = 'Connected to ' + info.deviceName + ' - v' + info.version;
       } catch (e) {}
-      el('statUptime').textContent = uptimeText();
     }
 
     function setConnected(ok) {
@@ -1316,15 +1607,12 @@ object WebClientHtml {
 
     function updateStats() {
       var total = allFiles.reduce(function (s, f) { return s + (f.size || 0); }, 0);
-      el('statFiles').textContent = String(allFiles.length);
-      el('statSize').textContent = formatBytes(total);
-      el('statTransfers').textContent = String(transfersDone);
-      var newest = allFiles.reduce(function (m, f) { return Math.max(m, f.dateAdded || 0); }, 0);
-      el('statSync').textContent = agoText(newest);
-      el('statMessages').textContent = String(lastMsgs.length);
-      el('statVisitors').textContent = String(peersList ? peersList.length : 0);
-      el('statYourIp').textContent = myIp || '-';
-      el('statUptime').textContent = uptimeText();
+      var sub = el('filesSub');
+      if (sub) {
+        sub.textContent = allFiles.length
+          ? allFiles.length + ' hosted - ' + formatBytes(total) + ' - live on this network'
+          : 'Nothing hosted yet. Drop a file and it is live instantly.';
+      }
       if (currentView === 'details') renderSession();
     }
 
@@ -1345,8 +1633,10 @@ object WebClientHtml {
 
     el('chips').addEventListener('click', function (e) {
       var chip = e.target.closest('.chip');
-      if (!chip) return;
-      document.querySelectorAll('#chips .chip').forEach(function (c) { c.classList.remove('active'); });
+      // "On phone only" lives in this row but is a toggle, not a category; taking the branch
+      // for categories would set currentCat to undefined and blank the list.
+      if (!chip || !chip.dataset.cat) return;
+      document.querySelectorAll('#chips .chip[data-cat]').forEach(function (c) { c.classList.remove('active'); });
       chip.classList.add('active');
       currentCat = chip.dataset.cat;
       applyFilter();
@@ -1359,7 +1649,87 @@ object WebClientHtml {
       applyFilter();
     });
 
-    function renderEmpty(grid, message) {
+    var FE_UP = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+    var FE_CHAT = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H8l-4 3v-6.5A8 8 0 0 1 12 4h1a8 8 0 0 1 8 8Z"/></svg>';
+
+    function feBtn(cls, svg, label, run) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'fe-btn ' + cls;
+      b.innerHTML = svg;
+      b.appendChild(document.createElement('span')).textContent = label;
+      b.onclick = run;
+      return b;
+    }
+
+    function feHints(items) {
+      var h = document.createElement('div');
+      h.className = 'fe-hints';
+      items.forEach(function (t) {
+        var s = document.createElement('span');
+        s.className = 'fe-hint';
+        s.appendChild(document.createElement('i'));
+        s.appendChild(document.createTextNode(t));
+        h.appendChild(s);
+      });
+      return h;
+    }
+
+    function emptyShelfNode() {
+      var w = document.createElement('div');
+      w.className = 'files-empty';
+      var art = document.createElement('div');
+      art.className = 'fe-art';
+      art.setAttribute('aria-hidden', 'true');
+      art.innerHTML = '<div class="fe-card c1"></div><div class="fe-card c2"></div>' +
+        '<div class="fe-card c3"></div><div class="fe-plus">' +
+        '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></div>';
+      var t = document.createElement('div');
+      t.className = 'fe-title';
+      t.textContent = 'Nothing hosted yet';
+      var s = document.createElement('div');
+      s.className = 'fe-sub';
+      s.textContent = 'Photos, documents, builds — anything at all. It lands on this phone’s server the moment you drop it, and every device on the network can pull it from there.';
+      var c = document.createElement('div');
+      c.className = 'fe-ctas';
+      c.appendChild(feBtn('primary', FE_UP, 'Upload files', pickFiles));
+      c.appendChild(feBtn('ghost', FE_CHAT, 'Message a device', function () { setView('chats'); }));
+      w.appendChild(art); w.appendChild(t); w.appendChild(s); w.appendChild(c);
+      w.appendChild(feHints(['No cloud, no account', 'Only this Wi-Fi network', 'Drop files anywhere on the page']));
+      return w;
+    }
+
+    function emptyFilterNode() {
+      var w = document.createElement('div');
+      w.className = 'files-empty';
+      var art = document.createElement('div');
+      art.className = 'fe-art';
+      art.setAttribute('aria-hidden', 'true');
+      art.innerHTML = '<div class="fe-card c1"></div><div class="fe-card c2"></div><div class="fe-card c3"></div>';
+      var t = document.createElement('div');
+      t.className = 'fe-title';
+      t.textContent = 'Nothing matches';
+      var s = document.createElement('div');
+      s.className = 'fe-sub';
+      s.textContent = allFiles.length + ' file' + (allFiles.length === 1 ? '' : 's') + ' hosted here, none of them fit this filter.';
+      var c = document.createElement('div');
+      c.className = 'fe-ctas';
+      c.appendChild(feBtn('primary', FE_UP, 'Show everything', function () {
+        currentCat = 'all';
+        receivedOnly = false;
+        el('searchInput').value = '';
+        document.querySelectorAll('#chips .chip').forEach(function (x) {
+          x.classList.toggle('active', x.dataset.cat === 'all');
+        });
+        el('receivedChip').classList.remove('active');
+        el('receivedChip').setAttribute('aria-pressed', 'false');
+        applyFilter();
+      }));
+      w.appendChild(art); w.appendChild(t); w.appendChild(s); w.appendChild(c);
+      return w;
+    }
+
+    function renderEmpty(grid, message, action) {
       grid.textContent = '';
       var wrap = document.createElement('div');
       wrap.className = 'empty';
@@ -1370,6 +1740,14 @@ object WebClientHtml {
       text.textContent = message;
       wrap.appendChild(icon);
       wrap.appendChild(text);
+      if (action) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'empty-cta';
+        btn.textContent = action.label;
+        btn.onclick = action.run;
+        wrap.appendChild(btn);
+      }
       grid.appendChild(wrap);
     }
 
@@ -1377,9 +1755,7 @@ object WebClientHtml {
       var grid = el('filesGrid');
       grid.textContent = '';
       if (list.length === 0) {
-        renderEmpty(grid, allFiles.length === 0
-          ? 'No files yet. Drop files or folders above, or share them from the phone.'
-          : 'Nothing matches this filter.');
+        grid.appendChild(allFiles.length === 0 ? emptyShelfNode() : emptyFilterNode());
         return;
       }
       var folders = {};
@@ -1566,7 +1942,7 @@ object WebClientHtml {
       if (!quiet && !window.confirm('Delete "' + baseName(f.name) + '" from the phone?')) return false;
       try {
         var headers = authHeaders();
-        headers['Content-Type'] = 'application/json';
+        headers['Content-Type'] = 'application/json; charset=utf-8';
         var res = await fetch('/api/delete', {
           method: 'POST', headers: headers,
           body: JSON.stringify({ id: f.id })
@@ -1816,8 +2192,13 @@ object WebClientHtml {
     function initialsOf(name) {
       var parts = String(name || '?').trim().split(/[\s_-]+/).filter(Boolean);
       if (!parts.length) return '?';
-      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-      return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+      // "Firefox on Linux" is FL, not FO — a joiner in the middle of a display name is not a name.
+      var joiners = { on: 1, of: 1, the: 1, and: 1, de: 1, la: 1, le: 1 };
+      var first = parts[0].charAt(0);
+      var rest = parts.slice(1).filter(function (w) { return !joiners[w.toLowerCase()]; });
+      var second = rest.length ? rest[0].charAt(0) : (parts.length === 1 ? parts[0].charAt(1) : '');
+      var out = (first + second).toUpperCase();
+      return out || '?';
     }
     function relTime(ts) {
       if (!ts) return '';
@@ -1841,6 +2222,8 @@ object WebClientHtml {
       if (threadMeta[t] && threadMeta[t].title) return threadMeta[t].title;
       if (t.indexOf('ip:') === 0) {
         var ip = t.substring(3);
+        var known = peersList.filter(function (p) { return p.ip === ip && p.name && p.name !== ip; });
+        if (known.length) return known[0].name;
         for (var i = lastMsgs.length - 1; i >= 0; i--) {
           var m = lastMsgs[i];
           if (m.clientIp === ip && m.sender && m.sender !== MY_NAME) return String(m.sender);
@@ -1869,6 +2252,8 @@ object WebClientHtml {
       Object.keys(threadsSeen).forEach(function (t) { seen[t] = true; });
       Object.keys(threadMeta).forEach(function (t) { seen[t] = true; });
       seen[currentThread] = true;
+      // The rail is for direct conversations; group threads belong to the room.
+      Object.keys(seen).forEach(function (t) { if (t.indexOf('group:') === 0) delete seen[t]; });
       return Object.keys(seen).map(function (t) {
         var msgs = lastMsgs.filter(function (m) { return threadOf(m) === t; });
         var last = msgs.length ? msgs[msgs.length - 1] : null;
@@ -2060,7 +2445,35 @@ object WebClientHtml {
     function toggleNewChatMenu() {
       var n = el('railNew');
       var open = n.classList.toggle('open');
-      if (open) el('newIpInput').focus();
+      if (open) { renderNewChatPeers(); el('newIpInput').focus(); fetchPeers(); }
+    }
+
+    // Every device that is on this server — phone app or browser tab — is one click away.
+    function renderNewChatPeers() {
+      var host = el('newPeerList');
+      if (!host) return;
+      host.textContent = '';
+      var others = peersList.filter(function (p) { return p.ip && p.ip !== myIp; });
+      if (!others.length) {
+        var empty = document.createElement('div');
+        empty.className = 'new-peers-empty';
+        empty.textContent = 'No other device is on this server yet. Type its address below.';
+        host.appendChild(empty);
+        return;
+      }
+      others.forEach(function (p) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'new-peer' + (p.active ? '' : ' idle') + (currentThread === 'ip:' + p.ip ? ' on' : '');
+        b.textContent = p.name + ' · ' + p.ip + (p.kind === 'browser' ? ' (browser)' : '') + (p.active ? '' : ' · idle');
+        b.title = p.active ? 'Active now' : 'Last seen ' + agoText(p.lastSeen);
+        b.onclick = function () {
+          el('railNew').classList.remove('open');
+          threadsSeen['ip:' + p.ip] = true;
+          selectThread('ip:' + p.ip);
+        };
+        host.appendChild(b);
+      });
     }
 
     function startIpThread() {
@@ -2313,6 +2726,26 @@ object WebClientHtml {
       el('lbZoomPct').textContent = Math.round(lb.scale * 100) + '%';
     }
 
+    /**
+     * Decodes bytes the extension claimed were text, or returns null when they clearly
+     * are not. A .txt that is really a compiled blob otherwise filled the lightbox with
+     * replacement glyphs, which is what "mojibake" screens look like.
+     */
+    function decodeAsText(bytes) {
+      var probe = Math.min(bytes.length, 8192);
+      var nul = 0, ctrl = 0, high = 0;
+      for (var i = 0; i < probe; i++) {
+        var b = bytes[i];
+        if (b === 0) nul++;
+        else if (b < 9 || (b > 13 && b < 32)) ctrl++;
+        else if (b > 127) high++;
+      }
+      if (!bytes.length) return '';
+      if (nul > 0 || (ctrl + high) / probe > 0.12) return null;
+      // UTF-16 text is dominated by 0x00 bytes even without a BOM.
+      return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    }
+
     function openPreview(items, index) {
       var list = (items || []).filter(Boolean);
       if (!list.length) return;
@@ -2434,6 +2867,11 @@ object WebClientHtml {
         frame.title = it.name;
         stage.appendChild(frame);
       } else if (TEXTY.indexOf(ext) >= 0) {
+        if (it.size && it.size > 2 * 1024 * 1024) {
+          showLbFallback(it, 'too large to preview');
+          setZoomUi();
+          return;
+        }
         lb.zoomable = true;
         var scroller = lbShell('lb-text');
         var pre = document.createElement('pre');
@@ -2441,10 +2879,15 @@ object WebClientHtml {
         scroller.appendChild(pre);
         stage.appendChild(scroller);
         fetch(it.url, { headers: authHeaders() })
-          .then(function (res) { if (!res.ok) throw new Error('http'); return res.text(); })
-          .then(function (body) {
+          .then(function (res) { if (!res.ok) throw new Error('http'); return res.arrayBuffer(); })
+          .then(function (buf) {
             if (lb.node !== scroller) return;
-            pre.textContent = body.length > 400000 ? body.slice(0, 400000) + '\n\n… truncated. Download the file to read all of it.' : body;
+            var bytes = new Uint8Array(buf);
+            var body = decodeAsText(bytes);
+            if (body === null) { showLbFallback(it, 'binary file, not text'); setZoomUi(); return; }
+            pre.textContent = body.length > 400000
+              ? body.slice(0, 400000) + '\n\n… truncated. Download the file to read all of it.'
+              : body;
           })
           .catch(function () { if (lb.node === scroller) showLbFallback(it, 'could not read it'); });
       } else {
@@ -2539,7 +2982,7 @@ object WebClientHtml {
         lastTypingPing = now;
         fetch('/api/typing', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify({ sender: MY_NAME, typing: true })
         }).catch(function () {});
       }
@@ -2548,14 +2991,14 @@ object WebClientHtml {
     function clearTyping() {
       fetch('/api/typing', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body: JSON.stringify({ sender: MY_NAME, typing: false })
       }).catch(function () {});
     }
 
     function postThreadMessage(text, attachmentId) {
       var headers = authHeaders();
-      headers['Content-Type'] = 'application/json';
+      headers['Content-Type'] = 'application/json; charset=utf-8';
       var body = { text: text || '', sender: MY_NAME };
       if (attachmentId) body.attachmentId = attachmentId;
       if (currentThread) body.thread = currentThread;
@@ -2738,7 +3181,7 @@ object WebClientHtml {
       all.textContent = 'Everyone on the network';
       sel.appendChild(all);
       peersList.forEach(function (p) {
-        if (!p.ip || p.ip === myIp) return;
+        if (!p.ip || p.ip === myIp || p.self) return;
         var o = document.createElement('option');
         o.value = p.ip;
         o.textContent = p.name + '  ·  ' + p.ip;
@@ -2759,7 +3202,7 @@ object WebClientHtml {
       el('historySub').textContent = list.length
         ? list.length + ' file' + (list.length === 1 ? '' : 's') + ' · ' + formatBytes(bytes) + ' hosted on this phone'
         : 'Nothing has moved through this server yet.';
-      if (!list.length) { renderEmpty(host, 'No files yet. Upload from the Files tab, or share from the phone.'); return; }
+      if (!list.length) { renderEmpty(host, 'Nothing has moved through this server yet.', { label: 'Go to Upload', run: function () { setView('upload'); } }); return; }
       host.textContent = '';
       list.forEach(function (f) { host.appendChild(buildFileCard(f, list)); });
     }
@@ -2773,7 +3216,27 @@ object WebClientHtml {
       } catch (e) { peersList = []; }
       updateTargetOptions();
       renderPeers();
+      renderNewChatPeers();
+      renderUploadDevices();
       renderSession();
+    }
+
+    function renderUploadDevices() {
+      var host = el('uploadDevChips');
+      if (!host) return;
+      host.textContent = '';
+      var others = peersList.filter(function (p) { return p.ip && p.ip !== myIp; });
+      if (!others.length) {
+        host.textContent = 'Just this tab right now.';
+        return;
+      }
+      others.forEach(function (p) {
+        var s = document.createElement('span');
+        s.className = 'dev-chip' + (p.active ? ' live' : '');
+        s.textContent = p.name + (p.active ? '' : ' · idle');
+        s.title = p.active ? 'Active now' : 'Last seen ' + agoText(p.lastSeen);
+        host.appendChild(s);
+      });
     }
 
     function renderPeers() {
@@ -2790,16 +3253,16 @@ object WebClientHtml {
       var table = document.createElement('table');
       table.className = 'table';
       var head = document.createElement('thead');
-      head.innerHTML = '<tr><th>Device</th><th>Address</th><th>Last seen</th><th>Files sent</th></tr>';
+      head.innerHTML = '<tr><th>Device</th><th>Address</th><th>Status</th><th>Files sent</th><th></th></tr>';
       table.appendChild(head);
       var body = document.createElement('tbody');
       peersList.forEach(function (p) {
         var tr = document.createElement('tr');
         var me = p.ip === myIp;
         [
-          { c: 'who', t: (me ? p.name + ' (you)' : p.name) },
+          { c: 'who', t: (me ? p.name + ' (you)' : p.name) + (p.kind === 'browser' ? ' · browser' : '') },
           { c: 'ip', t: p.ip },
-          { c: '', t: agoText(p.lastSeen) },
+          { c: '', t: p.active ? 'Active now' : 'Last seen ' + agoText(p.lastSeen) },
           { c: '', t: (p.files || 0) + (p.bytes ? ' · ' + formatBytes(p.bytes) : '') }
         ].forEach(function (cell) {
           var td = document.createElement('td');
@@ -2807,6 +3270,19 @@ object WebClientHtml {
           td.textContent = cell.t;
           tr.appendChild(td);
         });
+        var act = document.createElement('td');
+        if (!me) {
+          var mb = document.createElement('button');
+          mb.className = 'btn btn-quiet';
+          mb.style.cssText = 'padding:5px 10px;font-size:11.5px';
+          mb.textContent = 'Message';
+          mb.onclick = function () {
+            threadsSeen['ip:' + p.ip] = true;
+            selectThread('ip:' + p.ip);
+          };
+          act.appendChild(mb);
+        }
+        tr.appendChild(act);
         body.appendChild(tr);
       });
       table.appendChild(body);
@@ -2820,6 +3296,7 @@ object WebClientHtml {
       var bytes = allFiles.reduce(function (s, f) { return s + (f.size || 0); }, 0);
       [
         ['Device', el('topbarDevice').textContent],
+        ['You appear as', MY_NAME],
         ['Server address', location.href],
         ['Your address', myIp || '-'],
         ['Access', REQUIRES_PIN ? 'PIN protected' : 'Open to this network'],
@@ -2860,84 +3337,465 @@ object WebClientHtml {
       }
     }
 
-    /* ===== Call overlay ===== */
-    var call = { cid: '', video: false, stream: null, mic: true, cam: true, timer: null, sub: '' };
+    /* ===== Call: a real media leg ===== */
+    // One call record lives on the phone; both ends poll it. `dir` says which end this tab is.
+    var call = { cid: '', video: false, dir: 'out', state: '', startedAt: 0, tick: null, watch: null };
+
+    // A tab cannot open the raw TCP socket the apps dial, so its frames ride this server:
+    // one chunked response down, one short POST up every ~100 ms. Same framing as the socket,
+    // [1b type][4b BE len][payload], so the phone never learns it is talking to a browser.
+    var T_AUDIO = 1, T_CAMERA = 2, T_SCREEN = 3, T_STATE = 4;
+    var live = {
+      up: [], upTimer: null, vfTimer: null, downAbort: null, sending: 0,
+      ac: null, cap: null, sp: null, srcNode: null, micStream: null, camStream: null,
+      shareStream: null, next: 0, inRate: 48000, camOn: false, sharing: false,
+      gotFrame: false, lastUrl: '', canvas: null, busy: false
+    };
+    var pdMuted = false;
+    var pendingRestore = null;
+    try { pendingRestore = JSON.parse(sessionStorage.getItem('pulseCall') || 'null'); } catch (e) {}
+
+    function peerName() {
+      var t = el('topbarDevice').textContent.trim();
+      return t || 'the other device';
+    }
+
+    function fmtCallClock(sec) {
+      var m = Math.floor(sec / 60), s = sec % 60;
+      return m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function persistCall() {
+      try {
+        if (call.cid && call.state) {
+          sessionStorage.setItem('pulseCall', JSON.stringify({
+            cid: call.cid, video: call.video, dir: call.dir, state: call.state, startedAt: call.startedAt
+          }));
+        } else sessionStorage.removeItem('pulseCall');
+      } catch (e) {}
+    }
+
+    function callHint(txt) {
+      var h = el('callHint');
+      if (!txt) { h.classList.remove('show'); return; }
+      h.textContent = txt;
+      h.classList.add('show');
+    }
+
+    function paintCall() {
+      var incoming = call.dir === 'in';
+      var ringing = call.state === 'ringing';
+      var on = call.state === 'accepted';
+      el('callScreen').classList.add('show');
+      el('callKind').textContent = call.video ? 'Video call' : 'Voice call';
+      el('callTitle').textContent = ringing && !incoming ? 'Ringing ' + peerName() : peerName();
+      el('callStatus').textContent = ringing
+        ? (incoming ? 'Incoming ' + (call.video ? 'video' : 'voice') + ' call' : 'Waiting for ' + peerName() + ' to answer')
+        : (on ? 'Connected' : 'Ending');
+      el('callTimer').style.display = on ? 'block' : 'none';
+      el('callPeer').textContent = peerName();
+      el('cellAccept').style.display = (ringing && incoming) ? 'flex' : 'none';
+      el('cellDecline').style.display = ringing ? 'flex' : 'none';
+      el('callDeclineLab').textContent = incoming ? 'Decline' : 'Cancel';
+      // While it is still ringing, Decline/Cancel already hangs up; a second red button beside it
+      // reads as two different things to press.
+      el('cellEnd').style.display = ringing ? 'none' : 'flex';
+      el('cellMute').style.display = on ? 'flex' : 'none';
+      el('cellCam').style.display = (on && call.video) ? 'flex' : 'none';
+      el('cellShare').style.display = on ? 'flex' : 'none';
+      el('callPip').style.display = (on && call.video) ? 'block' : 'none';
+      el('callAvatar').style.background = gradOf(incoming ? peerName() : MY_NAME);
+      el('callAvatar').textContent = initialsOf(incoming ? peerName() : MY_NAME);
+      // The poster only steps aside once an actual frame has landed.
+      var feed = on && live.gotFrame;
+      el('callPoster').classList.toggle('hide', !!feed);
+      el('callRemote').style.display = feed ? 'block' : 'none';
+      persistCall();
+    }
+
+    function showCall(cid, video, dir, state, startedAt) {
+      call.cid = cid; call.video = !!video; call.dir = dir; call.state = state;
+      call.startedAt = state === 'accepted' ? (startedAt || Date.now()) : 0;
+      paintCall();
+      if (call.tick) clearInterval(call.tick);
+      call.tick = setInterval(function () {
+        if (!call.startedAt) return;
+        el('callTimer').textContent = fmtCallClock(Math.floor((Date.now() - call.startedAt) / 1000));
+      }, 1000);
+      if (!call.watch) call.watch = setInterval(pollCall, 1500);
+    }
 
     async function startCall(video) {
-      call.video = !!video;
-      call.cid = 'w' + Date.now().toString(36);
-      call.sub = '';
-      call.mic = true; call.cam = true;
-      el('callOverlay').style.display = 'flex';
-      el('callAvatar').style.background = gradOf(MY_NAME);
-      el('callAvatar').textContent = initialsOf(MY_NAME);
-      el('callTitle').textContent = video ? 'Video call' : 'Voice call';
-      el('callSub').textContent = 'Calling ' + el('topbarDevice').textContent + '…';
-      el('callNote').textContent = 'Ringing the phone now. Answer it there to talk - voice and video stream between two PulseDrop apps.';
-      // This call carries no browser media, so never switch the visitor's camera or mic on
-      // for it: the hardware indicator would light up while nothing is transmitted.
-      el('callMic').style.display = 'none';
-      el('callCam').style.display = 'none';
-      el('callPreview').style.display = 'none';
-      fetch('/api/call/web', {
-        method: 'POST',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
-        body: JSON.stringify({ action: 'ring', cid: call.cid, name: MY_NAME, video: call.video })
-      }).catch(function () {});
-      if (call.timer) clearInterval(call.timer);
-      call.timer = setInterval(pollCall, 1500);
+      var res;
+      try {
+        res = await fetch('/api/call/web', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, authHeaders()),
+          body: JSON.stringify({ action: 'ring', name: MY_NAME, video: !!video })
+        });
+      } catch (e) { toast('Phone is unreachable'); return; }
+      if (!res.ok) { toast('Could not start the call'); return; }
+      var j = await res.json().catch(function () { return {}; });
+      if (!j.success) { toast(j.error || 'A call is already up'); return; }
+      showCall(j.cid, video, 'out', 'ringing', 0);
     }
 
     async function pollCall() {
+      if (!authToken && REQUIRES_PIN) return;
       try {
         var res = await fetch('/api/call/web', { headers: authHeaders() });
         if (!res.ok) return;
         var j = await res.json();
         var st = j.state || 'ringing';
-        if (st === 'accepted') {
-          if (call.sub === st) return;
-          call.sub = st;
-          el('callSub').textContent = 'Connected with ' + el('topbarDevice').textContent;
-          el('callNote').textContent = 'The phone picked up. Talk from there - hang up here when you are done.';
-        } else if (st === 'declined') {
-          el('callSub').textContent = 'Call declined';
-          stopCall(true);
-        } else if (st === 'ended') {
-          el('callSub').textContent = 'Call ended by the other side';
-          stopCall(true);
+        if (!j.active) {
+          pendingRestore = null;
+          if (call.cid) { el('callStatus').textContent = 'Call ended by the other side'; closeCall(true); }
+          return;
         }
+        if (!call.cid) {
+          // Reloaded mid-call: the record on the phone outlived the tab, so rebuild this
+          // exact screen and put the media leg back up.
+          if (pendingRestore && j.cid === pendingRestore.cid) {
+            showCall(j.cid, j.video, pendingRestore.dir, st, pendingRestore.startedAt);
+            pendingRestore = null;
+            if (st === 'accepted') startCallMedia();
+            return;
+          }
+          pendingRestore = null;
+          if (j.incoming) showCall(j.cid, j.video, 'in', st, 0);
+          return;
+        }
+        if (j.cid && j.cid !== call.cid) return;
+        if (st === call.state) return;
+        if (st === 'declined') { el('callStatus').textContent = 'Call declined'; closeCall(true); return; }
+        if (st === 'ended') { el('callStatus').textContent = 'Call ended by the other side'; closeCall(true); return; }
+        call.state = st;
+        if (st === 'accepted' && !call.startedAt) call.startedAt = Date.now();
+        paintCall();
+        if (st === 'accepted') startCallMedia();
       } catch (e) {}
     }
 
-    function endCall() {
+    function callAction(action) {
       fetch('/api/call/web', {
         method: 'POST',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
-        body: JSON.stringify({ action: 'end', cid: call.cid })
+        headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, authHeaders()),
+        body: JSON.stringify({ action: action, cid: call.cid })
       }).catch(function () {});
-      stopCall(false);
     }
 
-    function stopCall(keepMessage) {
-      if (call.timer) { clearInterval(call.timer); call.timer = null; }
-      if (call.stream) { call.stream.getTracks().forEach(function (t) { t.stop(); }); call.stream = null; }
-      el('callPreview').srcObject = null;
-      el('callOverlay').style.display = 'none';
-      if (keepMessage) toast('Call ' + el('callSub').textContent.toLowerCase());
+    function acceptCall() {
+      call.state = 'accepted'; call.startedAt = Date.now(); paintCall();
+      callAction('accept');
+      startCallMedia();
     }
 
-    function toggleMic() {
-      call.mic = !call.mic;
-      if (call.stream) call.stream.getAudioTracks().forEach(function (t) { t.enabled = call.mic; });
-      el('callMic').classList.toggle('off', !call.mic);
+    function declineCall() { callAction('decline'); closeCall(false); }
+
+    function endCall() { callAction('end'); closeCall(false); }
+
+    /* ---- uplink: capture, encode, batch ---- */
+
+    function pushUp(type, bytes) {
+      var n = bytes.length;
+      var f = new Uint8Array(5 + n);
+      f[0] = type;
+      f[1] = (n >>> 24) & 255; f[2] = (n >>> 16) & 255; f[3] = (n >>> 8) & 255; f[4] = n & 255;
+      f.set(bytes, 5);
+      live.up.push(f);
+      // Three batches in flight is already a third of a second behind; shed the oldest.
+      if (live.sending >= 3) live.up.splice(0, Math.max(1, live.up.length - 24));
     }
 
-    function toggleCam() {
-      call.cam = !call.cam;
-      if (call.stream) call.stream.getVideoTracks().forEach(function (t) { t.enabled = call.cam; });
-      el('callCam').classList.toggle('off', !call.cam);
-      el('callPreview').style.opacity = call.cam ? '1' : '0.25';
+    function b64(u8) {
+      var s = '', CH = 32768;
+      for (var i = 0; i < u8.length; i += CH) {
+        s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + CH, u8.length)));
+      }
+      return btoa(s);
     }
+
+    function flushUp() {
+      if (!live.up.length || !call.cid) return;
+      var parts = live.up; live.up = [];
+      var total = 0;
+      parts.forEach(function (p) { total += p.length; });
+      var all = new Uint8Array(total), o = 0;
+      parts.forEach(function (p) { all.set(p, o); o += p.length; });
+      live.sending++;
+      fetch('/api/webcall/up', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, authHeaders()),
+        body: JSON.stringify({ cid: call.cid, frames: b64(all) })
+      }).then(function () { live.sending--; }, function () { live.sending--; });
+    }
+
+    function attachMic(stream) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      try { live.cap = new AC({ sampleRate: 16000 }); } catch (e) { live.cap = new AC(); }
+      live.inRate = live.cap.sampleRate;
+      live.micStream = stream;
+      live.srcNode = live.cap.createMediaStreamSource(stream);
+      // ScriptProcessor rather than an AudioWorklet: the module would have to be a separate
+      // URL or a blob, and 16 kHz mono passthrough does not need a real-time thread.
+      live.sp = live.cap.createScriptProcessor(1024, 1, 1);
+      live.sp.onaudioprocess = function (ev) {
+        var out = ev.outputBuffer.getChannelData(0);
+        for (var i = 0; i < out.length; i++) out[i] = 0;
+        var d = ev.inputBuffer.getChannelData(0);
+        var target = live.inRate === 16000 ? d.length : Math.round(d.length * 16000 / live.inRate);
+        var i16 = new Int16Array(target);
+        for (var j = 0; j < target; j++) {
+          var t = live.inRate === 16000 ? j : j * d.length / target;
+          var k = Math.min(d.length - 1, Math.floor(t));
+          var v = pdMuted ? 0 : d[k];
+          i16[j] = v < 0 ? v * 32768 : v * 32767;
+        }
+        pushUp(T_AUDIO, new Uint8Array(i16.buffer));
+      };
+      live.srcNode.connect(live.sp);
+      live.sp.connect(live.cap.destination);
+      if (live.cap.state === 'suspended') live.cap.resume();
+    }
+
+    function startFrameLoop() {
+      if (live.vfTimer) return;
+      live.vfTimer = setInterval(grabFrame, 200);
+    }
+
+    function grabFrame() {
+      if (live.busy) return;
+      var v = el('callSelf');
+      if (!v.videoWidth) return;
+      if (!live.camOn && !live.sharing) return;
+      var w = 480;
+      var h = Math.max(2, Math.round(v.videoHeight * (w / v.videoWidth)));
+      var c = live.canvas || (live.canvas = document.createElement('canvas'));
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+      c.getContext('2d').drawImage(v, 0, 0, w, h);
+      live.busy = true;
+      c.toBlob(function (b) {
+        live.busy = false;
+        if (!b || !live.upTimer) return;
+        b.arrayBuffer().then(function (ab) {
+          pushUp(live.sharing ? T_SCREEN : T_CAMERA, new Uint8Array(ab));
+        });
+      }, 'image/jpeg', 0.5);
+    }
+
+    function sendCallState() {
+      pushUp(T_STATE, new TextEncoder().encode(JSON.stringify({ sharing: live.sharing, muted: pdMuted })));
+    }
+
+    /* ---- downlink: one chunked body, decoded frame by frame ---- */
+
+    async function pumpDown(signal) {
+      var buf = new Uint8Array(0);
+      try {
+        var res = await fetch('/api/webcall/down?cid=' + encodeURIComponent(call.cid),
+          { headers: authHeaders(), signal: signal });
+        if (!res.ok || !res.body) return;
+        var rd = res.body.getReader();
+        while (true) {
+          var r = await rd.read();
+          if (r.done) break;
+          var chunk = r.value;
+          if (!chunk || !chunk.length) continue;
+          var merged = new Uint8Array(buf.length + chunk.length);
+          merged.set(buf); merged.set(chunk, buf.length); buf = merged;
+          var i = 0;
+          while (i + 5 <= buf.length) {
+            var type = buf[i];
+            var len = buf[i + 1] * 16777216 + (buf[i + 2] << 16) + (buf[i + 3] << 8) + buf[i + 4];
+            if (len <= 0 || len > 4194304) { i = buf.length; break; }
+            if (i + 5 + len > buf.length) break;
+            handleDown(type, buf.subarray(i + 5, i + 5 + len));
+            i += 5 + len;
+          }
+          if (i) buf = buf.slice(i);
+        }
+      } catch (e) { /* aborted, or the leg is gone */ }
+    }
+
+    function handleDown(type, bytes) {
+      if (type === T_AUDIO) return playPcm(bytes);
+      if (type === T_CAMERA || type === T_SCREEN) return showFeed(bytes, type === T_SCREEN);
+      if (type === T_STATE) {
+        var j = null;
+        try { j = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { return; }
+        el('callShareTag').classList.toggle('show', !!(j && j.sharing));
+        el('callShareTxt').textContent = peerName() + ' is sharing their screen';
+        return;
+      }
+    }
+
+    function showFeed(bytes, isScreen) {
+      if (live.lastUrl) URL.revokeObjectURL(live.lastUrl);
+      live.lastUrl = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
+      var img = el('callRemote');
+      img.src = live.lastUrl;
+      img.classList.toggle('cover', !isScreen);
+      if (!live.gotFrame) { live.gotFrame = true; paintCall(); }
+    }
+
+    function playPcm(bytes) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!live.ac) { try { live.ac = new AC(); } catch (e) { return; } live.next = 0; }
+      var ac = live.ac;
+      if (ac.state === 'suspended') ac.resume();
+      var n = bytes.length >> 1;
+      if (!n) return;
+      var ab = ac.createBuffer(1, n, 16000);
+      var ch = ab.getChannelData(0);
+      var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      for (var i = 0; i < n; i++) ch[i] = dv.getInt16(i * 2, true) / 32768;
+      // Pace the buffers back-to-back, and shed latency if the tab was throttled.
+      if (live.next < ac.currentTime + 0.01 || live.next - ac.currentTime > 0.5) {
+        live.next = ac.currentTime + 0.06;
+      }
+      var src = ac.createBufferSource();
+      src.buffer = ab;
+      src.connect(ac.destination);
+      src.start(live.next);
+      live.next += ab.duration;
+    }
+
+    /* ---- bring the leg up and down ---- */
+
+    async function startCallMedia() {
+      if (live.upTimer) return;
+      live.gotFrame = false;
+      callHint('');
+      live.upTimer = setInterval(flushUp, 100);
+      live.downAbort = new AbortController();
+      pumpDown(live.downAbort.signal);
+      var md = navigator.mediaDevices;
+      if (!md || !md.getUserMedia) {
+        callHint('Browsers only hand over the mic and camera on https or localhost, so this tab can see and hear but not send.');
+        return;
+      }
+      try {
+        var stream = await md.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: call.video ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
+        });
+        attachMic(stream);
+        if (call.video) {
+          live.camStream = stream;
+          live.camOn = true;
+          el('callSelf').srcObject = stream;
+          el('callPip').classList.add('live');
+          el('callCam').classList.add('active');
+          startFrameLoop();
+        }
+      } catch (e) {
+        callHint('Microphone or camera was blocked - the call still receives voice and video.');
+      }
+    }
+
+    function toggleCallMute() {
+      pdMuted = !pdMuted;
+      el('callMute').classList.toggle('active', pdMuted);
+      el('callMute').setAttribute('title', pdMuted ? 'Unmute' : 'Mute');
+      sendCallState();
+    }
+
+    function toggleCallCamera() {
+      if (!live.camStream) {
+        var md = navigator.mediaDevices;
+        if (!md || !md.getUserMedia) { callHint('This origin cannot use the camera'); return; }
+        md.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } })
+          .then(function (s) {
+            live.camStream = s;
+            live.camOn = true;
+            el('callSelf').srcObject = s;
+            el('callPip').classList.add('live');
+            el('callCam').classList.add('active');
+            startFrameLoop();
+            callHint('');
+          })
+          .catch(function () { callHint('Camera blocked by the browser'); });
+        return;
+      }
+      live.camOn = !live.camOn;
+      live.camStream.getVideoTracks().forEach(function (t) { t.enabled = live.camOn; });
+      el('callPip').classList.toggle('live', live.camOn || live.sharing);
+      el('callCam').classList.toggle('active', live.camOn);
+    }
+
+    function toggleCallShare() {
+      if (live.sharing) { stopCallShare(); return; }
+      var md = navigator.mediaDevices;
+      if (!md || !md.getDisplayMedia) { callHint('This browser will not share the screen from this page'); return; }
+      md.getDisplayMedia({ video: true, audio: false }).then(function (s) {
+        live.shareStream = s;
+        live.sharing = true;
+        el('callSelf').srcObject = s;
+        el('callPip').classList.add('live');
+        el('callShareBtn').classList.add('active');
+        el('callShareLab').textContent = 'Stop';
+        var tr = s.getVideoTracks()[0];
+        if (tr) tr.addEventListener('ended', stopCallShare);
+        startFrameLoop();
+        sendCallState();
+        callHint('');
+      }, function () { callHint('Screen sharing was cancelled'); });
+    }
+
+    function stopCallShare() {
+      if (live.shareStream) {
+        live.shareStream.getTracks().forEach(function (t) { t.stop(); });
+        live.shareStream = null;
+      }
+      live.sharing = false;
+      el('callShareBtn').classList.remove('active');
+      el('callShareLab').textContent = 'Share';
+      el('callSelf').srcObject = live.camOn && live.camStream ? live.camStream : null;
+      el('callPip').classList.toggle('live', !!live.camOn);
+      sendCallState();
+    }
+
+    function stopCallMedia() {
+      if (live.upTimer) { clearInterval(live.upTimer); live.upTimer = null; }
+      if (live.vfTimer) { clearInterval(live.vfTimer); live.vfTimer = null; }
+      if (live.downAbort) { live.downAbort.abort(); live.downAbort = null; }
+      [live.micStream, live.camStream, live.shareStream].forEach(function (s) {
+        if (s && s !== live.micStream) s.getTracks().forEach(function (t) { t.stop(); });
+      });
+      if (live.micStream) live.micStream.getTracks().forEach(function (t) { t.stop(); });
+      if (live.sp) { try { live.sp.disconnect(); } catch (e) {} live.sp.onaudioprocess = null; live.sp = null; }
+      if (live.srcNode) { try { live.srcNode.disconnect(); } catch (e) {} live.srcNode = null; }
+      if (live.cap) { try { live.cap.close(); } catch (e) {} live.cap = null; }
+      if (live.ac) { try { live.ac.close(); } catch (e) {} live.ac = null; }
+      live.micStream = live.camStream = live.shareStream = null;
+      live.up = []; live.sending = 0; live.gotFrame = false;
+      live.sharing = false; live.camOn = false; live.next = 0;
+      pdMuted = false;
+      el('callSelf').srcObject = null;
+      el('callRemote').style.display = 'none';
+      if (live.lastUrl) { URL.revokeObjectURL(live.lastUrl); live.lastUrl = ''; }
+      el('callMute').classList.remove('active');
+      el('callCam').classList.remove('active');
+      el('callShareBtn').classList.remove('active');
+      el('callShareLab').textContent = 'Share';
+      callHint('');
+    }
+
+    function closeCall(keepMessage) {
+      var last = el('callStatus').textContent;
+      if (call.tick) { clearInterval(call.tick); call.tick = null; }
+      if (call.watch) { clearInterval(call.watch); call.watch = null; }
+      stopCallMedia();
+      call.cid = ''; call.state = ''; call.startedAt = 0;
+      el('callScreen').classList.remove('show');
+      persistCall();
+      if (keepMessage) toast(last);
+    }
+
+    // Watch for the phone dialling this tab even while no call is open here.
+    setInterval(function () { if (!call.cid) pollCall(); }, 2000);
 
 
     /* ===== Global keys ===== */
@@ -2988,6 +3846,7 @@ object WebClientHtml {
     setLayout('grid');
     setHistoryLayout('grid');
     renderEmpty(el('filesGrid'), 'Loading files…');
+    el('selfNameInput').value = MY_NAME;
     renderThreadRail();
     fetchThreads();
     fetchPeers();
@@ -3000,6 +3859,12 @@ object WebClientHtml {
       fetchInfo();
     }
     fetchMessages();
+    // Plain http cannot send a mic or camera out of a browser - point them at the https address.
+    if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      setTimeout(function () {
+        toast('This page is on http: calls can ring and receive, but cannot send your mic or camera. Use the secure https address shown on the phone.');
+      }, 1400);
+    }
   </script>
 </body>
 </html>

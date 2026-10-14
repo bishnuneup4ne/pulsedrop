@@ -55,7 +55,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -196,7 +195,6 @@ fun ServerCard(
                             Text(
                                 text = serverState.serverUrl,
                                 style = MaterialTheme.typography.headlineSmall.copy(
-                                    fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold
                                 ),
                                 color = if (serverState.isRunning) colorScheme.onPrimary else colorScheme.onSurface,
@@ -360,7 +358,7 @@ fun ServerCard(
 
                     Text(
                         text = serverState.serverUrl,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = colorScheme.primary
                     )
