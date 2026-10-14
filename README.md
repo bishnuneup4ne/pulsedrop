@@ -23,8 +23,9 @@ also appears in the system share sheet (`SEND` / `SEND_MULTIPLE`).
 
 ## Requirements
 
-- **Building:** JDK 21 or newer, Android SDK with `compileSdk` 36 (the Gradle wrapper pins
-  Gradle 9.3.1 and downloads it for you, so no local Gradle install is needed).
+- **Building:** an Android SDK providing `compileSdk` 36, and any JDK 21+ to launch the wrapper.
+  The Gradle daemon is pinned to JDK 25 in `gradle/gradle-daemon-jvm.properties`; Gradle 9.3.1
+  and the JDK are fetched for you (Foojay resolver), so no local install of either is required.
 - **Running:** Android 7.0 (API 24) or newer. Camera and microphone are optional — the app is
   useful for file transfer without either.
 - **Clients:** any modern browser on the same network. No install required.
