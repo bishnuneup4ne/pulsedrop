@@ -1,0 +1,476 @@
+package com.pulsedrop.app.ui
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
+import android.os.Build
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiTethering
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import com.pulsedrop.app.model.PeerDevice
+import com.pulsedrop.app.ui.components.PinSecurityDialog
+import com.pulsedrop.app.ui.components.PulseHeader
+import com.pulsedrop.app.ui.screens.CallOverlay
+import com.pulsedrop.app.ui.screens.ChatScreen
+import com.pulsedrop.app.ui.screens.HistoryScreen
+import com.pulsedrop.app.ui.screens.HotspotGuideScreen
+import com.pulsedrop.app.ui.screens.RadarScreen
+import com.pulsedrop.app.ui.screens.ShareScreen
+import com.pulsedrop.app.ui.screens.WebCallScreen
+
+enum class PulseNavTab(val title: String, val icon: ImageVector, val tag: String) {
+    SERVE("Server", Icons.Default.Wifi, "tab_serve"),
+    RADAR("Radar", Icons.Default.Radar, "tab_radar"),
+    CHAT("Chat", Icons.AutoMirrored.Filled.Chat, "tab_chat"),
+    HISTORY("History", Icons.Default.History, "tab_history"),
+    HOTSPOT("Hotspot", Icons.Default.WifiTethering, "tab_hotspot")
+}
+
+@Composable
+fun MainScreen(viewModel: MainViewModel) {
+    val serverState by viewModel.serverState.collectAsState()
+    val sharedFiles by viewModel.sharedFiles.collectAsState()
+    val activeTransfersMap by viewModel.activeTransfers.collectAsState()
+    val clipMessages by viewModel.clipMessages.collectAsState()
+    val qrBitmap by viewModel.qrBitmap.collectAsState()
+    val nearbyPeers by viewModel.nearbyPeers.collectAsState()
+    val connectedPeer by viewModel.connectedPeer.collectAsState()
+    val peerConnecting by viewModel.peerConnecting.collectAsState()
+    val typingUsers by viewModel.typingUsers.collectAsState()
+    val uiMessage by viewModel.uiMessage.collectAsState()
+    val historyList by viewModel.transferHistory.collectAsState()
+    val scannedPeers by viewModel.scannedPeers.collectAsState()
+    val pairedDevices by viewModel.pairedDevices.collectAsState()
+    val incomingPairRequests by viewModel.incomingPairRequests.collectAsState()
+    val pendingOutgoingPair by viewModel.pendingOutgoingPair.collectAsState()
+    val radarScanning by viewModel.radarScanning.collectAsState()
+    val pairEvent by viewModel.pairEvent.collectAsState()
+    val callState by viewModel.callState.collectAsState()
+    val incomingCall by viewModel.incomingCall.collectAsState()
+    val remoteFrame by viewModel.remoteFrame.collectAsState()
+    val chatGroups by viewModel.groups.collectAsState()
+    val webCall by viewModel.webCall.collectAsState()
+    val lastReadAt by viewModel.lastReadAt.collectAsState()
+    val colorScheme = MaterialTheme.colorScheme
+
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    var selectedTab by remember { mutableStateOf(PulseNavTab.SERVE) }
+    var showSecurityDialog by remember { mutableStateOf(false) }
+    var selectedThreadId by remember { mutableStateOf<String?>(null) }
+    var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    var pendingChatAttachThread by remember { mutableStateOf<String?>(null) }
+    val chatAttachLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val thread = pendingChatAttachThread
+        if (uri != null) viewModel.sendFileToThread(if (thread == "room") null else thread, uri)
+        pendingChatAttachThread = null
+    }
+
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val action = pendingCallAction
+        pendingCallAction = null
+        if (action != null && result[Manifest.permission.RECORD_AUDIO] == true) action()
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* the server's foreground notification becomes visible once granted */ }
+
+    // Without this, Android 13+ silently hides the server's persistent notification, so
+    // the user sees no sign the LAN server is live and has no Stop control.
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    val projectionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == android.app.Activity.RESULT_OK && data != null) {
+            viewModel.startScreenShare(result.resultCode, data)
+        }
+    }
+
+    fun missingCallPermissions(video: Boolean): List<String> {
+        val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (video) needed.add(Manifest.permission.CAMERA)
+        return needed.filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    fun withCallPermissions(video: Boolean, action: () -> Unit) {
+        val missing = missingCallPermissions(video)
+        if (missing.isEmpty()) action()
+        else {
+            pendingCallAction = action
+            callPermissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    fun requestScreenShare() {
+        if (callState.sharing) {
+            viewModel.stopScreenShare()
+        } else {
+            val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+            if (mgr != null) projectionLauncher.launch(mgr.createScreenCaptureIntent())
+        }
+    }
+
+    LaunchedEffect(uiMessage) {
+        val msg = uiMessage
+        if (msg != null) {
+            snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
+            viewModel.consumeUiMessage()
+        }
+    }
+
+    LaunchedEffect(pairEvent) {
+        val ev = pairEvent
+        if (ev != null) {
+            snackbarHostState.showSnackbar(ev, duration = SnackbarDuration.Short)
+            viewModel.consumePairEvent()
+        }
+    }
+
+    // Drive the LAN sweep only while the radar tab is open; multicast discovery keeps running globally.
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == PulseNavTab.RADAR) viewModel.startRadarScan()
+        else viewModel.stopRadarScan()
+        viewModel.setChatVisible(selectedTab == PulseNavTab.CHAT)
+    }
+
+    // Merge broadcast + scanned peers, dedupe by ip:port, prefer the PulseDrop app entry.
+    val displayPeers = remember(nearbyPeers, scannedPeers) {
+        val combined = mutableListOf<PeerDevice>()
+        val seen = HashMap<String, Int>()
+        fun key(p: PeerDevice) = "${p.ip}:${p.port}"
+        nearbyPeers.forEach { p ->
+            val k = key(p)
+            val idx = seen[k]
+            if (idx == null) { seen[k] = combined.size; combined.add(p) }
+        }
+        scannedPeers.forEach { p ->
+            val k = key(p)
+            val idx = seen[k]
+            if (idx == null) { seen[k] = combined.size; combined.add(p) }
+            else if (p.appKind == "LocalDrop" && combined[idx].appKind != "LocalDrop") {
+                combined[idx] = p
+            }
+        }
+        combined
+    }
+
+    BackHandler(enabled = callState.active) {
+        viewModel.hangUpCall()
+    }
+
+    BackHandler(enabled = selectedTab != PulseNavTab.SERVE && !callState.active) {
+        selectedTab = PulseNavTab.SERVE
+    }
+
+    // Declared last so it wins over the tab handler: back leaves a conversation for the inbox.
+    BackHandler(enabled = selectedThreadId != null && !callState.active) {
+        selectedThreadId = null
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = colorScheme.background,
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            topBar = {
+                PulseHeader(
+                    isRunning = serverState.isRunning,
+                    deviceName = serverState.deviceName,
+                    onToggleServer = { viewModel.toggleServer() },
+                    onRefresh = { viewModel.refreshNetwork() },
+                    modifier = Modifier.statusBarsPadding()
+                )
+            },
+            bottomBar = {
+                PulseBottomBar(
+                    selectedTab = selectedTab,
+                    onSelect = { selectedTab = it }
+                )
+            }
+        ) { paddingValues ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+            ) {
+            Crossfade(targetState = selectedTab, label = "tab_crossfade") { tab ->
+                when (tab) {
+                    PulseNavTab.SERVE -> ShareScreen(
+                        serverState = serverState,
+                        qrBitmap = qrBitmap,
+                        sharedFiles = sharedFiles,
+                        activeTransfers = activeTransfersMap.values.toList(),
+                        clipMessages = clipMessages,
+                        pairedCount = pairedDevices.size,
+                        peersCount = displayPeers.size,
+                        onToggleServer = { viewModel.toggleServer() },
+                        onOpenSecuritySettings = { showSecurityDialog = true },
+                        onAddFiles = { uris -> viewModel.addFiles(uris) },
+                        onRemoveFile = { id -> viewModel.removeSharedFile(id) },
+                        onClearFiles = { viewModel.clearSharedFiles() },
+                        onSendClip = { text -> viewModel.sendClipMessage(text) }
+                    )
+
+                    PulseNavTab.RADAR -> RadarScreen(
+                        nearbyPeers = displayPeers,
+                        connectedPeer = connectedPeer,
+                        peerConnecting = peerConnecting,
+                        pairedDevices = pairedDevices,
+                        incomingRequests = incomingPairRequests,
+                        pendingOutgoing = pendingOutgoingPair,
+                        scanning = radarScanning,
+                        onSendFilesToPeer = { peer, uris, peerPin ->
+                            viewModel.sendFilesToPeer(peer, uris, peerPin) { _, _ -> }
+                        },
+                        onConnectToAddress = { address -> viewModel.connectToPeer(address) },
+                        onDisconnectPeer = { viewModel.disconnectPeer() },
+                        onPair = { peer -> viewModel.requestPairing(peer) },
+                        onCancelPairRequest = { viewModel.cancelPairingRequest() },
+                        onAcceptPair = { req -> viewModel.acceptPairing(req) },
+                        onDeclinePair = { req -> viewModel.declinePairing(req) },
+                        onUnpair = { pid -> viewModel.unpair(pid) }
+                    )
+
+                    PulseNavTab.CHAT -> ChatScreen(
+                        messages = clipMessages,
+                        myName = serverState.deviceName,
+                        typingUsers = typingUsers,
+                        pairedDevices = pairedDevices,
+                        groups = chatGroups,
+                        lanPeers = displayPeers,
+                        lastReadAt = lastReadAt,
+                        selectedThreadId = selectedThreadId,
+                        onSelectThread = { selectedThreadId = it },
+                        onStartCall = { pid, video ->
+                            withCallPermissions(video) { viewModel.startCall(pid, video) }
+                        },
+                        onSend = { text, threadId ->
+                            viewModel.sendClipMessage(text, threadId?.takeIf { it != "room" })
+                        },
+                        onTyping = { active -> viewModel.sendTyping(active) },
+                        onAttach = { threadId ->
+                            pendingChatAttachThread = threadId
+                            chatAttachLauncher.launch(arrayOf("*/*"))
+                        },
+                        resolveAttachment = { attachment -> viewModel.chatAttachmentFile(attachment) },
+                        onCreateGroup = { name, pids -> viewModel.createGroup(name, pids) },
+                        onDeleteGroup = { id -> viewModel.deleteGroup(id) },
+                        onMarkRead = { threadId ->
+                            viewModel.markThreadRead(threadId?.takeIf { it != "room" })
+                        }
+                    )
+
+                    PulseNavTab.HISTORY -> HistoryScreen(
+                        historyList = historyList,
+                        onOpenFile = { path -> viewModel.openFile(path) },
+                        onShareFile = { path -> viewModel.shareFile(path) },
+                        onSaveToDownloads = { path -> viewModel.saveToDownloads(path) },
+                        onDeleteItem = { id -> viewModel.deleteHistoryItem(id) },
+                        onClearAll = { viewModel.clearHistory() }
+                    )
+
+                    PulseNavTab.HOTSPOT -> HotspotGuideScreen(
+                        serverState = serverState
+                    )
+                }
+            }
+            }
+        }
+
+        if (callState.active) {
+            CallOverlay(
+                state = callState,
+                remoteFrame = remoteFrame,
+                onToggleMute = { viewModel.toggleCallMute() },
+                onToggleCamera = { viewModel.toggleCallCamera() },
+                onToggleScreenShare = { requestScreenShare() },
+                onHangUp = { viewModel.hangUpCall() }
+            )
+        }
+
+        val browserCall = webCall
+        if (browserCall != null && !callState.active) {
+            BackHandler {
+                if (browserCall.state == "accepted") viewModel.endWebCall()
+                else viewModel.answerWebCall(false)
+            }
+            WebCallScreen(
+                call = browserCall,
+                onAccept = {
+                    withCallPermissions(browserCall.video) { viewModel.answerWebCall(true) }
+                },
+                onDecline = { viewModel.answerWebCall(false) },
+                onHangUp = { viewModel.endWebCall() }
+            )
+        }
+    }
+
+    val incoming = incomingCall
+    if (incoming != null) {
+        AlertDialog(
+            onDismissRequest = { /* must answer explicitly */ },
+            icon = {
+                Icon(
+                    imageVector = if (incoming.video) Icons.Default.Videocam else Icons.Default.Call,
+                    contentDescription = null,
+                    tint = colorScheme.primary
+                )
+            },
+            title = { Text("Incoming ${if (incoming.video) "video" else "voice"} call") },
+            text = {
+                Text(
+                    "${incoming.name} is calling you over your encrypted pairing. " +
+                            "Accept to connect audio${if (incoming.video) ", video and screen sharing" else ""}."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        withCallPermissions(incoming.video) { viewModel.respondToCall(true) }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.testTag("accept_call_btn")
+                ) {
+                    Text("Accept")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.respondToCall(false) },
+                    modifier = Modifier.testTag("decline_call_btn")
+                ) {
+                    Text("Decline", color = colorScheme.error)
+                }
+            }
+        )
+    }
+
+    LaunchedEffect(pairedDevices, chatGroups) {
+        val tid = selectedThreadId ?: return@LaunchedEffect
+        val alive = when {
+            tid.startsWith("pair:") -> pairedDevices.any { "pair:${it.pid}" == tid }
+            tid.startsWith("group:") -> chatGroups.any { "group:${it.id}" == tid }
+            else -> true
+        }
+        if (!alive) selectedThreadId = null
+    }
+
+    if (showSecurityDialog) {
+        PinSecurityDialog(
+            isPinRequired = serverState.isPinRequired,
+            currentPin = serverState.pin,
+            onDismiss = { showSecurityDialog = false },
+            onSave = { required, pin ->
+                viewModel.setPinRequired(required)
+                viewModel.setCustomPin(pin)
+            },
+            onRegeneratePin = { viewModel.regeneratePin() }
+        )
+    }
+}
+
+@Composable
+private fun PulseBottomBar(
+    selectedTab: PulseNavTab,
+    onSelect: (PulseNavTab) -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+
+    NavigationBar(
+        modifier = Modifier.testTag("pulse_bottom_tabs"),
+        containerColor = colorScheme.surface,
+        tonalElevation = 2.dp
+    ) {
+        PulseNavTab.values().forEach { tab ->
+            val selected = tab == selectedTab
+            NavigationBarItem(
+                selected = selected,
+                onClick = { onSelect(tab) },
+                modifier = Modifier.testTag(tab.tag),
+                icon = {
+                    Icon(
+                        imageVector = tab.icon,
+                        contentDescription = tab.title
+                    )
+                },
+                label = {
+                    Text(
+                        text = tab.title,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                    )
+                },
+                alwaysShowLabel = true,
+                colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                    selectedIconColor = colorScheme.primary,
+                    selectedTextColor = colorScheme.primary,
+                    indicatorColor = colorScheme.primaryContainer,
+                    unselectedIconColor = colorScheme.onSurfaceVariant,
+                    unselectedTextColor = colorScheme.onSurfaceVariant
+                )
+            )
+        }
+    }
+}

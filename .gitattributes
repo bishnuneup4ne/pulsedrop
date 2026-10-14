@@ -1,0 +1,12 @@
+# Normalise line endings in the repository; checkouts use LF everywhere so that
+# gradlew and the CI shell steps are executable and diff-stable on every platform.
+* text=auto eol=lf
+
+gradlew text eol=lf
+*.bat text eol=crlf
+
+*.jar binary
+*.png binary
+*.webp binary
+*.jks binary
+*.keystore binary

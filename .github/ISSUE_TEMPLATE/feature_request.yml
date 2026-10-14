@@ -1,0 +1,70 @@
+name: Feature request
+description: Propose something new, or a change to how something works
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Features that change the wire format (pairing, upload proof, call signalling, media
+        frames) affect every other device, so open an issue to agree the shape before writing
+        code if you plan to send a PR.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is hard today?
+      description: >-
+        The situation you ran into, not the solution. "I could not send to someone whose IP
+        changes" is a requirement; "add mDNS" is one possible answer to it.
+      placeholder: |
+        I share files with a colleague whose phone gets a different DHCP address every day, so
+        I have to re-pair.
+    validations:
+      required: true
+
+  - type: textarea
+    id: want
+    attributes:
+      label: What would you like to happen?
+      description: Behaviour as a user would notice it. Screenshots or rough sketches welcome.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      multiple: true
+      options:
+        - Server / web client
+        - Upload / download
+        - Radar / discovery
+        - Pairing (E2E)
+        - Chat
+        - Call / voice
+        - Screen share
+        - History
+        - Hotspot setup
+        - Build / tooling
+        - Documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What else did you consider?
+      description: >-
+        Other apps, a workaround you are using, or a narrower version of the idea. This is often
+        what decides whether the feature is worth the complexity.
+
+  - type: dropdown
+    id: contributing
+    attributes:
+      label: Are you going to implement it?
+      options:
+        - "Yes — I will open a PR"
+        - "I would like to, but I need guidance first"
+        - "No — hoping someone else will"
+    validations:
+      required: true

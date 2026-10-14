@@ -1,0 +1,100 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        If this is a security issue, use a private security advisory instead — see
+        SECURITY.md. For anything involving pairing or calls, say which side is the server: most
+        reports of "does not connect" are the network layout, not the app.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the behaviour, then what you expected instead.
+      placeholder: >-
+        The web client shows the upload as complete but the file is not in the received list.
+        I expected it to appear under Files.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >-
+        Be exact about which side is which. Note that two emulators on one host cannot pair —
+        each is behind its own NAT (see CONTRIBUTING.md).
+      value: |
+        1. On device A:
+        2. On device B / browser:
+        3. Observed:
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature
+    attributes:
+      label: Which feature?
+      multiple: true
+      options:
+        - Server / web client
+        - Upload / download
+        - Radar / discovery
+        - Pairing (E2E)
+        - Chat
+        - Call / voice
+        - Screen share
+        - History
+        - Hotspot setup
+        - Build / Gradle
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: android
+    attributes:
+      label: Android version and device
+      description: e.g. Android 16 / Pixel 8, or the emulator AVD image
+      placeholder: "Android 15, Samsung S23"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: PulseDrop version
+      description: The `versionName` you built from in app/build.gradle.kts, or the commit SHA
+      placeholder: "1.0 (a1b2c3d)"
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser, if a web client was involved
+      placeholder: "Chrome 131 on Windows 11"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: >-
+        Paste `adb logcat -v brief -d | tail -n 200` around the failure, or a full crash trace.
+        PulseDrop does not tag its own logs, so the useful lines are usually system-level ones.
+        This is auto-formatted.
+      render: shell
+
+  - type: textarea
+    id: network
+    attributes:
+      label: Network setup
+      description: >-
+        Same Wi-Fi, phone hotspot, or one device on cellular? Any client isolation on the
+        access point? Most "cannot connect" reports are this, not the app.
+      placeholder: >-
+        Both phones on home Wi-Fi (TP-Link Archer C7, AP isolation off). Server address
+        192.168.1.55:8080.

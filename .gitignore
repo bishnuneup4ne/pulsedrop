@@ -1,0 +1,27 @@
+# Gradle / build output
+.gradle/
+build/
+.kotlin/
+.cxx/
+.externalNativeBuild/
+captures/
+
+# Local machine configuration — never shared between clones
+local.properties
+.env
+
+# IDE
+*.iml
+.idea/
+.DS_Store
+
+# Signing material: a committed keystore or password file is a leaked secret.
+# Release signing is supplied out-of-band via signing.properties or environment variables.
+*.jks
+*.keystore
+*.p12
+signing.properties
+
+# Editor / tool scratch
+.qoder/
+*.log

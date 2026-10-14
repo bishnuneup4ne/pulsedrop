@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   Backup rules for devices older than API 31 (used with android:fullBackupContent).
+   Everything is backed up by default; these <exclude> entries keep the pairing
+   secrets out of Google Drive / ADB backup.
+-->
+<full-backup-content>
+    <!-- Raw EC private-key fallback for the E2EE device identity (Crypto.kt). -->
+    <exclude domain="sharedpref" path="localdrop_identity.xml" />
+    <!-- Peer public keys + shared pairing secrets (PairManager.kt). -->
+    <exclude domain="sharedpref" path="localdrop_pairs.xml" />
+    <!-- Access PIN (MainViewModel.kt). -->
+    <exclude domain="sharedpref" path="localdrop_settings.xml" />
+    <!-- Received and chat files are user payloads, not app state. -->
+    <exclude domain="external" path="WebDrop_Received" />
+    <exclude domain="external" path="WebDrop_Chat" />
+</full-backup-content>
