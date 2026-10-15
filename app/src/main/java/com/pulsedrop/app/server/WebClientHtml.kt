@@ -18,6 +18,7 @@ object WebClientHtml {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" id="themeColor" content="#0B0B0C">
   <title>PulseDrop - Private Local File Share</title>
   <script>
     /*
@@ -32,6 +33,10 @@ object WebClientHtml {
       var dark = mode === "dark" ||
         (mode !== "light" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
       document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+      /* The browser's own bar (URL strip on a phone) has to change with the page, or a light theme
+         still wears a dark frame. These are --bg for each table; the parity test keeps them true. */
+      var tc = document.getElementById("themeColor");
+      if (tc) tc.setAttribute("content", dark ? "#0B0B0C" : "#FFFFFF");
     })();
   </script>
   <style>
@@ -58,6 +63,7 @@ object WebClientHtml {
       --text: #171717;
       --muted: #71717A;
       --faint: #9A9AA3;
+      --text-inverse: #FFFFFF;    /* ink for a surface painted with --text */
 
       --hairline: #E7E7EA;
       --hairline-strong: #D3D3D8;
@@ -91,6 +97,38 @@ object WebClientHtml {
       --shadow-2: 0 6px 20px rgba(23,23,23,0.10);
       --focus-ring: rgba(79,70,229,0.45);
 
+      /*
+        The media stage - the call surface and the full-screen attachment viewer - deliberately does
+        not follow the theme. A dark video feed framed by light chrome inverts every label beside it,
+        so these hold the phone's PulseStageColors and the dark block below re-declares none of them.
+      */
+      --stage-bg: #0B0B0C;
+      --stage-surface: #121214;
+      --stage-panel: rgba(26, 26, 29, .86);
+      --stage-line: rgba(161, 161, 170, .3);
+      --stage-line-soft: rgba(161, 161, 170, .2);
+      --stage-line-faint: rgba(161, 161, 170, .14);
+      --stage-wash: rgba(161, 161, 170, .06);
+      --stage-wash-hover: rgba(161, 161, 170, .16);
+      --stage-chip: rgba(161, 161, 170, .18);
+      --stage-scrim: rgba(11, 11, 12, .74);
+      --stage-scrim-soft: rgba(11, 11, 12, .62);
+      --stage-scrim-strong: rgba(11, 11, 12, .92);
+      --stage-scrim-mid: rgba(11, 11, 12, .4);
+      --stage-clear: rgba(11, 11, 12, 0);
+      --stage-text: #F5F5F5;
+      --stage-muted: #A1A1AA;
+      --stage-accent: #C4C6FA;
+      --stage-good: #22C55E;
+      --stage-on-good: #052010;
+      --stage-good-tint: #12291B;
+      --stage-on-good-tint: #22C55E;
+      --stage-bad: #F87171;
+      --stage-on-bad: #2A0B0B;
+      --stage-black: #000000;
+      /* Initials sit on a per-contact identity colour, not a theme colour - see PulseAvatarPalette. */
+      --avatar-ink: #FFFFFF;
+
       --radius: 16px;
       --topbar-h: 56px;
       --tabbar-h: 60px;
@@ -107,6 +145,7 @@ object WebClientHtml {
       --text: #F5F5F5;
       --muted: #A1A1AA;
       --faint: #71717A;
+      --text-inverse: #0B0B0C;    /* ink for a surface painted with --text */
 
       --hairline: #29292D;
       --hairline-strong: #3A3A40;
@@ -202,7 +241,7 @@ object WebClientHtml {
     .topbar-act.spin svg { animation: pdspin 0.8s linear infinite; }
     @keyframes pdspin { to { transform: rotate(360deg); } }
     .status-pill.me { background: var(--surface-2); color: var(--muted); border: 1px solid var(--hairline); cursor: pointer; }
-    .status-pill.me b { font-weight: 700; color: var(--ink); }
+    .status-pill.me b { font-weight: 700; color: var(--text); }
 
     /* ===== Two-pane shell ===== */
     .shell { flex: 1; min-height: 0; display: flex; }
@@ -221,7 +260,7 @@ object WebClientHtml {
     .brand { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
     .brand-mark {
       width: 38px; height: 38px; border-radius: 12px;
-      background: var(--accent); color: #fff;
+      background: var(--accent); color: var(--on-accent);
       display: flex; align-items: center; justify-content: center;
     }
     .brand-name { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
@@ -302,7 +341,7 @@ object WebClientHtml {
       font-size: 12.5px; font-weight: 600; padding: 9px 12px;
       display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
     }
-    .btn-filled { background: var(--accent); color: #fff; }
+    .btn-filled { background: var(--accent); color: var(--on-accent); }
     .btn-filled:hover { background: var(--accent-hover); }
     .btn-quiet { background: var(--surface); color: var(--muted); border: 1px solid var(--hairline); }
     .btn-quiet:hover { background: var(--highlight); color: var(--text); }
@@ -362,7 +401,7 @@ object WebClientHtml {
       padding: 8px 10px; font-size: 12px; font-weight: 600; text-decoration: none;
       transition: background 0.15s, color 0.15s, border-color 0.15s;
     }
-    .dl-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .dl-btn:hover { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
     .icon-btn {
       appearance: none; border: 1px solid var(--hairline);
       background: var(--surface-2); color: var(--muted);
@@ -400,7 +439,7 @@ object WebClientHtml {
     .file-list > .empty { grid-column: 1 / -1; }
     .empty-cta {
       appearance: none; cursor: pointer; font: inherit; font-weight: 700; font-size: 12.5px;
-      color: #fff; background: var(--accent); border: none; border-radius: 999px; padding: 9px 18px;
+      color: var(--on-accent); background: var(--accent); border: none; border-radius: 999px; padding: 9px 18px;
     }
     .empty-cta:hover { filter: brightness(1.07); }
 
@@ -432,7 +471,7 @@ object WebClientHtml {
     }
     .fe-plus {
       position: absolute; right: 2px; bottom: 0; width: 34px; height: 34px; border-radius: 50%;
-      background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center;
+      background: var(--accent); color: var(--on-accent); display: flex; align-items: center; justify-content: center;
       box-shadow: var(--shadow-2);
     }
     .fe-title { font-size: 19px; font-weight: 800; letter-spacing: -.3px; color: var(--text); }
@@ -444,7 +483,7 @@ object WebClientHtml {
       border: 1px solid transparent; transition: transform .12s ease, border-color .12s ease, color .12s ease;
     }
     .fe-btn:hover { transform: translateY(-1px); }
-    .fe-btn.primary { background: var(--accent); color: #fff; box-shadow: var(--shadow-2); }
+    .fe-btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-2); }
     .fe-btn.primary:hover { background: var(--accent-hover); }
     .fe-btn.ghost { background: var(--surface); color: var(--text); border-color: var(--hairline-strong); }
     .fe-btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
@@ -508,7 +547,7 @@ object WebClientHtml {
     .ravatar {
       width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
-      font-size: 15px; font-weight: 800; color: #fff; letter-spacing: -0.5px;
+      font-size: 15px; font-weight: 800; color: var(--avatar-ink); letter-spacing: -0.5px;
     }
     .rbody { flex: 1; min-width: 0; }
     .rtop { display: flex; align-items: baseline; gap: 6px; }
@@ -518,12 +557,12 @@ object WebClientHtml {
     .rprev b { color: var(--text); font-weight: 600; }
     .rbadge {
       min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px; flex-shrink: 0;
-      background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 800;
+      background: var(--accent); color: var(--on-accent); font-size: 10.5px; font-weight: 800;
       display: inline-flex; align-items: center; justify-content: center;
     }
     .tbadge {
       min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
-      background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700;
+      background: var(--accent); color: var(--on-accent); font-size: 10.5px; font-weight: 700;
       display: inline-flex; align-items: center; justify-content: center;
     }
 
@@ -568,7 +607,7 @@ object WebClientHtml {
       background: var(--hairline); color: var(--text);
       border-bottom-left-radius: 18px;
     }
-    .bubble-row.mine .bubble { background: var(--accent); color: #fff; }
+    .bubble-row.mine .bubble { background: var(--accent); color: var(--on-accent); }
     .bubble-row.in:not(.group-cont) .bubble { border-bottom-left-radius: 6px; }
     .bubble-row.mine:not(.group-cont) .bubble { border-bottom-right-radius: 6px; }
     .bubble-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); padding: 0 4px; min-height: 1px; }
@@ -627,7 +666,7 @@ object WebClientHtml {
     .new-pill {
       position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
       display: none; align-items: center; gap: 6px;
-      background: var(--accent); color: #fff; border: none; border-radius: 999px;
+      background: var(--accent); color: var(--on-accent); border: none; border-radius: 999px;
       padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
       box-shadow: var(--shadow-2); z-index: 5; white-space: nowrap;
     }
@@ -658,7 +697,7 @@ object WebClientHtml {
     .emoji-pop {
       display: none; position: absolute; left: 12px; right: 12px; bottom: calc(100% + 8px);
       background: var(--surface); border: 1px solid var(--hairline); border-radius: 16px;
-      box-shadow: var(--shadow-2, 0 12px 32px rgba(15, 23, 42, 0.14));
+      box-shadow: var(--shadow-2);
       padding: 10px; max-height: 190px; overflow-y: auto;
       grid-template-columns: repeat(8, 1fr); gap: 2px; z-index: 6;
     }
@@ -671,7 +710,7 @@ object WebClientHtml {
     .attach-btn.is-busy { opacity: 0.55; pointer-events: none; }
     .send-btn {
       width: 44px; height: 44px; border-radius: 14px; border: none; cursor: pointer; flex-shrink: 0;
-      background: var(--accent); color: #fff;
+      background: var(--accent); color: var(--on-accent);
       display: flex; align-items: center; justify-content: center;
       transition: background 0.15s;
     }
@@ -694,7 +733,7 @@ object WebClientHtml {
     .tab-dot {
       position: absolute; top: -3px; right: -8px;
       min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
-      background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+      background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 700;
       display: none; align-items: center; justify-content: center;
     }
 
@@ -731,7 +770,7 @@ object WebClientHtml {
     .toast {
       position: fixed; left: 50%; bottom: 24px;
       transform: translateX(-50%) translateY(14px);
-      background: var(--text); color: #fff;
+      background: var(--text); color: var(--text-inverse);
       font-size: 13px; font-weight: 600; padding: 11px 18px; border-radius: 12px;
       box-shadow: var(--shadow-2); opacity: 0; pointer-events: none;
       transition: opacity 0.2s, transform 0.2s; z-index: 1100; max-width: 90vw; text-align: center;
@@ -759,7 +798,7 @@ object WebClientHtml {
     .nav-rail.mini #railToggle svg { transform: rotate(180deg); }
     .nav-mark {
       width: 38px; height: 38px; border-radius: 13px; margin-bottom: 8px;
-      background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center;
+      background: var(--accent); color: var(--on-accent); display: flex; align-items: center; justify-content: center;
     }
     .nav-btn {
       appearance: none; border: none; background: none; cursor: pointer;
@@ -771,7 +810,7 @@ object WebClientHtml {
     .nav-btn.active { background: var(--accent-tint); color: var(--accent); }
     .nav-badge {
       position: absolute; top: -4px; right: -8px; min-width: 17px; height: 17px; padding: 0 4px;
-      border-radius: 999px; background: var(--accent); color: #fff; font-size: 9.5px; font-weight: 800;
+      border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 9.5px; font-weight: 800;
       display: none; align-items: center; justify-content: center;
     }
     .nav-ico { position: relative; display: inline-flex; }
@@ -793,7 +832,7 @@ object WebClientHtml {
       appearance: none; border: none; background: none; cursor: pointer; padding: 7px 11px;
       font-size: 11.5px; font-weight: 700; color: var(--muted);
     }
-    .seg button.active { background: var(--accent); color: #fff; }
+    .seg button.active { background: var(--accent); color: var(--on-accent); }
     .select {
       appearance: none; border: 1px solid var(--hairline); background: var(--surface); color: var(--text);
       border-radius: 11px; padding: 8px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer;
@@ -836,7 +875,7 @@ object WebClientHtml {
 
     /* ===== Call: a full-page stage, not a popup ===== */
     .call-screen {
-      position: fixed; inset: 0; z-index: 130; background: #070B14; color: #fff;
+      position: fixed; inset: 0; z-index: 130; background: var(--stage-bg); color: var(--stage-text);
       display: none; flex-direction: column;
     }
     .call-screen.show { display: flex; }
@@ -847,11 +886,11 @@ object WebClientHtml {
     /* Two slots: one fills the stage, one rides the corner. Tapping the corner tile swaps them,
        dragging it parks the tile wherever you like - the Messenger interaction people expect. */
     .feed-slot { position: absolute; overflow: hidden; }
-    .feed-slot.big { inset: 0; z-index: 0; background: #070B14; }
+    .feed-slot.big { inset: 0; z-index: 0; background: var(--stage-bg); }
     .feed-slot.small {
       inset: auto 22px 22px auto; width: 172px; aspect-ratio: 4 / 3; height: auto; z-index: 4;
-      border-radius: 16px; overflow: hidden; background: #0F172A; cursor: grab; touch-action: none;
-      border: 1px solid rgba(148, 163, 184, .3); box-shadow: 0 16px 34px rgba(0, 0, 0, .5);
+      border-radius: 16px; overflow: hidden; background: var(--stage-surface); cursor: grab; touch-action: none;
+      border: 1px solid var(--stage-line); box-shadow: 0 16px 34px rgba(0, 0, 0, .5);
     }
     .feed-slot.small.dragging { cursor: grabbing; }
     .feed-slot img, .feed-slot video {
@@ -859,45 +898,45 @@ object WebClientHtml {
     }
     .feed-slot.small img, .feed-slot.small video { object-fit: cover; }
     .feed-slot video.self-cam { transform: scaleX(-1); }
-    .call-remote { background: #070B14; }
+    .call-remote { background: var(--stage-bg); }
     .call-remote.cover { object-fit: cover; }
     .call-poster { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; padding: 24px; text-align: center; }
     .call-poster.hide { display: none; }
     .call-avatar {
       width: 116px; height: 116px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: 42px; font-weight: 800; color: #fff;
+      font-size: 42px; font-weight: 800; color: var(--avatar-ink);
       box-shadow: 0 18px 44px rgba(0, 0, 0, .45);
     }
     .call-peer { font-size: 24px; font-weight: 800; letter-spacing: -.6px; margin-top: 16px; }
-    .call-status { font-size: 13.5px; color: #94A3B8; margin-top: 7px; }
+    .call-status { font-size: 13.5px; color: var(--stage-muted); margin-top: 7px; }
     .call-top {
       position: absolute; top: 0; left: 0; right: 0; z-index: 3;
       display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
-      padding: 22px 26px; background: linear-gradient(180deg, rgba(7, 11, 20, .74), rgba(7, 11, 20, 0));
+      padding: 22px 26px; background: linear-gradient(180deg, var(--stage-scrim), var(--stage-clear));
       pointer-events: none;
     }
-    .call-kicker { font-size: 10.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #93C5FD; }
+    .call-kicker { font-size: 10.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--stage-accent); }
     .call-name { font-size: 17px; font-weight: 800; letter-spacing: -.3px; margin-top: 3px; }
     .call-clock {
-      font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: #CBD5E1;
-      background: rgba(148, 163, 184, .16); border-radius: 999px; padding: 6px 13px;
+      font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--stage-text);
+      background: var(--stage-chip); border-radius: 999px; padding: 6px 13px;
     }
     .call-tag {
       position: absolute; z-index: 3; left: 26px; bottom: 22px; display: none;
       align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
-      background: rgba(6, 78, 59, .86); color: #6EE7B7; padding: 8px 14px; border-radius: 999px;
+      background: var(--stage-good-tint); color: var(--stage-on-good-tint); padding: 8px 14px; border-radius: 999px;
     }
     .call-tag.show { display: flex; }
     .call-pip-off {
       position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-      font-size: 11.5px; font-weight: 700; color: #94A3B8; text-align: center; padding: 8px;
+      font-size: 11.5px; font-weight: 700; color: var(--stage-muted); text-align: center; padding: 8px;
     }
     .call-pip.live .call-pip-off { display: none; }
     .pip-hint {
       position: absolute; z-index: 2; left: 8px; top: 8px; display: none;
       align-items: center; gap: 5px; font-size: 10px; font-weight: 800; letter-spacing: .3px;
-      color: #E2E8F0; background: rgba(7, 11, 20, .62); padding: 4px 9px; border-radius: 999px;
+      color: var(--stage-text); background: var(--stage-scrim-soft); padding: 4px 9px; border-radius: 999px;
       pointer-events: none;
     }
     .feed-slot.small .pip-hint { display: flex; }
@@ -905,27 +944,27 @@ object WebClientHtml {
       position: absolute; z-index: 3; right: 7px; top: 7px; display: none;
       width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer;
       align-items: center; justify-content: center;
-      color: #E2E8F0; background: rgba(7, 11, 20, .62);
+      color: var(--stage-text); background: var(--stage-scrim-soft);
     }
     .pip-flip.show { display: flex; }
     .pip-flip svg { pointer-events: none; }
     .call-dock {
       position: relative; z-index: 5; display: flex; align-items: center; justify-content: center;
       gap: 16px; padding: 22px 18px calc(30px + env(safe-area-inset-bottom, 0px));
-      background: linear-gradient(0deg, rgba(7, 11, 20, .92), rgba(7, 11, 20, .4) 65%, rgba(7, 11, 20, 0));
+      background: linear-gradient(0deg, var(--stage-scrim-strong), var(--stage-scrim-mid) 65%, var(--stage-clear));
     }
     .dock-cell { display: flex; flex-direction: column; align-items: center; gap: 7px; }
     .dock-btn {
       appearance: none; border: none; cursor: pointer; width: 58px; height: 58px; border-radius: 50%;
       display: inline-flex; align-items: center; justify-content: center;
-      color: #E2E8F0; background: rgba(148, 163, 184, .18);
+      color: var(--stage-text); background: var(--stage-chip);
       transition: transform .12s ease, background .12s ease;
     }
-    .dock-btn:hover { background: rgba(148, 163, 184, .3); }
+    .dock-btn:hover { background: var(--stage-line); }
     .dock-btn:active { transform: scale(.93); }
-    .dock-btn.active { background: #fff; color: #0B1220; }
-    .dock-btn.danger { background: #DC2626; color: #fff; }
-    .dock-btn.good { background: #16A34A; color: #fff; }
+    .dock-btn.active { background: var(--stage-text); color: var(--stage-bg); }
+    .dock-btn.danger { background: var(--stage-bad); color: var(--stage-on-bad); }
+    .dock-btn.good { background: var(--stage-good); color: var(--stage-on-good); }
     .dock-btn[disabled] { opacity: .35; cursor: not-allowed; }
     /* The slash paths live in the same svg as their base icon and only surface when the
        control is in its off/engaged state - an icon that visibly changes reads at a glance. */
@@ -933,11 +972,11 @@ object WebClientHtml {
     .dock-btn.active .sl, .dock-btn.slated .sl { display: inline; }
     /* Mute shows its slash when engaged; camera shows its slash when the lens is closed. */
     #callCam.active .sl { display: none; }
-    .dock-lab { font-size: 10.5px; font-weight: 700; letter-spacing: .2px; color: #94A3B8; }
+    .dock-lab { font-size: 10.5px; font-weight: 700; letter-spacing: .2px; color: var(--stage-muted); }
     .call-hint {
       position: absolute; z-index: 4; left: 50%; transform: translateX(-50%); bottom: 178px;
-      font-size: 11.5px; color: #CBD5E1; background: rgba(15, 23, 42, .86);
-      border: 1px solid rgba(148, 163, 184, .22); padding: 9px 15px; border-radius: 999px;
+      font-size: 11.5px; color: var(--stage-text); background: var(--stage-panel);
+      border: 1px solid var(--stage-line-soft); padding: 9px 15px; border-radius: 999px;
       display: none; max-width: min(520px, 90vw); text-align: center; line-height: 1.45;
     }
     .call-hint.show { display: block; }
@@ -972,28 +1011,28 @@ object WebClientHtml {
       border: 1px solid var(--hairline); background: var(--surface-2); color: var(--text);
     }
     .att-btn:hover { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
-    .att-btn.prim { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .att-btn.prim:hover { background: var(--accent-hover); color: #fff; }
+    .att-btn.prim { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+    .att-btn.prim:hover { background: var(--accent-hover); color: var(--on-accent); }
 
     /* ===== Preview lightbox ===== */
     .lb {
       position: fixed; inset: 0; z-index: 95; display: none; flex-direction: column;
-      background: #0B1220;
+      background: var(--stage-bg);
     }
     .lb.open { display: flex; }
     .lb-head {
       display: flex; align-items: center; gap: 10px; padding: 9px 12px;
-      border-bottom: 1px solid rgba(226,232,240,0.14); color: #E2E8F0; flex: 0 0 auto;
+      border-bottom: 1px solid var(--stage-line-faint); color: var(--stage-text); flex: 0 0 auto;
     }
     .lb-title { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .lb-sub { flex: 0 0 auto; font-size: 11.5px; color: #94A3B8; }
+    .lb-sub { flex: 0 0 auto; font-size: 11.5px; color: var(--stage-muted); }
     .lb-tools { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
     .lb-btn {
       font: inherit; width: 32px; height: 32px; border-radius: 9px; cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
-      border: 1px solid rgba(226,232,240,0.18); background: rgba(226,232,240,0.06); color: #E2E8F0;
+      border: 1px solid var(--stage-line-soft); background: var(--stage-wash); color: var(--stage-text);
     }
-    .lb-btn:hover { background: rgba(226,232,240,0.16); }
+    .lb-btn:hover { background: var(--stage-wash-hover); }
     .lb-btn[disabled] { opacity: 0.35; cursor: default; }
     .lb-btn a, .lb-btn svg { display: block; }
     .lb-zoom { min-width: 48px; width: auto; padding: 0 6px; font-size: 11.5px; }
@@ -1006,21 +1045,23 @@ object WebClientHtml {
     .lb-media.pan.dragging { cursor: grabbing; }
     /* Images fill the stage so small files scale up instead of showing 1:1 pixels. */
     img.lb-media { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: contain; }
-    .lb-video { width: min(900px, 94vw); background: #000; }
-    .lb-pdf { width: min(1000px, 94vw); height: calc(100vh - 120px); background: #fff; border: none; }
+    .lb-video { width: min(900px, 94vw); background: var(--stage-black); }
+    /* The white here is the paper of the document, not a surface colour - a PDF page stays white
+       in either theme, exactly like a printed page. */
+.lb-pdf { width: min(1000px, 94vw); height: calc(100vh - 120px); background: #fff; border: none; }
     .lb-audio-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px; }
     .lb-audio { width: min(520px, 86vw); }
     .lb-text { position: absolute; inset: 0; overflow: auto; padding: 16px 18px; }
     .lb-text pre {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 12.5px; line-height: 1.65; color: #E2E8F0; white-space: pre-wrap; word-break: break-word;
+      font-size: 12.5px; line-height: 1.65; color: var(--stage-text); white-space: pre-wrap; word-break: break-word;
     }
-    .lb-none { text-align: center; color: #CBD5E1; padding: 28px; max-width: 420px; }
+    .lb-none { text-align: center; color: var(--stage-text); padding: 28px; max-width: 420px; }
     .lb-none .nm { font-size: 14px; font-weight: 600; margin-bottom: 4px; word-break: break-all; }
-    .lb-none .mm { font-size: 12px; color: #94A3B8; margin-bottom: 16px; }
+    .lb-none .mm { font-size: 12px; color: var(--stage-muted); margin-bottom: 16px; }
     .lb-hint {
       position: absolute; left: 0; right: 0; bottom: 10px; text-align: center;
-      font-size: 11px; color: #64748B; pointer-events: none;
+      font-size: 11px; color: var(--stage-muted); pointer-events: none;
     }
     body.lb-block { overflow: hidden; }
     @media (max-width: 700px) {
@@ -1811,6 +1852,8 @@ object WebClientHtml {
       var dark = mode === 'dark' ||
         (mode !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
       document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      var tc = document.getElementById('themeColor');
+      if (tc) tc.setAttribute('content', dark ? '#0B0B0C' : '#FFFFFF');
       var btn = el('themeBtn');
       if (btn) {
         var lab = el('themeBtnLabel');
@@ -2522,21 +2565,17 @@ object WebClientHtml {
     /* ===== Thread model ===== */
     var threadMeta = {};
     var infoOpen = false;
-    var AV_GRADS = [
-      'linear-gradient(135deg,#2563EB,#7C3AED)',
-      'linear-gradient(135deg,#0EA5E9,#2563EB)',
-      'linear-gradient(135deg,#F59E0B,#EF4444)',
-      'linear-gradient(135deg,#10B981,#0EA5E9)',
-      'linear-gradient(135deg,#8B5CF6,#EC4899)',
-      'linear-gradient(135deg,#475569,#0F172A)'
-    ];
+    /* The phone's PulseAvatarPalette, kept in step with it: the one place a contact may be a colour
+       rather than a theme token, and each entry is dark enough that white initials clear AA. A
+       gradient would put two hues under the same pair of letters, so only the darker end counted. */
+    var AV_COLORS = ['#2563EB', '#7C3AED', '#0F766E', '#15803D', '#B45309', '#BE123C'];
 
     function hashOf(s) {
       var h = 0;
       for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }
       return Math.abs(h);
     }
-    function gradOf(seed) { return AV_GRADS[hashOf(String(seed)) % AV_GRADS.length]; }
+    function avColor(seed) { return AV_COLORS[hashOf(String(seed)) % AV_COLORS.length]; }
     function initialsOf(name) {
       var parts = String(name || '?').trim().split(/[\s_-]+/).filter(Boolean);
       if (!parts.length) return '?';
@@ -2723,7 +2762,7 @@ object WebClientHtml {
 
       var av = document.createElement('div');
       av.className = 'ravatar';
-      av.style.background = gradOf(row.id || 'everyone');
+      av.style.background = avColor(row.id || 'everyone');
       av.textContent = initialsOf(row.title);
       av.setAttribute('aria-hidden', 'true');
       btn.appendChild(av);
@@ -2772,7 +2811,7 @@ object WebClientHtml {
       var t = currentThread;
       var av = el('convoAvatar');
       av.textContent = initialsOf(threadTitle(t));
-      av.style.background = gradOf(t || 'everyone');
+      av.style.background = avColor(t || 'everyone');
       el('convoTitle').textContent = threadTitle(t);
       el('convoSub').textContent = threadHint(t);
       var note = el('threadNote');
@@ -3985,7 +4024,7 @@ object WebClientHtml {
       el('cellShare').style.display = on ? 'flex' : 'none';
       el('callMuteLab').textContent = pdMuted ? 'Unmute' : 'Mute';
       el('callYou').textContent = 'You - ' + MY_NAME + (myIp ? ' (' + myIp + ')' : '');
-      el('callAvatar').style.background = gradOf(incoming ? peerName() : MY_NAME);
+      el('callAvatar').style.background = avColor(incoming ? peerName() : MY_NAME);
       el('callAvatar').textContent = initialsOf(incoming ? peerName() : MY_NAME);
       syncSelfView();
       // The poster only steps aside once an actual frame has landed.
