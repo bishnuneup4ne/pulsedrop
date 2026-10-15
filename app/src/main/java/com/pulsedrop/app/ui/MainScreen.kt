@@ -48,6 +48,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,8 +65,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.pulsedrop.app.model.PeerDevice
+import com.pulsedrop.app.model.TransferDirection
+import com.pulsedrop.app.model.TransferStatus
 import com.pulsedrop.app.BuildConfig
 import com.pulsedrop.app.ui.components.PinSecurityDialog
+import com.pulsedrop.app.ui.components.PulseBanner
+import com.pulsedrop.app.ui.components.PulseBannerStack
 import com.pulsedrop.app.ui.components.PulseHeader
 import com.pulsedrop.app.ui.screens.CallOverlay
 import com.pulsedrop.app.ui.screens.ChatScreen
@@ -74,6 +80,8 @@ import com.pulsedrop.app.ui.screens.HotspotGuideScreen
 import com.pulsedrop.app.ui.screens.RadarScreen
 import com.pulsedrop.app.ui.screens.ShareScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 enum class PulseNavTab(val title: String, val icon: ImageVector, val tag: String) {
     SERVE("Server", Icons.Default.Wifi, "tab_serve"),
@@ -434,6 +442,133 @@ fun MainScreen(viewModel: MainViewModel) {
             }
         }
 
+        // ---- in-app heads-up feed ------------------------------------------
+        // The system shade covers calls and the server while the app is closed; this
+        // covers them while it is open, on any tab. Tapping a banner jumps to its
+        // subject — back into a minimized call, the server card, or history.
+        val bannerScope = rememberCoroutineScope()
+        val banners = remember { mutableStateListOf<PulseBanner>() }
+
+        fun dismissBanner(entry: PulseBanner) {
+            banners.replaceAll { if (it.id == entry.id) it.copy(visible = false) else it }
+            bannerScope.launch {
+                delay(300)
+                banners.removeAll { it.id == entry.id }
+            }
+        }
+
+        fun pushBanner(
+            group: String,
+            title: String,
+            text: String,
+            icon: ImageVector,
+            action: String? = null,
+            onTap: (() -> Unit)? = null
+        ) {
+            banners.removeAll { it.group == group }
+            val entry = PulseBanner(
+                id = "$group-${System.nanoTime()}",
+                group = group,
+                title = title,
+                text = text,
+                icon = icon,
+                action = action,
+                onTap = onTap
+            )
+            banners.add(entry)
+            bannerScope.launch {
+                delay(7_000)
+                dismissBanner(entry)
+            }
+        }
+
+        var lastRunning by remember { mutableStateOf<Boolean?>(null) }
+        LaunchedEffect(serverState.isRunning) {
+            val prev = lastRunning
+            val now = serverState.isRunning
+            lastRunning = now
+            if (prev == now) return@LaunchedEffect
+            if (now) {
+                pushBanner(
+                    group = "server",
+                    title = "Server started",
+                    text = "${serverState.serverUrl} — devices on this network can connect now.",
+                    icon = Icons.Default.WifiTethering,
+                    action = "Open server screen",
+                    onTap = { selectedTab = PulseNavTab.SERVE }
+                )
+            } else {
+                pushBanner(
+                    group = "server",
+                    title = "Server stopped",
+                    text = "This phone is no longer reachable from the network.",
+                    icon = Icons.Default.Wifi
+                )
+            }
+        }
+
+        var lastCallKey by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(callState.active, callState.connected, callState.peerName) {
+            val key = when {
+                callState.active && callState.connected -> "connected"
+                callState.active -> "dialing"
+                else -> null
+            }
+            val prev = lastCallKey
+            lastCallKey = key
+            if (key == prev) return@LaunchedEffect
+            // Only announce when the full call UI is NOT already on screen; minimized,
+            // the banner is the one glanceable signal, and tapping it maximizes again.
+            if (key != null && callMinimized) {
+                pushBanner(
+                    group = "call",
+                    title = if (key == "connected") "In call with ${callState.peerName}"
+                    else "Calling ${callState.peerName}",
+                    text = if (key == "connected")
+                        if (callState.video) "Video call connected" else "Voice call connected"
+                    else callState.status.ifBlank { "Ringing…" },
+                    icon = Icons.Default.Call,
+                    action = "Back to call",
+                    onTap = { callMinimized = false }
+                )
+            } else if (key == null && prev != null) {
+                pushBanner(
+                    group = "call",
+                    title = "Call ended",
+                    text = "The call is finished.",
+                    icon = Icons.Default.Call
+                )
+            }
+        }
+
+        val seenTransfers = remember { mutableStateOf(setOf<String>()) }
+        var transfersSeeded by remember { mutableStateOf(false) }
+        LaunchedEffect(activeTransfersMap) {
+            val done = activeTransfersMap.values.filter {
+                it.status == TransferStatus.COMPLETED || it.status == TransferStatus.FAILED
+            }
+            val previous = seenTransfers.value
+            seenTransfers.value = done.map { it.id }.toSet()
+            if (!transfersSeeded) {
+                transfersSeeded = true
+                return@LaunchedEffect
+            }
+            val fresh = done.lastOrNull { it.id !in previous } ?: return@LaunchedEffect
+            val label = if (fresh.direction == TransferDirection.INCOMING) "Received" else "Sent"
+            pushBanner(
+                group = "transfer",
+                title = if (fresh.status == TransferStatus.FAILED)
+                    "Transfer failed · ${fresh.fileName}"
+                else "$label ${fresh.fileName}",
+                text = if (fresh.status == TransferStatus.FAILED)
+                    fresh.errorMessage ?: "Open history for details."
+                else "%.1f MB · %s".format(fresh.fileSize / 1048576.0, fresh.remoteDevice),
+                icon = Icons.Default.History,
+                action = "See history",
+                onTap = { selectedTab = PulseNavTab.HISTORY }
+            )
+        }
+
         val browserCall = webCall
         if (browserCall != null && !callState.active) {
             val leaveBrowserCall: () -> Unit = {
@@ -451,6 +586,16 @@ fun MainScreen(viewModel: MainViewModel) {
                 onHangUp = { viewModel.endWebCall() }
             )
         }
+
+        PulseBannerStack(
+            banners = banners,
+            onDismiss = { dismissBanner(it) },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(horizontal = 10.dp)
+                .padding(top = 84.dp)
+        )
     }
 
     val incoming = incomingCall
