@@ -50,6 +50,8 @@ interface ServerTransferListener {
     fun onTransferCompleted(transferId: String, fileName: String, fileSize: Long, localFilePath: String?, direction: TransferDirection, remoteDevice: String, clientIp: String)
     fun onTransferFailed(transferId: String, fileName: String, error: String, direction: TransferDirection)
     fun onNewMessage(message: ClipMessage)
+    /** A room message was deleted; every listener must drop it the same way, by id. */
+    fun onMessageDeleted(id: String) {}
     fun onWebCall(call: WebCall)
 }
 
@@ -62,6 +64,11 @@ private const val TYPING_SENDER_LIMIT = 64
 private const val WEB_CLIENT_TTL = 90_000L
 // Matches CallEngine.RING_TIMEOUT_MS so a browser and a paired app are given up on alike.
 private const val WEB_RING_TIMEOUT_MS = 35_000L
+// How long a relay-mode phone may come back for the pairing answer it was never handed.
+private const val PAIR_ANSWER_TTL_MS = 10 * 60_000L
+// A chat envelope is text; anything larger belongs in a file transfer, not carried mail.
+private const val MAX_RELAY_ENVELOPE = 64 * 1024
+private const val RELAY_VISITOR_TTL_MS = 90_000L
 
 class PulseDropServer(
     val port: Int,
@@ -108,6 +115,120 @@ class PulseDropServer(
 
     @Volatile
     var pairManager: com.pulsedrop.app.security.PairManager? = null
+
+    /**
+     * Mail for paired devices that keep no listener of their own. Holding it here is what lets one
+     * phone run the server for a whole room instead of every device having to host its own.
+     */
+    private val relayMailbox = com.pulsedrop.app.relay.RelayMailbox(context)
+
+    /**
+     * Pairing answers for relay-mode requesters, which have no socket to be answered on. Keyed by
+     * the requester's own random request id, which is the only thing that authorizes the fetch.
+     */
+    private val pairAnswers = LinkedHashMap<String, Pair<JSONObject, Long>>()
+
+    /** Device ids that have pulled or posted recently, i.e. phones reachable through us. */
+    private val relayVisitors = LinkedHashMap<String, Long>()
+
+    init {
+        relayMailbox.load()
+    }
+
+    fun setPairAnswer(reqId: String, answer: JSONObject) {
+        if (reqId.isBlank()) return
+        synchronized(pairAnswers) {
+            val now = System.currentTimeMillis()
+            pairAnswers.entries.filter { it.value.second <= now }.map { it.key }.forEach { pairAnswers.remove(it) }
+            while (pairAnswers.size > 32) pairAnswers.remove(pairAnswers.keys.first())
+            pairAnswers[reqId] = answer to (now + PAIR_ANSWER_TTL_MS)
+        }
+    }
+
+    fun takePairAnswer(reqId: String): JSONObject? = synchronized(pairAnswers) {
+        val entry = pairAnswers.remove(reqId) ?: return null
+        if (entry.second <= System.currentTimeMillis()) null else entry.first
+    }
+
+    /**
+     * Carries sealed traffic between devices that pair with this host but do not host anything
+     * themselves. The role is taken from the path rather than the body, so a client cannot present
+     * a "post" token to empty somebody else's mailbox, and the sender identity comes from the key
+     * it signed with rather than from whatever it claims in a `from` field.
+     */
+    private fun handleRelay(uri: String, json: JSONObject, clientIp: String): JSONObject {
+        if (uri == "/api/relay/pair-poll") {
+            val answer = takePairAnswer(json.optString("reqId"))
+            return JSONObject()
+                .put("found", answer != null)
+                .apply { if (answer != null) put("answer", answer) }
+        }
+        val pm = pairManager
+            ?: return JSONObject().put("success", false).put("error", "pairing off")
+        val role = if (uri == "/api/relay/post") "post" else "pull"
+        val senderDid = pm.verifyRelayAuth(json.optString("pid"), role, json.optString("proof"))
+            ?: return JSONObject().put("success", false).put("error", "unauthorized")
+
+        if (uri == "/api/relay/pull") {
+            val acks = json.optJSONArray("ack")
+            if (acks != null) {
+                val ids = (0 until acks.length()).mapNotNull { acks.optString(it).takeIf { s -> s.isNotBlank() } }
+                relayMailbox.ack(senderDid, ids)
+            }
+            val messages = JSONArray()
+            relayMailbox.pending(senderDid).forEach { messages.put(it) }
+            noteRelayActivity(senderDid, clientIp)
+            return JSONObject().put("success", true).put("messages", messages)
+        }
+
+        val to = json.optString("to")
+        val kind = json.optString("kind", "message")
+        val envelope = JSONObject()
+            .put("kind", kind)
+            .put("from", senderDid)
+            .put("pid", json.optString("pid"))
+        if (kind == "signal") {
+            val sig = json.optJSONObject("sig")
+                ?: return JSONObject().put("success", false).put("error", "no signal")
+            envelope.put("sig", sig)
+        } else {
+            envelope.put("iv", json.optString("iv")).put("ct", json.optString("ct"))
+        }
+        if (envelope.toString().toByteArray().size > MAX_RELAY_ENVELOPE) {
+            return JSONObject().put("success", false).put("error", "too large")
+        }
+        // Addressed at us: no reason to queue what we can act on right now.
+        if (to == pm.myDeviceId()) {
+            val handled = if (kind == "signal") {
+                pm.handleRelaySignal(envelope)
+            } else {
+                pm.handleRelayMessage(envelope)
+            }
+            return JSONObject().put("success", true).put("queued", false).put("delivered", handled)
+        }
+        val eid = relayMailbox.post(to, envelope)
+            ?: return JSONObject().put("success", false).put("error", "mailbox full")
+        // We just told the sender this is safe; a process kill must not make that a lie.
+        relayMailbox.flush()
+        noteRelayActivity(to, clientIp)
+        return JSONObject().put("success", true).put("queued", true).put("eid", eid)
+    }
+
+    /** So the UI can show which paired phones are actually reachable through this host. */
+    private fun noteRelayActivity(deviceId: String, ip: String) {
+        synchronized(relayVisitors) {
+            val now = System.currentTimeMillis()
+            relayVisitors.entries.filter { it.value <= now - RELAY_VISITOR_TTL_MS }
+                .map { it.key }.forEach { relayVisitors.remove(it) }
+            while (relayVisitors.size > 64) relayVisitors.remove(relayVisitors.keys.first())
+            relayVisitors[deviceId] = now
+        }
+    }
+
+    fun relayVisitorsSnapshot(): List<String> = synchronized(relayVisitors) {
+        val now = System.currentTimeMillis()
+        relayVisitors.entries.filter { it.value > now - RELAY_VISITOR_TTL_MS }.map { it.key }
+    }
 
     @Volatile
     var callEngine: com.pulsedrop.app.call.CallEngine? = null
@@ -485,6 +606,7 @@ class PulseDropServer(
         // Flag first: the TLS builder thread checks this, otherwise a delegate that
         // finishes binding after stop() would orphan port 8081 on a dead server.
         tlsStopped = true
+        relayMailbox.flush()
         synchronized(this) { tlsServer?.stop(); tlsServer = null }
         if (current === this) current = null
         super.stop()
@@ -589,15 +711,20 @@ class PulseDropServer(
         sender: String,
         clientIp: String? = null,
         threadId: String? = null,
-        attachment: ChatAttachment? = null
+        attachment: ChatAttachment? = null,
+        replyTo: ClipMessage? = null,
+        id: String? = null
     ): ClipMessage {
         val msg = ClipMessage(
-            id = UUID.randomUUID().toString(),
+            id = id ?: UUID.randomUUID().toString(),
             text = text,
             sender = sender,
             clientIp = clientIp,
             threadId = threadId,
-            attachment = attachment
+            attachment = attachment,
+            replyTo = replyTo?.id,
+            replySender = replyTo?.sender,
+            replyText = replyTo?.text?.take(200)
         )
         synchronized(messages) {
             messages.add(msg)
@@ -609,6 +736,46 @@ class PulseDropServer(
             put("id", msg.id); put("threadId", msg.threadId ?: "")
         }
         return msg
+    }
+
+    /** The room message with this id, as a browser would have seen it. */
+    fun findMessage(id: String): ClipMessage? = synchronized(messages) { messages.lastOrNull { it.id == id } }
+
+    /**
+     * Marks one room message deleted and tells every tab watching it. Deletion is a tombstone
+     * rather than a removal so the thread keeps its shape on devices that already rendered it.
+     */
+    fun markMessageDeleted(id: String): Boolean {
+        val found = synchronized(messages) {
+            val index = messages.indexOfLast { it.id == id }
+            if (index < 0) null else {
+                messages[index] = messages[index].copy(deleted = true, text = "")
+                messages[index]
+            }
+        } ?: return false
+        listener.onMessageDeleted(found.id)
+        pushWebEvent("deleted") { put("id", found.id); put("threadId", found.threadId ?: "") }
+        return true
+    }
+
+    /**
+     * Brings a room message that arrived from a paired phone into the shared room, under the id its
+     * sender chose. Keeping that id is what lets every device agree on which bubbles are the same
+     * message instead of rendering one arrival twice under two ids.
+     */
+    fun ingestRoomMessage(msg: ClipMessage) {
+        val added = synchronized(messages) {
+            if (messages.any { it.id == msg.id }) false else {
+                messages.add(msg)
+                while (messages.size > SERVER_CHAT_RETENTION) messages.removeAt(0)
+                true
+            }
+        }
+        if (!added) return
+        listener.onNewMessage(msg)
+        pushWebEvent("message") {
+            put("id", msg.id); put("threadId", msg.threadId ?: "")
+        }
     }
 
     /**
@@ -810,6 +977,10 @@ class PulseDropServer(
                 put("secure", secureOrigin.get())
                 put("tlsUp", tlsUp())
                 put("tlsPort", tlsPort)
+                // Lets a client-only phone pick which pairing to sign relay traffic with, and tells
+                // an older build that this host will carry mail for devices with no server.
+                put("deviceId", pairManager?.myDeviceId() ?: "")
+                put("relay", true)
             }
             val res = newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
             addCorsHeaders(res)
@@ -1130,7 +1301,7 @@ class PulseDropServer(
 
         // Pairing + call signaling between PulseDrop apps — PIN-exempt but key-gated:
         // payloads without a known pairing id or valid ciphertext are rejected.
-        if ((uri.startsWith("/api/pair/") || uri.startsWith("/api/call/")) && method == Method.POST) {
+        if ((uri.startsWith("/api/pair/") || uri.startsWith("/api/call/") || uri.startsWith("/api/relay/")) && method == Method.POST) {
             return try {
                 val map = HashMap<String, String>()
                 session.parseBody(map)
@@ -1138,6 +1309,7 @@ class PulseDropServer(
                 val pm = pairManager
                 val engine = callEngine
                 val result: JSONObject = when {
+                    uri.startsWith("/api/relay/") -> handleRelay(uri, json, clientIp)
                     uri == "/api/pair/request" && pm != null -> {
                         pm.handleIncomingRequest(json, clientIp)
                         pushWebEvent("pair", exceptIp = clientIp)
@@ -1307,6 +1479,12 @@ class PulseDropServer(
                             put("timestamp", m.timestamp)
                             put("clientIp", m.clientIp ?: "")
                             put("threadId", m.threadId ?: "")
+                            put("deleted", m.deleted)
+                            put("replyTo", m.replyTo ?: "")
+                            put("replySender", m.replySender ?: "")
+                            put("replyText", m.replyText ?: "")
+                            // A tab may only delete what it wrote; the phone owns everything else.
+                            put("mine", sameAddr(m.clientIp, clientIp))
                             val attachment = m.attachment
                             if (attachment != null &&
                                 synchronized(chatAttachments) { chatAttachments.containsKey(attachment.id) }
@@ -1343,14 +1521,41 @@ class PulseDropServer(
                     val attachment = attachmentId.takeIf { it.isNotEmpty() }?.let { id ->
                         synchronized(chatAttachments) { chatAttachments[id] }?.attachment
                     }
+                    val quoted = json.optString("replyTo").takeIf { it.isNotBlank() }?.let { findMessage(it) }
                     if (text.isNotBlank() || attachment != null) {
-                        addMessage(text.trim(), sender, clientIp, threadId, attachment)
+                        addMessage(text.trim(), sender, clientIp, threadId, attachment, quoted)
                     }
                     val res = newFixedLengthResponse(Response.Status.OK, "application/json", "{\"success\":true}")
                     addCorsHeaders(res)
                     res
                 } catch (e: Exception) {
                     newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", "{\"success\":false}")
+                }
+            } else if (method == Method.DELETE) {
+                try {
+                    val map = HashMap<String, String>()
+                    session.parseBody(map)
+                    val id = JSONObject(map["postData"] ?: "{}").optString("id")
+                    val owner = findMessage(id)
+                    // A browser may only retract what it wrote; the phone owns the room and reaches
+                    // the same marking through the ViewModel instead.
+                    if (id.isBlank() || owner == null || !sameAddr(owner.clientIp, clientIp)) {
+                        val res = newFixedLengthResponse(
+                            Response.Status.FORBIDDEN, "application/json", "{\"success\":false}"
+                        )
+                        addCorsHeaders(res)
+                        return res
+                    }
+                    markMessageDeleted(id)
+                    val res = newFixedLengthResponse(
+                        Response.Status.OK, "application/json", "{\"success\":true}"
+                    )
+                    addCorsHeaders(res)
+                    res
+                } catch (e: Exception) {
+                    newFixedLengthResponse(
+                        Response.Status.BAD_REQUEST, "application/json", "{\"success\":false}"
+                    )
                 }
             }
         }
@@ -1813,7 +2018,7 @@ class PulseDropServer(
 
     private fun addCorsHeaders(response: Response) {
         response.addHeader("Access-Control-Allow-Origin", "*")
-        response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        response.addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         response.addHeader("Access-Control-Allow-Headers", "Content-Type, X-Pulse-Auth")
     }
 

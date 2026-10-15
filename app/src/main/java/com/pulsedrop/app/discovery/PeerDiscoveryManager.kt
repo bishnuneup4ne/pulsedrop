@@ -42,7 +42,9 @@ class PeerDiscoveryManager(
         currentIp: String,
         serverPort: Int,
         requiresPin: Boolean,
-        scope: CoroutineScope
+        scope: CoroutineScope,
+        hasServer: Boolean = true,
+        deviceId: String = ""
     ) {
         stopDiscovery()
 
@@ -72,6 +74,10 @@ class PeerDiscoveryManager(
                             put("port", serverPort)
                             put("pin", requiresPin)
                             put("time", System.currentTimeMillis())
+                            // Unknown keys are ignored by every build that predates them, so a
+                            // server-less phone can still announce itself to older peers.
+                            put("server", hasServer)
+                            put("dev", deviceId)
                         }.toString().toByteArray()
 
                         val broadcastIp = InetAddress.getByName("255.255.255.255")
@@ -117,6 +123,9 @@ class PeerDiscoveryManager(
                         val peerIp = json.optString("ip", packet.address.hostAddress ?: "")
                         val peerPort = json.optInt("port", 8080)
                         val peerPin = json.optBoolean("pin", false)
+                        // A beacon from an older build always means a listening server.
+                        val peerHasServer = json.optBoolean("server", true)
+                        val peerDeviceId = json.optString("dev", "")
 
                         // Do not list ourselves
                         if (peerId != selfId && peerIp != currentIp && peerId.isNotBlank()) {
@@ -126,7 +135,9 @@ class PeerDiscoveryManager(
                                 ip = peerIp,
                                 port = peerPort,
                                 requiresPin = peerPin,
-                                lastSeen = System.currentTimeMillis()
+                                lastSeen = System.currentTimeMillis(),
+                                hasServer = peerHasServer,
+                                deviceId = peerDeviceId
                             )
                             synchronized(peersMap) {
                                 peersMap[peerId] = peer

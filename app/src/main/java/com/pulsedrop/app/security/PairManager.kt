@@ -34,8 +34,14 @@ import javax.crypto.spec.SecretKeySpec
 private const val MAX_INCOMING_REQUESTS = 12
 private const val INCOMING_REQUEST_TTL_MS = 120_000L
 private const val PROOF_VERSION = "pulsedrop-upload-v1"
+private const val RELAY_VERSION = "pulsedrop-relay-v1"
 private const val PROOF_TTL_MS = 120_000L
 private const val LATE_ANSWER_MS = 10 * 60_000L
+private const val UNREACHABLE_MS = 90_000L
+/** Wire value for the shared room; on receipt it maps back to the app's null thread. */
+private const val ROOM_THREAD = "room"
+// A quote shows enough of the original to identify it; the rest stays on the sender's device.
+private const val REPLY_SNAPSHOT_CHARS = 200
 
 class PairManager(private val context: Context, private val scope: CoroutineScope) {
 
@@ -57,6 +63,43 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
     var nameProvider: () -> String = { "PulseDrop Phone" }
     var endpointProvider: () -> Pair<String, Int> = { "127.0.0.1" to 8080 }
     var onPairedMessage: ((ClipMessage) -> Unit)? = null
+
+    /**
+     * A message the sender retracted. It arrives on the same sealed channel as the message itself,
+     * so only the two ends of that pairing learn that it went away.
+     */
+    var onPairedDelete: ((String) -> Unit)? = null
+
+    /**
+     * Set once a relay is attached. When a peer has no listener of its own — its server is off,
+     * or it is a device we only ever reach through somebody else — the *sealed* envelope is handed
+     * here instead of being POSTed at its address. Only the ciphertext crosses, never the plaintext,
+     * so nothing downstream of this hook can forward what it cannot itself read.
+     */
+    var relaySender: ((pairing: PairedDevice, ivB64: String, ctB64: String) -> Boolean)? = null
+
+    /**
+     * False on a phone whose server is off. Every handshake that used to assume both devices are
+     * listening now has somewhere to look instead.
+     */
+    var acceptsInbound: () -> Boolean = { true }
+
+    /** Set by the relay once it exists; used to fetch a pairing answer we cannot be handed. */
+    var relayPairPoller: ((ip: String, port: Int, reqId: String) -> JSONObject?)? = null
+
+    /**
+     * On the hosting side: where a relay-mode answer is left for its requester to pick up. The
+     * server owns the store, so this is a callback rather than a dependency.
+     */
+    var pairAnswerSink: ((reqId: String, answer: JSONObject) -> Unit)? = null
+
+    /** Seal a payload with the recipient's own key so a third party can carry it unread. */
+    fun sealFor(pairing: PairedDevice, payload: String): Pair<String, String>? =
+        try {
+            Crypto.encryptText(secretKey(pairing), payload)
+        } catch (e: Exception) {
+            null
+        }
 
     private val secretCache = mutableMapOf<String, SecretKeySpec>()
     private val usedProofs = LinkedHashMap<String, Long>()
@@ -100,6 +143,40 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         _paired.value.firstOrNull { it.originIp == peer.ip || it.pid == peer.id }
 
     fun findPairing(pid: String): PairedDevice? = _paired.value.firstOrNull { it.pid == pid }
+
+    fun myDeviceId(): String = Crypto.deviceId(myPubB64())
+
+    /** The device id of whoever is on the other end of this pairing. */
+    fun deviceIdOf(pairing: PairedDevice): String = Crypto.deviceId(pairing.pubB64)
+
+    /**
+     * Which pairing connects us to the device with this id. Used to pick the key a relay
+     * request must be signed with, and to seal traffic for a peer we are not hosting.
+     */
+    fun findPairingByDeviceId(deviceId: String): PairedDevice? =
+        _paired.value.firstOrNull { deviceIdOf(it) == deviceId }
+
+    /**
+     * A peer that refused a direct connection recently is not worth re-dialling for every
+     * message; its traffic goes straight to the relay until the entry ages out.
+     */
+    private val unreachableUntil = HashMap<String, Long>()
+
+    fun isDirectlyReachable(pid: String): Boolean =
+        (unreachableUntil[pid] ?: 0L) <= System.currentTimeMillis()
+
+    fun markUnreachable(pid: String) {
+        synchronized(unreachableUntil) {
+            val now = System.currentTimeMillis()
+            unreachableUntil.entries.filter { it.value <= now }.forEach { unreachableUntil.remove(it.key) }
+            while (unreachableUntil.size > 32) unreachableUntil.remove(unreachableUntil.keys.first())
+            unreachableUntil[pid] = now + UNREACHABLE_MS
+        }
+    }
+
+    fun clearUnreachable(pid: String) {
+        synchronized(unreachableUntil) { unreachableUntil.remove(pid) }
+    }
 
     /**
      * A peer's LAN address changes with DHCP. Any traffic that already proved it holds the
@@ -149,17 +226,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
             if (age > PROOF_TTL_MS || age < -PROOF_TTL_MS) return false
             // A captured proof is otherwise replayable inside its window, so each nonce is
             // single-use for as long as it stays valid.
-            val seen = synchronized(usedProofs) {
-                val now = System.currentTimeMillis()
-                usedProofs.entries.filter { it.value <= now }.map { it.key }.forEach { usedProofs.remove(it) }
-                while (usedProofs.size > 64) usedProofs.remove(usedProofs.keys.first())
-                val nonceKey = parts[0] + '|' + fields[4]
-                if (usedProofs.containsKey(nonceKey)) true else {
-                    usedProofs[nonceKey] = now + PROOF_TTL_MS
-                    false
-                }
-            }
-            !seen
+            if (consumeNonce(parts[0] + '|' + fields[4])) return false
+            true
         } catch (e: Exception) {
             false
         }
@@ -168,7 +236,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
     fun sendPairRequest(peer: PeerDevice) {
         val reqId = UUID.randomUUID().toString()
         val (myIp, myPort) = endpointProvider()
-        _pendingOutgoing.value = PendingPairRequest(peer, reqId)
+        val relayed = !acceptsInbound()
+        _pendingOutgoing.value = PendingPairRequest(peer, reqId, viaRelay = relayed)
         scope.launch(Dispatchers.IO) {
             try {
                 val body = JSONObject()
@@ -177,6 +246,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                     .put("pub", myPubB64())
                     .put("myIp", myIp)
                     .put("myPort", myPort)
+                    .put("relay", relayed)
                     .toString()
                     .toRequestBody("application/json; charset=utf-8".toMediaType())
                 client.newCall(
@@ -194,6 +264,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                 _pairEvent.value = "Pair request failed: ${e.message}"
             }
         }
+        if (relayed) pollRelayedPairAnswer(peer, reqId)
         scope.launch {
             delay(60_000L)
             val pending = _pendingOutgoing.value
@@ -204,6 +275,34 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
             }
         }
     }
+
+    /**
+     * A phone with its server off has no socket for the answer to arrive on, so it asks for it.
+     * The request id is the only thing that authorizes the fetch, and it is a uuid this device
+     * invented, so nothing new is exposed that the direct POST back did not already rely on.
+     */
+    private fun pollRelayedPairAnswer(peer: PeerDevice, reqId: String) {
+        val poller = relayPairPoller ?: return
+        scope.launch(Dispatchers.IO) {
+            val deadline = System.currentTimeMillis() + 60_000L + LATE_ANSWER_MS
+            while (System.currentTimeMillis() < deadline && isAwaitingAnswer(reqId)) {
+                val answer = try {
+                    poller(peer.ip, peer.port, reqId)
+                } catch (e: Exception) {
+                    null
+                }
+                if (answer != null) {
+                    handleIncomingResponse(answer, null)
+                    return@launch
+                }
+                Thread.sleep(2_000L)
+            }
+        }
+    }
+
+    /** Still waiting, either live or inside the late-answer grace the direct path also gets. */
+    private fun isAwaitingAnswer(reqId: String): Boolean =
+        _pendingOutgoing.value?.reqId == reqId || synchronized(lateAnswers) { lateAnswers.containsKey(reqId) }
 
     // An answer that lands after the 60 s window used to be dropped, leaving one device
     // paired and the other not. Keep the request a while longer so a late accept still heals.
@@ -244,7 +343,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         _incomingRequests.update { list -> list.filterNot { it.reqId == request.reqId } }
         _pairEvent.value = pairingOutcome(request.name, replaced)
         scope.launch(Dispatchers.IO) {
-            respondToPair(request.reqId, true, request.myIp, request.myPort, myIp, myPort)
+            respondToPair(request.reqId, true, request.myIp, request.myPort, myIp, myPort, request.viaRelay)
         }
     }
 
@@ -253,27 +352,43 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         _incomingRequests.update { list -> list.filterNot { it.reqId == request.reqId } }
         _pairEvent.value = "Declined pairing from ${request.name}"
         scope.launch(Dispatchers.IO) {
-            respondToPair(request.reqId, false, request.myIp, request.myPort, myIp, myPort)
+            respondToPair(request.reqId, false, request.myIp, request.myPort, myIp, myPort, request.viaRelay)
         }
     }
 
-    private fun respondToPair(reqId: String, accept: Boolean, peerIp: String, peerPort: Int, myIp: String, myPort: Int) {
+    private fun respondToPair(
+        reqId: String,
+        accept: Boolean,
+        peerIp: String,
+        peerPort: Int,
+        myIp: String,
+        myPort: Int,
+        viaRelay: Boolean = false
+    ) {
         val body = JSONObject()
             .put("reqId", reqId)
+            .put("type", "pair-response")
             .put("accept", accept)
             .put("name", nameProvider())
             .put("pub", myPubB64())
             .put("myIp", myIp)
             .put("myPort", myPort)
-            .toString()
-            .toRequestBody("application/json; charset=utf-8".toMediaType())
+        // A phone with its server off cannot be handed this; it comes and takes it.
+        if (viaRelay) {
+            val sink = pairAnswerSink
+            if (sink != null) {
+                sink(reqId, body)
+                return
+            }
+        }
+        val payload = body.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
         // A single blip here used to leave us paired and the peer not, with no way to notice.
         for (attempt in 0 until 3) {
             if (attempt > 0) try { Thread.sleep(if (attempt == 1) 3_000L else 8_000L) } catch (e: InterruptedException) { return }
             try {
                 client.newCall(
                     Request.Builder().url("http://$peerIp:$peerPort/api/pair/response")
-                        .post(body).build()
+                        .post(payload).build()
                 ).execute().use { resp ->
                     if (resp.isSuccessful) return
                 }
@@ -345,6 +460,75 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         save()
     }
 
+    // ---- relay authorization ------------------------------------------------
+
+    /**
+     * Proves to somebody else's server that we hold one of its pairings, so a host will carry
+     * our mail without becoming a party to it. The claimed device id travels *inside* the
+     * ciphertext, so the host learns who is speaking from something only that device could
+     * have produced — the `from` on an envelope is never taken on trust. `pull` is signed
+     * separately from `post` so a stolen post token cannot empty a mailbox.
+     */
+    private fun relayProof(pid: String, role: String): String? {
+        val pairing = findPairing(pid) ?: return null
+        return try {
+            val nonce = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+            val payload = "$RELAY_VERSION|$pid|$role|${myDeviceId()}|${System.currentTimeMillis()}|" +
+                Base64.encodeToString(nonce, Base64.NO_WRAP)
+            val (iv, ct) = Crypto.encryptText(secretKey(pairing), payload)
+            "$iv.$ct"
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Signs a relay request with the key shared with [hostDeviceId] — the host whose server we
+     * are talking to. Returns its pairing id and the token, or null when we are not paired with
+     * that host, since an unpaired device has nothing to say to its mailbox.
+     */
+    fun relayAuth(hostDeviceId: String, role: String): Pair<String, String>? {
+        val pairing = findPairingByDeviceId(hostDeviceId) ?: return null
+        val proof = relayProof(pairing.pid, role) ?: return null
+        return pairing.pid to proof
+    }
+
+    /**
+     * Server side: validates a relay token and returns the device id it was signed for, or null.
+     * This is the only place the claimed sender identity is believed.
+     */
+    fun verifyRelayAuth(pid: String, role: String, proof: String): String? {
+        val pairing = findPairing(pid) ?: return null
+        return try {
+            val parts = proof.split('.')
+            if (parts.size != 2) return null
+            val plain = Crypto.decryptText(secretKey(pairing), parts[0], parts[1])
+            val fields = plain.split('|')
+            // version|pid|role|deviceId|issuedAt|nonce
+            if (fields.size != 6 || fields[0] != RELAY_VERSION) return null
+            if (fields[1] != pid || fields[2] != role) return null
+            if (fields[3] != deviceIdOf(pairing)) return null
+            val issuedAt = fields[4].toLongOrNull() ?: return null
+            val age = System.currentTimeMillis() - issuedAt
+            if (age > PROOF_TTL_MS || age < -PROOF_TTL_MS) return null
+            if (consumeNonce(parts[0] + "|r|" + fields[5])) return null
+            fields[3]
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** True when the nonce had already been seen, i.e. this is a replay. */
+    private fun consumeNonce(nonceKey: String): Boolean = synchronized(usedProofs) {
+        val now = System.currentTimeMillis()
+        usedProofs.entries.filter { it.value <= now }.map { it.key }.forEach { usedProofs.remove(it) }
+        while (usedProofs.size > 64) usedProofs.remove(usedProofs.keys.first())
+        if (usedProofs.containsKey(nonceKey)) true else {
+            usedProofs[nonceKey] = now + PROOF_TTL_MS
+            false
+        }
+    }
+
     // ---- Server hooks -------------------------------------------------------
 
     /** Handles POST /api/pair/request arriving at our server. */
@@ -361,7 +545,10 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         if (_paired.value.any { it.pid == Crypto.pairId(myPub, peerPub) }) {
             val (myIp, myPort) = endpointProvider()
             scope.launch(Dispatchers.IO) {
-                respondToPair(json.optString("reqId", ""), true, reachIp, reachPort, myIp, myPort)
+                respondToPair(
+                    json.optString("reqId", ""), true, reachIp, reachPort, myIp, myPort,
+                    json.optBoolean("relay", false)
+                )
             }
             return
         }
@@ -371,7 +558,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
             pubB64 = peerPub,
             myIp = reachIp,
             myPort = reachPort,
-            safetyCode = Crypto.safetyCode(myPub, peerPub)
+            safetyCode = Crypto.safetyCode(myPub, peerPub),
+            viaRelay = json.optBoolean("relay", false)
         )
         _incomingRequests.update { list ->
             val now = System.currentTimeMillis()
@@ -384,7 +572,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
     }
 
     /** Handles POST /api/pair/response arriving at our server. */
-    fun handleIncomingResponse(json: JSONObject, clientIp: String) {
+    fun handleIncomingResponse(json: JSONObject, clientIp: String?) {
         val reqId = json.optString("reqId")
         var pending = _pendingOutgoing.value?.takeIf { it.reqId == reqId }
         if (pending != null) _pendingOutgoing.value = null
@@ -397,39 +585,89 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         }
         val peerPub = json.optString("pub")
         if (peerPub.isBlank()) return
+        // A relayed answer comes from the host's store, so the socket belongs to neither side;
+        // the address the peer itself advertised is all there is to go on.
+        val reachIp = json.optString("myIp").ifBlank { clientIp ?: pending.peer.ip }
+        val reachPort = json.optInt("myPort", pending.peer.port)
         val replaced = addPairing(
             PairedDevice(
                 pid = Crypto.pairId(myPubB64(), peerPub),
                 name = json.optString("name", pending.peer.name),
                 pubB64 = peerPub,
-                originIp = json.optString("myIp", clientIp),
-                originPort = json.optInt("myPort", pending.peer.port)
+                originIp = reachIp,
+                originPort = reachPort
             )
         )
         _pairEvent.value = pairingOutcome(pending.peer.name, replaced)
     }
 
+    /**
+     * One envelope pulled from a host's relay that is not chat: currently only the pairing answer
+     * a server-less phone cannot be handed. Signals carry no secret — the same public keys the
+     * direct endpoint already sends in the clear over the LAN.
+     */
+    fun handleRelaySignal(envelope: JSONObject): Boolean {
+        val sig = envelope.optJSONObject("sig") ?: return false
+        return when (sig.optString("type")) {
+            "pair-response" -> {
+                handleIncomingResponse(sig, null)
+                true
+            }
+            else -> false
+        }
+    }
+
     /** Handles POST /api/pair/msg: decrypt with stored pairing key, route to chat. */
-    fun handleIncomingMessage(json: JSONObject, clientIp: String): Boolean {
+    fun handleIncomingMessage(json: JSONObject, clientIp: String): Boolean =
+        routeEnvelope(json, clientIp)
+
+    /**
+     * Handles one mailbox envelope fetched from a host's relay. The socket belongs to the host,
+     * not the sender, so the address is deliberately not learned from it — otherwise every
+     * relayed message would re-point the pairing at the wrong phone.
+     */
+    fun handleRelayMessage(json: JSONObject): Boolean = routeEnvelope(json, null)
+
+    private fun routeEnvelope(json: JSONObject, sourceIp: String?): Boolean {
         val pid = json.optString("pid")
         val pairing = findPairing(pid) ?: return false
         return try {
             val plain = Crypto.decryptText(secretKey(pairing), json.optString("iv"), json.optString("ct"))
             val payload = JSONObject(plain)
             // Decryption succeeded, so this connection really is the paired device.
-            notePeerAddress(pid, clientIp)
+            if (sourceIp != null) notePeerAddress(pid, sourceIp)
+            // A retraction is addressed by message id, not by thread: ids are unique enough that
+            // the recipient finds the one bubble this sender wrote, wherever it rendered it.
+            if (payload.optString("op") == "del") {
+                val retracted = payload.optString("del")
+                if (retracted.isBlank()) return false
+                onPairedDelete?.invoke(retracted)
+                return true
+            }
             val text = payload.optString("text")
             val sender = payload.optString("sender", pairing.name)
             if (text.isBlank()) return false
+            val threadField = payload.optString("thread")
+            val reply = payload.optJSONObject("reply")
             onPairedMessage?.invoke(
                 ClipMessage(
-                    id = UUID.randomUUID().toString(),
+                    id = payload.optString("mid").takeIf { it.isNotBlank() && it != "null" }
+                        ?: UUID.randomUUID().toString(),
                     text = text,
                     sender = sender,
-                    clientIp = clientIp,
+                    clientIp = sourceIp,
+                    timestamp = payload.optLong("ts", System.currentTimeMillis()),
                     encrypted = true,
-                    threadId = payload.optString("thread").takeIf { it.isNotBlank() }
-                        ?: "pair:${pairing.pid}"
+                    replyTo = reply?.optString("id")?.takeIf { it.isNotBlank() },
+                    replySender = reply?.optString("sender")?.takeIf { it.isNotBlank() },
+                    replyText = reply?.optString("text")?.takeIf { it.isNotBlank() },
+                    // "room" is the shared conversation, which the app spells as a null thread;
+                    // anything missing entirely is a plain one-to-one.
+                    threadId = when {
+                        threadField == ROOM_THREAD -> null
+                        threadField.isNotBlank() -> threadField
+                        else -> "pair:${pairing.pid}"
+                    }
                 )
             )
             true
@@ -438,34 +676,81 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         }
     }
 
-    fun sendPairedMessage(pairing: PairedDevice, text: String, threadId: String? = null): Boolean {
+    fun sendPairedMessage(
+        pairing: PairedDevice,
+        text: String,
+        threadId: String? = null,
+        reply: ClipMessage? = null
+    ): Boolean {
         return try {
-            val payload = JSONObject()
-                .put("text", text)
-                .put("sender", nameProvider())
-                .put("ts", System.currentTimeMillis())
-                .put("thread", threadId ?: "pair:${pairing.pid}")
-                .toString()
+            val payload = messagePayload(text, threadId ?: "pair:${pairing.pid}", reply)
             deliverEncrypted(pairing, payload)
         } catch (e: Exception) {
             false
         }
     }
 
+    /**
+     * The message id travels inside the ciphertext rather than on the envelope, so a carrier
+     * cannot renumber or duplicate mail, and both ends land on the same thread entry.
+     */
+    private fun messagePayload(text: String, threadId: String, reply: ClipMessage? = null): String {
+        val json = JSONObject()
+            .put("mid", UUID.randomUUID().toString())
+            .put("text", text)
+            .put("sender", nameProvider())
+            .put("from", myDeviceId())
+            .put("ts", System.currentTimeMillis())
+            .put("thread", threadId)
+        if (reply != null) json.put("reply", replySnapshot(reply))
+        return json.toString()
+    }
+
+    /**
+     * A quote is carried as a snapshot of what was answered, not just an id. The original may be
+     * deleted, or may never reach this device at all, and the reply should still read correctly.
+     */
+    private fun replySnapshot(reply: ClipMessage): JSONObject = JSONObject()
+        .put("id", reply.id)
+        .put("sender", reply.sender)
+        .put("text", reply.text.take(REPLY_SNAPSHOT_CHARS).ifBlank { "[attachment]" })
+
     private fun deliverEncrypted(pairing: PairedDevice, payload: String): Boolean {
-        val (ivB64, ctB64) = Crypto.encryptText(secretKey(pairing), payload)
+        val (ivB64, ctB64) = try {
+            Crypto.encryptText(secretKey(pairing), payload)
+        } catch (e: Exception) {
+            return false
+        }
         val body = JSONObject()
             .put("pid", pairing.pid)
             .put("iv", ivB64)
             .put("ct", ctB64)
             .toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())
-        return client.newCall(
-            Request.Builder()
-                .url("http://${pairing.originIp}:${pairing.originPort}/api/pair/msg")
-                .post(body).build()
-        ).execute().use {
-            it.isSuccessful && JSONObject(it.body?.string() ?: "{}").optBoolean("success", false)
+        if (isDirectlyReachable(pairing.pid)) {
+            val direct = try {
+                client.newCall(
+                    Request.Builder()
+                        .url("http://${pairing.originIp}:${pairing.originPort}/api/pair/msg")
+                        .post(body).build()
+                ).execute().use {
+                    it.isSuccessful && JSONObject(it.body?.string() ?: "{}").optBoolean("success", false)
+                }
+            } catch (e: Exception) {
+                // No listener of its own, or it is asleep. Not an error — the relay is for exactly this.
+                markUnreachable(pairing.pid)
+                false
+            }
+            if (direct) {
+                clearUnreachable(pairing.pid)
+                return true
+            }
+        }
+        val sender = relaySender ?: return false
+        return try {
+            sender(pairing, ivB64, ctB64)
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -474,13 +759,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
      * member's own pairwise key. No single ciphertext is shared, so a member
      * cannot read traffic to a device they are not paired with.
      */
-    fun sendGroupMessage(group: ChatGroup, text: String): Int {
-        val payload = JSONObject()
-            .put("text", text)
-            .put("sender", nameProvider())
-            .put("ts", System.currentTimeMillis())
-            .put("thread", "group:${group.id}")
-            .toString()
+    fun sendGroupMessage(group: ChatGroup, text: String, reply: ClipMessage? = null): Int {
+        val payload = messagePayload(text, "group:${group.id}", reply)
         var delivered = 0
         for (pid in group.memberPids) {
             val pairing = findPairing(pid) ?: continue
@@ -488,6 +768,71 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                 if (deliverEncrypted(pairing, payload)) delivered++
             } catch (e: Exception) {
                 // member offline
+            }
+        }
+        return delivered
+    }
+
+    /**
+     * Posts one message to every paired device's private copy of the shared room.
+     *
+     * Without this, "Everyone" only meant *our* room: browsers attached to this phone saw it, a
+     * second phone in the same room did not, because that phone keeps its own app-side list. Two
+     * phones each hosting a server were two islands; this is what stitches the room together. Each
+     * copy is sealed with that device's own key and the senders id is carried along so every device
+     * renders one bubble rather than one per recipient.
+     */
+    fun broadcastToRoom(text: String, mid: String? = null, reply: ClipMessage? = null): Int {
+        val json = JSONObject()
+            .put("mid", mid ?: UUID.randomUUID().toString())
+            .put("text", text)
+            .put("sender", nameProvider())
+            .put("from", myDeviceId())
+            .put("ts", System.currentTimeMillis())
+            .put("thread", ROOM_THREAD)
+        if (reply != null) json.put("reply", replySnapshot(reply))
+        val payload = json.toString()
+        var delivered = 0
+        for (pairing in _paired.value) {
+            try {
+                if (deliverEncrypted(pairing, payload)) delivered++
+            } catch (e: Exception) {
+                // that device is offline
+            }
+        }
+        return delivered
+    }
+
+    /**
+     * Retracts one message on the devices it originally reached. The tombstone travels on exactly
+     * the paths the message did, sealed the same way, so nobody gains a way to unilaterally erase
+     * a conversation they were only listening to. Returns how many devices were told.
+     */
+    fun deleteEverywhere(messageId: String, threadId: String?): Int {
+        if (messageId.isBlank()) return 0
+        val targets = when {
+            threadId == null -> _paired.value
+            threadId.startsWith("pair:") -> listOfNotNull(findPairing(threadId.removePrefix("pair:")))
+            threadId.startsWith("group:") -> {
+                val group = findGroup(threadId.removePrefix("group:"))
+                    ?: return 0
+                group.memberPids.mapNotNull { findPairing(it) }
+            }
+            // An "ip:" thread lives in the browser room, which the server marks directly.
+            else -> return 0
+        }
+        val payload = JSONObject()
+            .put("op", "del")
+            .put("del", messageId)
+            .put("from", myDeviceId())
+            .put("ts", System.currentTimeMillis())
+            .toString()
+        var delivered = 0
+        for (pairing in targets) {
+            try {
+                if (deliverEncrypted(pairing, payload)) delivered++
+            } catch (e: Exception) {
+                // that device is offline
             }
         }
         return delivered

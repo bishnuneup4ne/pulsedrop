@@ -128,6 +128,14 @@ object Crypto {
         return sha256(order).takeFirstHex(12)
     }
 
+    /**
+     * Stable id for one *device* rather than one *pair*. A relay has to address a mailbox by
+     * who the mail is for, and pair ids are pairwise — a device has a different one with every
+     * peer. Derived from the identity public key, so anyone who has that key (which pairing
+     * hands over) can compute it for themselves and nothing has to be trusted to the host.
+     */
+    fun deviceId(pubB64: String): String = sha256(unb64(pubB64)).takeFirstHex(16)
+
     /** Human-verifiable short code shown during pairing confirmation. */
     fun safetyCode(myPubB64: String, peerPubB64: String): String {
         val a = unb64(myPubB64)

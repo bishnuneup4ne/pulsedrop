@@ -57,7 +57,11 @@ data class PeerDevice(
     val requiresPin: Boolean,
     val lastSeen: Long = System.currentTimeMillis(),
     // Wire value, not branding: older builds compare on this exact string.
-    val appKind: String? = null // "LocalDrop" when the host runs a PulseDrop server
+    val appKind: String? = null, // "LocalDrop" when the host runs a PulseDrop server
+    /** False on a phone that is only a client — dialling it is a guaranteed miss. */
+    val hasServer: Boolean = true,
+    /** Stable identity of the peer, so a relay can be signed with the right pairing. */
+    val deviceId: String = ""
 )
 
 data class PairedDevice(
@@ -78,13 +82,17 @@ data class IncomingPairRequest(
     val myIp: String,
     val myPort: Int,
     val safetyCode: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    /** The requester runs no server, so the answer has to be polled back rather than dialled in. */
+    val viaRelay: Boolean = false
 )
 
 data class PendingPairRequest(
     val peer: PeerDevice,
     val reqId: String,
-    val startedAt: Long = System.currentTimeMillis()
+    val startedAt: Long = System.currentTimeMillis(),
+    /** True when we are the client-only half of this handshake. */
+    val viaRelay: Boolean = false
 )
 
 data class ServerSettings(
@@ -116,7 +124,17 @@ data class ClipMessage(
     val encrypted: Boolean = false,
     /** Conversation this belongs to: null = Everyone, "pair:<pid>", "group:<id>", "ip:<addr>". */
     val threadId: String? = null,
-    val attachment: ChatAttachment? = null
+    val attachment: ChatAttachment? = null,
+    /**
+     * Quoted message. The sender and text are a snapshot taken when this reply was written, not a
+     * lookup: a reply must still show what it answered after the original is deleted, and on a
+     * relayed thread the original may not be on this device yet at all.
+     */
+    val replyTo: String? = null,
+    val replySender: String? = null,
+    val replyText: String? = null,
+    /** Soft delete. The bubble stays as a marked placeholder so a thread does not renumber. */
+    val deleted: Boolean = false
 )
 
 /** A named cluster of paired devices that share one end-to-end encrypted room. */
