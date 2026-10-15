@@ -96,7 +96,7 @@ import com.pulsedrop.app.ui.screens.HistoryScreen
 import com.pulsedrop.app.ui.screens.HotspotGuideScreen
 import com.pulsedrop.app.ui.screens.IncomingCallCard
 import com.pulsedrop.app.ui.screens.IncomingCallStage
-import com.pulsedrop.app.ui.screens.RadarScreen
+import com.pulsedrop.app.ui.screens.DevicesScreen
 import com.pulsedrop.app.ui.screens.SettingsSheet
 import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.HomeScreen
@@ -426,13 +426,17 @@ fun MainScreen(viewModel: MainViewModel) {
                         onNavigate = { selectSection(it) }
                     )
 
-                    PulseSection.DEVICES -> RadarScreen(
+                    PulseSection.DEVICES -> DevicesScreen(
                         nearbyPeers = displayPeers,
                         connectedPeer = connectedPeer,
                         peerConnecting = peerConnecting,
                         pairedDevices = pairedDevices,
                         pendingOutgoing = pendingOutgoingPair,
+                        incomingPairCount = incomingPairRequests.size,
                         scanning = radarScanning,
+                        activeTransfers = activeTransfersMap.values.toList(),
+                        history = historyList,
+                        onRescan = { viewModel.startRadarScan() },
                         onSendFilesToPeer = { peer, uris, peerPin ->
                             if (peer.appKind == "Browser") {
                                 // No listener on a browser tab: host the file for that address alone.
@@ -447,7 +451,8 @@ fun MainScreen(viewModel: MainViewModel) {
                         onCancelPairRequest = { viewModel.cancelPairingRequest() },
                         onUnpair = { pid -> viewModel.unpair(pid) },
                         safetyCodeOf = { pid -> viewModel.pairSafetyCode(pid) },
-                        onToggleVerified = { pid, verified -> viewModel.setPairVerified(pid, verified) }
+                        onToggleVerified = { pid, verified -> viewModel.setPairVerified(pid, verified) },
+                        onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
                     )
 
                     PulseSection.MESSAGES -> ChatScreen(
