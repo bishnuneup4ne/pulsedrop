@@ -65,12 +65,11 @@ jobs:
           STATS: ${{ steps.vt.outputs.stats }}
           SHA: ${{ steps.vt.outputs.sha }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/issues" \
-            -f title="VirusTotal scan: $TAG" \
-            -f body="APK for **$TAG** scanned automatically on publish.
+          BODY="APK for **$TAG** scanned automatically on publish.
 
-- SHA-256: \`$SHA\`
-- Permanent report: $LINK
-- Engine summary: $STATS
+          - SHA-256: \`$SHA\`
+          - Permanent report: $LINK
+          - Engine summary: $STATS
 
-The permalink always points at this exact file, so it can be linked from the release notes or README."
+          The permalink always points at this exact file, so it can be linked from the release notes or README."
+          gh api "repos/$GITHUB_REPOSITORY/issues" -f title="VirusTotal scan: $TAG" -f body="$BODY"
