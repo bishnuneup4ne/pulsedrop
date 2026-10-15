@@ -27,9 +27,12 @@ origins.
 
 **Fix:** the phone bounces `http://…:8080` to `https://…:8081` automatically, so just
 accept the self-signed certificate warning once and the redirect lands you on the secure
-origin. If it never redirects (a stale cache can pin the http URL), type the **https**
-address (port + 1) yourself. The web UI shows a toast when it detects it is not a secure
-context.
+origin. The secure port can also take a few seconds to come up after the server starts, in
+which case the page stays on http and shows a **Secure mode** button in its top bar once the
+port is listening — tap it, accept the certificate warning, and the camera, mic and screen
+share work from then on. If a tab tried to open the camera and was refused, it switches
+itself across as soon as the port is ready. The **Details** view states which mode the tab is
+in, and typing the **https** address (port + 1) by hand always works as a last resort.
 
 ## Calls don't connect
 

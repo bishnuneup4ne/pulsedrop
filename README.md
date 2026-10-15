@@ -90,6 +90,7 @@ https://www.virustotal.com/gui/file/<sha256>
 
 Live reports for current releases:
 
+- **v1.4.0** — <https://www.virustotal.com/gui/file/8b5f82a3d52b8a3d9f8a5eaf2d994031bb850d486926e6a1c597cafecad13870>
 - **v1.3.0** — <https://www.virustotal.com/gui/file/87f1bdd18b4b6deec7f3feaf3d03eb9e0a1d7056d049c1b97b57632c26ce14de>
 - **v1.1.2** — <https://www.virustotal.com/gui/file/6fc547fbc61922502d4b6118b2add02e8653f1f99cee1af1048d05f2b02b4b3a>
 
@@ -144,7 +145,10 @@ POST /api/webcall/up        browser media uplink (batched frames)
   port + 1 (8081 by default) with a process-lifetime self-signed certificate: browsers only
   expose `getUserMedia`/`getDisplayMedia` on a secure origin, so the app always shows the plain
   `http://` address and bounces browser visits to the `https://` port on its behalf (accept the
-  certificate warning once per browser).
+  certificate warning once per browser). That listener keeps retrying while the server is up,
+  and a tab that is still on http gets a **Secure mode** button in its top bar — plus an
+  automatic jump across — the moment the secure port answers, because a tab stuck on http can
+  receive a call but cannot send a camera or microphone.
 - **PIN:** 4 digits, enforced per client IP. Eight *distinct* wrong values trigger a 60 s
   lockout that doubles on further bursts (capped at ~16 min). A stale token repeated by an old
   browser tab counts once, not once per poll.
