@@ -332,6 +332,10 @@ class PulseDropServer(
     @Volatile private var tlsServer: NanoHTTPD? = null
     @Volatile private var tlsHosts: List<String> = emptyList()
 
+    // NanoHTTPD's legacy session carries no secure flag, so the TLS delegate marks its
+    // own worker threads and the redirect below asks them instead.
+    private val secureOrigin = ThreadLocal.withInitial { false }
+
     override fun start() {
         super.start()
         ensureTls()
@@ -364,8 +368,14 @@ class PulseDropServer(
                 val hosts = listOf(NetworkUtils.getLocalIpAddress()).filter { it.isNotBlank() } + tlsHosts
                 val factory = WebTls.socketFactory(hosts)
                 val delegate = object : NanoHTTPD(tlsPort) {
-                    override fun serve(session: IHTTPSession): Response =
-                        this@PulseDropServer.serve(session)
+                    override fun serve(session: IHTTPSession): Response {
+                        secureOrigin.set(true)
+                        try {
+                            return this@PulseDropServer.serve(session)
+                        } finally {
+                            secureOrigin.set(false)
+                        }
+                    }
                 }
                 delegate.tempFileManagerFactory = androidTempFiles()
                 delegate.makeSecure(factory, null)
@@ -574,6 +584,17 @@ class PulseDropServer(
 
         // Web Client HTML served to browsers on the LAN
         if (uri == "/" || uri == "/index.html") {
+            // Browsers only hand out mic/camera/screen on a secure origin, so lift plain
+            // http visits onto the TLS port whenever that listener is actually up.
+            if (!secureOrigin.get() && tlsServer != null) {
+                val host = session.headers["host"]?.substringBefore(':')
+                    ?.takeIf { it.isNotBlank() }
+                    ?: NetworkUtils.getLocalIpAddress()
+                val res = newFixedLengthResponse(Response.Status.REDIRECT, "text/plain", "")
+                res.addHeader("Location", "https://$host:$tlsPort/")
+                addCorsHeaders(res)
+                return res
+            }
             val html = WebClientHtml.getHtml(deviceName, isPinRequired && !pinCode.isNullOrBlank())
             val res = newFixedLengthResponse(Response.Status.OK, "text/html; charset=UTF-8", html)
             addCorsHeaders(res)

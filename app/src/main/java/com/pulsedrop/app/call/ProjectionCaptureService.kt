@@ -145,7 +145,7 @@ class ProjectionCaptureService : Service() {
             }, null)
 
             val metrics = resources.displayMetrics
-            val maxEdge = 720
+            val maxEdge = 1080
             val scale = (maxEdge.toFloat() / maxOf(metrics.widthPixels, metrics.heightPixels))
                 .coerceAtMost(1f)
             val w = (metrics.widthPixels * scale).roundToInt().coerceAtLeast(16) and 0.inv() shr 2 shl 1  // even
@@ -187,7 +187,7 @@ class ProjectionCaptureService : Service() {
                             val scaled = if (full.width == w && full.height == h) full
                             else Bitmap.createScaledBitmap(full, w, h, true)
                             val bos = ByteArrayOutputStream()
-                            scaled.compress(Bitmap.CompressFormat.JPEG, 45, bos)
+                            scaled.compress(Bitmap.CompressFormat.JPEG, 62, bos)
                             engine?.pushScreenFrame(bos.toByteArray())
                             if (scaled !== full) scaled.recycle()
                             full.recycle()

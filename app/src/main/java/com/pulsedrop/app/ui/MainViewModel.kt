@@ -1,6 +1,9 @@
 package com.pulsedrop.app.ui
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -11,9 +14,11 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
+import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pulsedrop.app.MainActivity
 import com.pulsedrop.app.call.CallEngine
 import com.pulsedrop.app.data.AppDatabase
 import com.pulsedrop.app.data.TransferHistoryEntity
@@ -44,6 +49,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -144,6 +150,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val remoteFrame = callEngine.remoteFrame
     val remoteFrames = callEngine.remoteFrames
 
+    // ---- top-bar call notifications ---------------------------------------
+
+    private val _webCall = MutableStateFlow<WebCall?>(null)
+    val webCall: StateFlow<WebCall?> = _webCall.asStateFlow()
+
+    private val callNotifications = context.getSystemService(NotificationManager::class.java)
+
+    private data class CallNotification(val title: String, val text: String, val ring: Boolean)
+
+    /**
+     * A call used to exist only while the app was open; dialled during another
+     * session it fell on deaf ears. Mirror every call leg into the system's top
+     * bar as a high-importance notification - tapping opens MainActivity, which
+     * already paints the full call UI.
+     */
+    private fun startCallNotifications() {
+        viewModelScope.launch {
+            combine(callEngine.state, callEngine.incomingCall, _webCall) { state, incoming, web ->
+                when {
+                    incoming != null -> CallNotification(
+                        "Incoming ${if (incoming.video) "video" else "voice"} call",
+                        incoming.name.ifBlank { "PulseDrop peer" },
+                        ring = true
+                    )
+                    state.active -> CallNotification(
+                        if (state.connected) "In call with ${state.peerName}" else "Calling ${state.peerName}",
+                        state.status.ifBlank { if (state.video) "Video call" else "Voice call" },
+                        ring = false
+                    )
+                    web != null && !web.outgoing && web.state == "ringing" -> CallNotification(
+                        "Incoming ${if (web.video) "video" else "voice"} call",
+                        web.name.ifBlank { "Browser" },
+                        ring = true
+                    )
+                    web != null -> CallNotification(
+                        if (web.state == "accepted") "In call with ${web.name.ifBlank { "the browser" }}"
+                        else "Ringing ${web.name.ifBlank { "the browser" }}",
+                        "Browser call on this phone's server",
+                        ring = false
+                    )
+                    else -> null
+                }
+            }.collect { note ->
+                if (note == null) callNotifications.cancel(CALL_NOTIF_ID)
+                else postCallNotification(note)
+            }
+        }
+    }
+
+    private fun postCallNotification(note: CallNotification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            callNotifications.createNotificationChannel(
+                NotificationChannel(CALL_CHANNEL_ID, "Calls", NotificationManager.IMPORTANCE_HIGH)
+                    .apply { description = "Incoming and ongoing PulseDrop calls" }
+            )
+        }
+        val open = PendingIntent.getActivity(
+            context, 0,
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = NotificationCompat.Builder(context, CALL_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setContentTitle(note.title)
+            .setContentText(note.text)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setContentIntent(open)
+            .setOngoing(true)
+            .apply {
+                if (note.ring) {
+                    priority = NotificationCompat.PRIORITY_MAX
+                    setFullScreenIntent(open, true)
+                }
+            }
+            .build()
+        callNotifications.notify(CALL_NOTIF_ID, notification)
+    }
+
     private val _scannedPeers = MutableStateFlow<List<PeerDevice>>(emptyList())
     val scannedPeers: StateFlow<List<PeerDevice>> = _scannedPeers.asStateFlow()
 
@@ -181,6 +266,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (t != null) _uiMessage.value = t
             }
         }
+        startCallNotifications()
     }
 
     private fun persistSettings() {
@@ -847,9 +933,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val groups: StateFlow<List<ChatGroup>> get() = pairManager.groups
 
-    private val _webCall = MutableStateFlow<WebCall?>(null)
-    val webCall: StateFlow<WebCall?> = _webCall.asStateFlow()
-
     /** Dial the browser tab of a LAN visitor; the phone owns the ringing UI on both ends. */
     fun callWebClient(ip: String, name: String, video: Boolean) {
         val server = serverInstance ?: run {
@@ -1169,6 +1252,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // The server is owned by its foreground service, not this ViewModel — clearing
         // the ViewModel (config change, process trim) must not tear the server down.
         discoveryManager.stopDiscovery()
+        callNotifications.cancel(CALL_NOTIF_ID)
     }
 
     companion object {
@@ -1176,5 +1260,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         /** Chat lives for the session — kept until the app is restarted, not written to disk. */
         private const val CHAT_RETENTION = 2000
+
+        private const val CALL_CHANNEL_ID = "pulsedrop_call"
+        private const val CALL_NOTIF_ID = 4141
     }
 }

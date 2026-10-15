@@ -683,10 +683,22 @@ object WebClientHtml {
       position: relative; flex: 1; min-height: 0; overflow: hidden;
       display: flex; align-items: center; justify-content: center;
     }
-    .call-remote {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      object-fit: contain; background: #070B14; display: none;
+    /* Two slots: one fills the stage, one rides the corner. Tapping the corner tile swaps them,
+       dragging it parks the tile wherever you like - the Messenger interaction people expect. */
+    .feed-slot { position: absolute; overflow: hidden; }
+    .feed-slot.big { inset: 0; z-index: 0; background: #070B14; }
+    .feed-slot.small {
+      inset: auto 22px 22px auto; width: 172px; aspect-ratio: 4 / 3; height: auto; z-index: 4;
+      border-radius: 16px; overflow: hidden; background: #0F172A; cursor: grab; touch-action: none;
+      border: 1px solid rgba(148, 163, 184, .3); box-shadow: 0 16px 34px rgba(0, 0, 0, .5);
     }
+    .feed-slot.small.dragging { cursor: grabbing; }
+    .feed-slot img, .feed-slot video {
+      position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: contain;
+    }
+    .feed-slot.small img, .feed-slot.small video { object-fit: cover; }
+    .feed-slot video.self-cam { transform: scaleX(-1); }
+    .call-remote { background: #070B14; }
     .call-remote.cover { object-fit: cover; }
     .call-poster { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; padding: 24px; text-align: center; }
     .call-poster.hide { display: none; }
@@ -716,18 +728,18 @@ object WebClientHtml {
       background: rgba(6, 78, 59, .86); color: #6EE7B7; padding: 8px 14px; border-radius: 999px;
     }
     .call-tag.show { display: flex; }
-    .call-pip {
-      position: absolute; z-index: 4; right: 22px; bottom: 22px;
-      width: 172px; aspect-ratio: 4 / 3; border-radius: 16px; overflow: hidden;
-      background: #0F172A; border: 1px solid rgba(148, 163, 184, .3);
-      box-shadow: 0 16px 34px rgba(0, 0, 0, .5);
-    }
-    .call-pip video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
     .call-pip-off {
       position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
       font-size: 11.5px; font-weight: 700; color: #94A3B8; text-align: center; padding: 8px;
     }
     .call-pip.live .call-pip-off { display: none; }
+    .pip-hint {
+      position: absolute; z-index: 2; left: 8px; top: 8px; display: none;
+      align-items: center; gap: 5px; font-size: 10px; font-weight: 800; letter-spacing: .3px;
+      color: #E2E8F0; background: rgba(7, 11, 20, .62); padding: 4px 9px; border-radius: 999px;
+      pointer-events: none;
+    }
+    .feed-slot.small .pip-hint { display: flex; }
     .call-dock {
       position: relative; z-index: 5; display: flex; align-items: center; justify-content: center;
       gap: 16px; padding: 22px 18px 30px;
@@ -746,16 +758,22 @@ object WebClientHtml {
     .dock-btn.danger { background: #DC2626; color: #fff; }
     .dock-btn.good { background: #16A34A; color: #fff; }
     .dock-btn[disabled] { opacity: .35; cursor: not-allowed; }
+    /* The slash paths live in the same svg as their base icon and only surface when the
+       control is in its off/engaged state - an icon that visibly changes reads at a glance. */
+    .dock-btn .sl { display: none; }
+    .dock-btn.active .sl, .dock-btn.slated .sl { display: inline; }
+    /* Mute shows its slash when engaged; camera shows its slash when the lens is closed. */
+    #callCam.active .sl { display: none; }
     .dock-lab { font-size: 10.5px; font-weight: 700; letter-spacing: .2px; color: #94A3B8; }
     .call-hint {
-      position: absolute; z-index: 4; left: 50%; transform: translateX(-50%); bottom: 128px;
+      position: absolute; z-index: 4; left: 50%; transform: translateX(-50%); bottom: 178px;
       font-size: 11.5px; color: #CBD5E1; background: rgba(15, 23, 42, .86);
       border: 1px solid rgba(148, 163, 184, .22); padding: 9px 15px; border-radius: 999px;
       display: none; max-width: min(520px, 90vw); text-align: center; line-height: 1.45;
     }
     .call-hint.show { display: block; }
     @media (max-width: 720px) {
-      .call-pip { width: 116px; right: 14px; bottom: 14px; }
+      .feed-slot.small { width: 116px; inset: auto 14px 14px auto; }
       .dock-btn { width: 52px; height: 52px; }
       .call-dock { gap: 12px; }
     }
@@ -1219,8 +1237,16 @@ object WebClientHtml {
 
   <!-- Call: full-page stage -->
   <div id="callScreen" class="call-screen" role="dialog" aria-modal="true" aria-label="Call">
-    <div class="call-stage">
-      <img id="callRemote" class="call-remote" alt="Remote video" />
+    <div class="call-stage" id="callStage">
+      <div class="feed-slot big" id="slotRemote">
+        <img id="callRemote" class="call-remote" alt="Remote video" />
+        <div class="pip-hint" aria-hidden="true">tap to swap</div>
+      </div>
+      <div class="feed-slot small call-pip" id="callPip" style="display: none">
+        <video id="callSelf" class="self-cam" autoplay playsinline muted></video>
+        <div class="call-pip-off" id="callPipOff">Camera off</div>
+        <div class="pip-hint" aria-hidden="true">tap to swap</div>
+      </div>
       <div class="call-poster" id="callPoster">
         <div class="call-avatar" id="callAvatar">B</div>
         <div class="call-peer" id="callPeer">Device</div>
@@ -1230,6 +1256,7 @@ object WebClientHtml {
         <div>
           <div class="call-kicker" id="callKind">Voice call</div>
           <div class="call-name" id="callTitle">Calling</div>
+          <div class="call-status" id="callYou" style="position:static;text-align:left;margin-top:5px">You</div>
         </div>
         <div class="call-clock" id="callTimer" style="display: none">0:00</div>
       </div>
@@ -1238,10 +1265,6 @@ object WebClientHtml {
         <span id="callShareTxt">Sharing screen</span>
       </div>
       <div class="call-hint" id="callHint"></div>
-      <div class="call-pip" id="callPip" style="display: none">
-        <video id="callSelf" autoplay playsinline muted></video>
-        <div class="call-pip-off" id="callPipOff">Camera off</div>
-      </div>
     </div>
     <div class="call-dock">
       <div class="dock-cell" id="cellAccept" style="display: none">
@@ -1258,15 +1281,15 @@ object WebClientHtml {
       </div>
       <div class="dock-cell" id="cellMute">
         <button class="dock-btn" id="callMute" aria-label="Mute microphone" title="Mute" onclick="toggleCallMute()">
-          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path class="sl" d="M4 3l16 18"/></svg>
         </button>
-        <span class="dock-lab">Mute</span>
+        <span class="dock-lab" id="callMuteLab">Mute</span>
       </div>
       <div class="dock-cell" id="cellCam">
         <button class="dock-btn" id="callCam" aria-label="Turn camera on or off" title="Camera" onclick="toggleCallCamera()">
-          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m23 7-7 5 7 5V7Z"/><rect x="1" y="5" width="15" height="14" rx="3"/></svg>
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m23 7-7 5 7 5V7Z"/><rect x="1" y="5" width="15" height="14" rx="3"/><path class="sl" d="M4 3l16 18"/></svg>
         </button>
-        <span class="dock-lab">Camera</span>
+        <span class="dock-lab" id="callCamLab">Camera</span>
       </div>
       <div class="dock-cell" id="cellShare">
         <button class="dock-btn" id="callShareBtn" aria-label="Share your screen" title="Share screen" onclick="toggleCallShare()">
@@ -3401,16 +3424,92 @@ object WebClientHtml {
       // reads as two different things to press.
       el('cellEnd').style.display = ringing ? 'none' : 'flex';
       el('cellMute').style.display = on ? 'flex' : 'none';
-      el('cellCam').style.display = (on && call.video) ? 'flex' : 'none';
+      el('cellCam').style.display = on ? 'flex' : 'none';
       el('cellShare').style.display = on ? 'flex' : 'none';
-      el('callPip').style.display = (on && call.video) ? 'block' : 'none';
+      el('callMuteLab').textContent = pdMuted ? 'Unmute' : 'Mute';
+      el('callYou').textContent = 'You - ' + MY_NAME + (myIp ? ' (' + myIp + ')' : '');
       el('callAvatar').style.background = gradOf(incoming ? peerName() : MY_NAME);
       el('callAvatar').textContent = initialsOf(incoming ? peerName() : MY_NAME);
+      syncSelfView();
       // The poster only steps aside once an actual frame has landed.
-      var feed = on && live.gotFrame;
-      el('callPoster').classList.toggle('hide', !!feed);
-      el('callRemote').style.display = feed ? 'block' : 'none';
+      el('callRemote').style.display = (on && live.gotFrame) ? 'block' : 'none';
+      layoutSlots();
       persistCall();
+    }
+
+    var flipped = false;
+
+    /* ---- the two feed slots: tap swaps stage/tile, drag parks the tile ---- */
+
+    function applyDrag(s) {
+      s.style.transform = s.classList.contains('small')
+        ? 'translate(' + (s._dx || 0) + 'px,' + (s._dy || 0) + 'px)' : '';
+    }
+
+    function layoutSlots() {
+      var self = el('callPip'), remote = el('slotRemote');
+      var selfVisible = self.style.display !== 'none';
+      // A voice call with no remote video hands the stage to whatever this tab is sending.
+      var selfPrimary = flipped;
+      if (!selfVisible) selfPrimary = false;
+      else if (!call.video && !flipped && (live.sharing || live.camOn)) selfPrimary = true;
+      self.classList.toggle('big', selfPrimary);
+      self.classList.toggle('small', !selfPrimary);
+      remote.classList.toggle('big', !selfPrimary);
+      remote.classList.toggle('small', selfPrimary);
+      applyDrag(self); applyDrag(remote);
+      // An empty tile is just dark furniture - only show the remote slot when it has a feed.
+      remote.style.display = (selfPrimary && !live.gotFrame) ? 'none' : 'block';
+      el('callPoster').classList.toggle('hide',
+        selfPrimary || el('callRemote').style.display === 'block');
+    }
+
+    function flipSlots() { flipped = !flipped; layoutSlots(); }
+
+    function wireSlot(node) {
+      var st = null;
+      node.addEventListener('pointerdown', function (e) {
+        if (!node.classList.contains('small')) return;
+        e.preventDefault();
+        try { node.setPointerCapture(e.pointerId); } catch (err) {}
+        st = { x: e.clientX, y: e.clientY, ox: node._dx || 0, oy: node._dy || 0, moved: false };
+      });
+      node.addEventListener('pointermove', function (e) {
+        if (!st) return;
+        var dx = e.clientX - st.x, dy = e.clientY - st.y;
+        if (!st.moved && Math.abs(dx) + Math.abs(dy) > 8) {
+          st.moved = true; node.classList.add('dragging');
+        }
+        if (st.moved) {
+          node._dx = st.ox + dx; node._dy = st.oy + dy;
+          var r = el('callStage').getBoundingClientRect();
+          node._dx = Math.min(8, Math.max(node._dx, 24 - r.width + node.offsetWidth));
+          node._dy = Math.min(8, Math.max(node._dy, 24 - r.height + node.offsetHeight));
+          applyDrag(node);
+        }
+      });
+      node.addEventListener('pointerup', function () {
+        if (!st) return;
+        node.classList.remove('dragging');
+        if (!st.moved) flipSlots();
+        st = null;
+      });
+      node.addEventListener('pointercancel', function () {
+        st = null; node.classList.remove('dragging');
+      });
+    }
+
+    /* One place decides what the self tile looks like wherever it currently sits. */
+    function syncSelfView() {
+      var v = el('callSelf');
+      v.classList.toggle('self-cam', !live.sharing);
+      el('callPip').classList.toggle('live', live.camOn || live.sharing);
+      el('callCam').classList.toggle('active', live.camOn);
+      el('callCam').classList.toggle('slated', !live.camOn);
+      el('callCamLab').textContent = live.camOn ? 'Camera' : 'Camera off';
+      var on = call.state === 'accepted';
+      el('callPip').style.display = (on && (call.video || live.camOn || live.sharing)) ? 'block' : 'none';
+      layoutSlots();
     }
 
     function showCall(cid, video, dir, state, startedAt) {
@@ -3560,8 +3659,11 @@ object WebClientHtml {
     }
 
     function startFrameLoop() {
-      if (live.vfTimer) return;
-      live.vfTimer = setInterval(grabFrame, 200);
+      var iv = live.sharing ? 150 : 200;
+      if (live.vfTimer && live.vfIv === iv) return;
+      if (live.vfTimer) clearInterval(live.vfTimer);
+      live.vfIv = iv;
+      live.vfTimer = setInterval(grabFrame, iv);
     }
 
     function grabFrame() {
@@ -3569,7 +3671,9 @@ object WebClientHtml {
       var v = el('callSelf');
       if (!v.videoWidth) return;
       if (!live.camOn && !live.sharing) return;
-      var w = 480;
+      var share = live.sharing;
+      var w = share ? 1600 : 960;
+      if (v.videoWidth < w) w = v.videoWidth;
       var h = Math.max(2, Math.round(v.videoHeight * (w / v.videoWidth)));
       var c = live.canvas || (live.canvas = document.createElement('canvas'));
       if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
@@ -3581,7 +3685,7 @@ object WebClientHtml {
         b.arrayBuffer().then(function (ab) {
           pushUp(live.sharing ? T_SCREEN : T_CAMERA, new Uint8Array(ab));
         });
-      }, 'image/jpeg', 0.5);
+      }, 'image/jpeg', share ? 0.75 : 0.7);
     }
 
     function sendCallState() {
@@ -3679,16 +3783,15 @@ object WebClientHtml {
       try {
         var stream = await md.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          video: call.video ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
+          video: call.video ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false
         });
         attachMic(stream);
         if (call.video) {
           live.camStream = stream;
           live.camOn = true;
           el('callSelf').srcObject = stream;
-          el('callPip').classList.add('live');
-          el('callCam').classList.add('active');
           startFrameLoop();
+          syncSelfView();
         }
       } catch (e) {
         callHint('Microphone or camera was blocked - the call still receives voice and video.');
@@ -3699,6 +3802,8 @@ object WebClientHtml {
       pdMuted = !pdMuted;
       el('callMute').classList.toggle('active', pdMuted);
       el('callMute').setAttribute('title', pdMuted ? 'Unmute' : 'Mute');
+      el('callMute').setAttribute('aria-label', pdMuted ? 'Unmute microphone' : 'Mute microphone');
+      el('callMuteLab').textContent = pdMuted ? 'Unmute' : 'Mute';
       sendCallState();
     }
 
@@ -3706,14 +3811,13 @@ object WebClientHtml {
       if (!live.camStream) {
         var md = navigator.mediaDevices;
         if (!md || !md.getUserMedia) { callHint('This origin cannot use the camera'); return; }
-        md.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } })
+        md.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } } })
           .then(function (s) {
             live.camStream = s;
             live.camOn = true;
             el('callSelf').srcObject = s;
-            el('callPip').classList.add('live');
-            el('callCam').classList.add('active');
             startFrameLoop();
+            syncSelfView();
             callHint('');
           })
           .catch(function () { callHint('Camera blocked by the browser'); });
@@ -3721,23 +3825,22 @@ object WebClientHtml {
       }
       live.camOn = !live.camOn;
       live.camStream.getVideoTracks().forEach(function (t) { t.enabled = live.camOn; });
-      el('callPip').classList.toggle('live', live.camOn || live.sharing);
-      el('callCam').classList.toggle('active', live.camOn);
+      syncSelfView();
     }
 
     function toggleCallShare() {
       if (live.sharing) { stopCallShare(); return; }
       var md = navigator.mediaDevices;
       if (!md || !md.getDisplayMedia) { callHint('This browser will not share the screen from this page'); return; }
-      md.getDisplayMedia({ video: true, audio: false }).then(function (s) {
+      md.getDisplayMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 15 } }, audio: false }).then(function (s) {
         live.shareStream = s;
         live.sharing = true;
         el('callSelf').srcObject = s;
-        el('callPip').classList.add('live');
         el('callShareBtn').classList.add('active');
         el('callShareLab').textContent = 'Stop';
         var tr = s.getVideoTracks()[0];
         if (tr) tr.addEventListener('ended', stopCallShare);
+        syncSelfView();
         startFrameLoop();
         sendCallState();
         callHint('');
@@ -3753,7 +3856,8 @@ object WebClientHtml {
       el('callShareBtn').classList.remove('active');
       el('callShareLab').textContent = 'Share';
       el('callSelf').srcObject = live.camOn && live.camStream ? live.camStream : null;
-      el('callPip').classList.toggle('live', !!live.camOn);
+      syncSelfView();
+      startFrameLoop();
       sendCallState();
     }
 
@@ -3777,9 +3881,18 @@ object WebClientHtml {
       el('callRemote').style.display = 'none';
       if (live.lastUrl) { URL.revokeObjectURL(live.lastUrl); live.lastUrl = ''; }
       el('callMute').classList.remove('active');
+      el('callMuteLab').textContent = 'Mute';
       el('callCam').classList.remove('active');
       el('callShareBtn').classList.remove('active');
       el('callShareLab').textContent = 'Share';
+      // Put the slots back the way they shipped: remote on the stage, self in the corner.
+      flipped = false;
+      el('callPip')._dx = el('callPip')._dy = 0;
+      el('slotRemote')._dx = el('slotRemote')._dy = 0;
+      el('callPip').className = 'feed-slot small call-pip';
+      el('slotRemote').className = 'feed-slot big';
+      el('callPip').style.transform = '';
+      el('slotRemote').style.transform = '';
       callHint('');
     }
 
@@ -3796,6 +3909,13 @@ object WebClientHtml {
 
     // Watch for the phone dialling this tab even while no call is open here.
     setInterval(function () { if (!call.cid) pollCall(); }, 2000);
+    // Background tabs throttle timers hard; poll the instant the user comes back, so a call
+    // started while the tab was buried shows up as soon as they look at it.
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && !call.cid) pollCall();
+    });
+    wireSlot(el('slotRemote'));
+    wireSlot(el('callPip'));
 
 
     /* ===== Global keys ===== */
@@ -3859,10 +3979,11 @@ object WebClientHtml {
       fetchInfo();
     }
     fetchMessages();
-    // Plain http cannot send a mic or camera out of a browser - point them at the https address.
+    // Plain http cannot send a mic or camera out of a browser. The phone normally bounces
+    // http visits to the https port automatically; this only shows if that listener is down.
     if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
       setTimeout(function () {
-        toast('This page is on http: calls can ring and receive, but cannot send your mic or camera. Use the secure https address shown on the phone.');
+        toast('This page is on http, so calls can ring and receive but not send. The secure address is https://' + location.hostname + ':' + (parseInt(location.port || '80', 10) + 1) + '/ - open that for full calls.');
       }, 1400);
     }
   </script>
