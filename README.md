@@ -78,9 +78,10 @@ on demand.
 
 ### Verifying a downloaded APK
 
-Every release ships `app-release.apk` signed with APK Signature Scheme v2 + v3. To confirm the
-file you downloaded is byte-for-byte what this repository published, compare its SHA-256
-(`sha256sum app-release.apk`) against the hash in the release notes. That hash doubles as the
+Every release ships a per-version APK (`PulseDrop-<version>.apk`, e.g. `PulseDrop-1.3.0.apk`)
+signed with APK Signature Scheme v2 + v3. To confirm the file you downloaded is byte-for-byte
+what this repository published, compare its SHA-256
+(`sha256sum PulseDrop-<version>.apk`) against the hash in the release notes. That hash doubles as the
 permanent VirusTotal link:
 
 ```
@@ -89,6 +90,7 @@ https://www.virustotal.com/gui/file/<sha256>
 
 Live reports for current releases:
 
+- **v1.3.0** — <https://www.virustotal.com/gui/file/87f1bdd18b4b6deec7f3feaf3d03eb9e0a1d7056d049c1b97b57632c26ce14de>
 - **v1.1.2** — <https://www.virustotal.com/gui/file/6fc547fbc61922502d4b6118b2add02e8653f1f99cee1af1048d05f2b02b4b3a>
 
 `.github/workflows/virustotal-scan.yml` submits each published release to VirusTotal

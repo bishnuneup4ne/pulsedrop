@@ -2,7 +2,10 @@
 
 ## From the release APK (normal path)
 
-1. Download `app-release.apk` from the
+> Easiest: once PulseDrop is installed, later versions update themselves in-app — see the
+> "Keeping up to date" section of the README. To install the very first copy, follow these steps.
+
+1. Download `PulseDrop-<version>.apk` (e.g. `PulseDrop-1.3.0.apk`) from the
    [latest release](https://github.com/bishnuneup4ne/pulsedrop/releases).
 2. **If an older PulseDrop build is already installed, uninstall it first.**
    Builds signed with different keys cannot update in place — Android shows a bare
@@ -15,7 +18,7 @@
 Every release notes page lists the APK's SHA-256. Compare it locally:
 
 ```
-sha256sum app-release.apk
+sha256sum PulseDrop-<version>.apk
 ```
 
 The hash is also the permanent VirusTotal link:
