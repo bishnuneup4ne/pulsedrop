@@ -33,14 +33,14 @@
   --text-tertiary: #71717A;
   --border: #29292D;
   --border-strong: #3A3A40;
-  --accent: #5A54E8;
-  --accent-hover: #514CD6;
+  --accent: #5E63F0;
+  --accent-hover: #5257E0;
   --on-accent: #FFFFFF;
   --accent-tint: #24244A;
   --on-accent-tint: #C4C6FA;
   --danger-tint: #2D1617;
   --on-danger-tint: #F87171;
-  --focus-ring: #5A54E8;
+  --focus-ring: #5E63F0;
 }
 
 *, *::before, *::after { box-sizing: border-box; }

@@ -87,8 +87,8 @@ internal val DarkColors = PulseColors(
     borderSubtle = Color(0xFF29292D),
     borderStrong = Color(0xFF3A3A40),
 
-    accent = Color(0xFF5A54E8),
-    accentHover = Color(0xFF514CD6),
+    accent = Color(0xFF5E63F0),
+    accentHover = Color(0xFF5257E0),
     onAccent = Color(0xFFFFFFFF),
     accentTint = Color(0xFF24244A),
     onAccentTint = Color(0xFFC4C6FA),
@@ -109,7 +109,7 @@ internal val DarkColors = PulseColors(
     stage = Color(0xFF000000),
     scrim = Color(0x99000000),
     disabled = Color(0xFF4B4B52),
-    focusRing = Color(0xFF5A54E8),
+    focusRing = Color(0xFF5E63F0),
     isDark = true
 )
 

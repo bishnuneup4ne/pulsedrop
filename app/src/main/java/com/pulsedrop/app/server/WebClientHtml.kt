@@ -150,8 +150,8 @@ object WebClientHtml {
       --hairline: #29292D;
       --hairline-strong: #3A3A40;
 
-      --accent: #5A54E8;
-      --accent-hover: #6A64EC;
+      --accent: #5E63F0;
+      --accent-hover: #6E73F4;
       --accent-tint: #24244A;
       --accent-tint-fg: #C4C6FA;
       --on-accent: #FFFFFF;
