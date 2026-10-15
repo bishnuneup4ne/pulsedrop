@@ -94,13 +94,13 @@ import com.pulsedrop.app.model.ChatGroup
 import com.pulsedrop.app.model.ClipMessage
 import com.pulsedrop.app.model.PairedDevice
 import com.pulsedrop.app.model.PeerDevice
+import com.pulsedrop.app.ui.components.PulseAvatar
+import com.pulsedrop.app.ui.components.PulseChip
 import com.pulsedrop.app.ui.components.PulseStatePanel
 import com.pulsedrop.app.ui.components.AttachmentPreview
 import com.pulsedrop.app.ui.components.formatAttachmentSize
 import com.pulsedrop.app.ui.components.PreviewKind
 import com.pulsedrop.app.ui.components.previewKindOf
-import com.pulsedrop.app.ui.theme.PulseAvatarInk
-import com.pulsedrop.app.ui.theme.PulseAvatarPalette
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -451,12 +451,12 @@ private fun InboxView(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ThreadFilterChip(
+                PulseChip(
                     label = "Direct",
                     selected = !showPrivateThreads,
                     onClick = { showPrivateThreads = false }
                 )
-                ThreadFilterChip(
+                PulseChip(
                     label = "Private & groups ($privateCount)",
                     selected = showPrivateThreads,
                     onClick = { showPrivateThreads = true }
@@ -515,7 +515,7 @@ private fun InboxView(
                         .padding(horizontal = 20.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    ThreadAvatar(name = p.name, size = 26.dp)
+                    PulseAvatar(name = p.name, size = 26)
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = "Message ${p.name} privately",
@@ -551,28 +551,6 @@ private fun InboxView(
         )
     }
 }
-
-@Composable
-private fun ThreadFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val colorScheme = MaterialTheme.colorScheme
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(
-                if (selected) colorScheme.secondaryContainer else colorScheme.surfaceVariant.copy(alpha = 0.5f)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp)
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = if (selected) colorScheme.onSecondaryContainer else colorScheme.onSurfaceVariant
-        )
-    }
-}
-
 @Composable
 private fun ThreadRow(
     thread: ChatThread,
@@ -597,12 +575,15 @@ private fun ThreadRow(
             ),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ThreadAvatar(
+        PulseAvatar(
             name = thread.title,
-            size = 54.dp,
-            isGroup = thread.isGroup,
-            isRoom = thread.id == ROOM_ID
-        )
+            size = 54,
+            icon = when {
+                thread.id == ROOM_ID -> Icons.Default.Groups
+                thread.isGroup -> Icons.Default.PersonAddAlt1
+                else -> null
+            }
+           )
         Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -770,7 +751,7 @@ private fun IpDialog(
                                     .padding(vertical = 8.dp, horizontal = 4.dp)
                                     .testTag("ip_peer_${peer.ip}")
                             ) {
-                                ThreadAvatar(name = peer.name, size = 34.dp)
+                                PulseAvatar(name = peer.name, size = 34)
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Column {
                                     Text(peer.name, style = MaterialTheme.typography.bodyMedium)
@@ -888,12 +869,15 @@ private fun ConversationView(
             IconButton(onClick = onBack, modifier = Modifier.testTag("chat_back_btn")) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
-            ThreadAvatar(
+            PulseAvatar(
                 name = thread.title,
-                size = 38.dp,
-                isGroup = thread.isGroup,
-                isRoom = thread.id == ROOM_ID
-            )
+                size = 38,
+                icon = when {
+                    thread.id == ROOM_ID -> Icons.Default.Groups
+                    thread.isGroup -> Icons.Default.PersonAddAlt1
+                    else -> null
+                }
+               )
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -1333,7 +1317,7 @@ private fun MessageRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (!mine && grouped) {
                     if (lastOfRun) {
-                        ThreadAvatar(name = msg.sender, size = 26.dp)
+                        PulseAvatar(name = msg.sender, size = 26)
                     } else {
                         Spacer(modifier = Modifier.width(26.dp))
                     }
@@ -1512,46 +1496,6 @@ private fun TypingDots() {
 }
 
 // ------------------------------------------------------------------ atoms
-
-@Composable
-private fun ThreadAvatar(
-    name: String,
-    size: Dp,
-    isGroup: Boolean = false,
-    isRoom: Boolean = false
-) {
-    val idx = kotlin.math.abs(name.hashCode()) % PulseAvatarPalette.size
-    Box(
-        modifier = Modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(PulseAvatarPalette[idx]),
-        contentAlignment = Alignment.Center
-    ) {
-        when {
-            isRoom -> Icon(
-                imageVector = Icons.Default.Groups,
-                contentDescription = null,
-                tint = PulseAvatarInk,
-                modifier = Modifier.size(size * 0.5f)
-            )
-            isGroup -> Icon(
-                imageVector = Icons.Default.PersonAddAlt1,
-                contentDescription = null,
-                tint = PulseAvatarInk,
-                modifier = Modifier.size(size * 0.5f)
-            )
-            else -> Text(
-                text = name.take(1).uppercase(Locale.getDefault()),
-                style = if (size >= 40.dp) MaterialTheme.typography.titleMedium
-                else MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = PulseAvatarInk
-            )
-        }
-    }
-}
-
 private sealed class RowItem {
     abstract val key: String
 

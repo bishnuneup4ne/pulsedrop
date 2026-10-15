@@ -55,7 +55,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.data.TransferHistoryEntity
+import com.pulsedrop.app.ui.components.PulseChip
 import com.pulsedrop.app.ui.components.PulseSectionHeader
+import com.pulsedrop.app.ui.components.PulseStat
 import com.pulsedrop.app.ui.components.PulseStatePanel
 import com.pulsedrop.app.util.NetworkUtils
 import java.text.SimpleDateFormat
@@ -133,8 +135,11 @@ fun HistoryScreen(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        FilterPill(
-                            activeCount = activeFilterCount,
+                        PulseChip(
+                            label = "Filters",
+                            selected = activeFilterCount > 0,
+                            badge = activeFilterCount,
+                            leadingIcon = Icons.Default.Tune,
                             onClick = { showFilterSheet = true },
                             modifier = Modifier.testTag("history_filter_btn")
                         )
@@ -161,25 +166,25 @@ fun HistoryScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    StatTile(
+                    PulseStat(
                         label = "Received",
                         value = receivedCount.toString(),
-                        tint = colorScheme.secondaryContainer,
-                        onTint = colorScheme.onSecondaryContainer,
+                        container = colorScheme.secondaryContainer,
+                        onContainer = colorScheme.onSecondaryContainer,
                         modifier = Modifier.weight(1f)
                     )
-                    StatTile(
+                    PulseStat(
                         label = "Sent",
                         value = sentCount.toString(),
-                        tint = colorScheme.primaryContainer,
-                        onTint = colorScheme.onPrimaryContainer,
+                        container = colorScheme.primaryContainer,
+                        onContainer = colorScheme.onPrimaryContainer,
                         modifier = Modifier.weight(1f)
                     )
-                    StatTile(
+                    PulseStat(
                         label = "Devices",
                         value = uniqueIps.size.toString(),
-                        tint = colorScheme.tertiaryContainer,
-                        onTint = colorScheme.onTertiaryContainer,
+                        container = colorScheme.tertiaryContainer,
+                        onContainer = colorScheme.onTertiaryContainer,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -388,78 +393,6 @@ fun HistoryScreen(
                     Text("Cancel", style = MaterialTheme.typography.labelLarge)
                 }
             }
-        )
-    }
-}
-
-@Composable
-private fun FilterPill(
-    activeCount: Int,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    val active = activeCount > 0
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(50),
-        color = if (active) colorScheme.primaryContainer else colorScheme.surfaceVariant,
-        contentColor = if (active) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant,
-        modifier = modifier
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Tune,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp)
-            )
-            Text("Filters", style = MaterialTheme.typography.labelLarge)
-            if (active) {
-                Box(
-                    modifier = Modifier
-                        .size(18.dp)
-                        .clip(CircleShape)
-                        .background(colorScheme.primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = activeCount.toString(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorScheme.onPrimary
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatTile(
-    label: String,
-    value: String,
-    tint: androidx.compose.ui.graphics.Color,
-    onTint: androidx.compose.ui.graphics.Color,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(tint)
-            .padding(horizontal = 14.dp, vertical = 12.dp)
-    ) {
-        Text(
-            text = value,
-            style = MaterialTheme.typography.headlineSmall,
-            color = onTint
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = onTint.copy(alpha = 0.8f)
         )
     }
 }

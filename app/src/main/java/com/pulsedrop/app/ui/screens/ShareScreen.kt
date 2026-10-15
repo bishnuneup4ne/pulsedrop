@@ -63,6 +63,8 @@ import com.pulsedrop.app.ui.UiServerState
 import com.pulsedrop.app.ui.components.PulseSectionHeader
 import com.pulsedrop.app.ui.components.ActiveTransfersCard
 import com.pulsedrop.app.ui.components.ServerCard
+import com.pulsedrop.app.ui.components.PulseCard
+import com.pulsedrop.app.ui.theme.PulseSpacing
 import com.pulsedrop.app.ui.components.SessionStatsCard
 import com.pulsedrop.app.util.NetworkUtils
 
@@ -447,20 +449,12 @@ private fun TextBeamCard(
 
 @Composable
 private fun SectionCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
+    PulseCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            content()
-        }
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp),
+            content = content
+        )
     }
 }
 

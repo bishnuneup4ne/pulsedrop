@@ -248,6 +248,7 @@ fun PulseChip(
     onClick: (() -> Unit)? = null,
     selected: Boolean = false,
     leadingIcon: ImageVector? = null,
+    badge: Int = 0,
     enabled: Boolean = true
 ) {
     val c = LocalPulseColors.current
@@ -284,11 +285,56 @@ fun PulseChip(
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
             )
+            if (badge > 0) {
+                Box(
+                    Modifier
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) c.onAccentTint else c.accent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = badge.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (selected) c.accentTint else c.onAccent
+                    )
+                }
+            }
         }
     }
 }
 
 // ── Status ─────────────────────────────────────────────────────────────────
+
+/** Count-beside-label tile, the one way a screen shows a number of things. */
+@Composable
+fun PulseStat(
+    label: String,
+    value: String,
+    container: Color,
+    onContainer: Color,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(PulseRadius.lg.dp))
+            .background(container)
+            .padding(horizontal = PulseSpacing.lg.dp, vertical = PulseSpacing.md.dp)
+    ) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.headlineSmall,
+            color = onContainer
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = onContainer.copy(alpha = 0.8f)
+        )
+    }
+}
 
 enum class PulseStatusTone { Positive, Warning, Negative, Neutral, Active }
 

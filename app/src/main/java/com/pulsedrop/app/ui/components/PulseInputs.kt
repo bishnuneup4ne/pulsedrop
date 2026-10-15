@@ -584,7 +584,8 @@ fun PulseAvatar(
     name: String,
     modifier: Modifier = Modifier,
     size: Int = PulseSizes.avatar,
-    image: ImageBitmap? = null
+    image: ImageBitmap? = null,
+    icon: ImageVector? = null
 ) {
     val color = remember(name) {
         PulseAvatarPalette[(name.hashCode() and Int.MAX_VALUE) % PulseAvatarPalette.size]
@@ -609,12 +610,21 @@ fun PulseAvatar(
                     .background(color),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = initialsOf(name),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = PulseAvatarInk
-                )
+                if (icon != null) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = PulseAvatarInk,
+                        modifier = Modifier.size((size * 0.5f).dp)
+                    )
+                } else {
+                    Text(
+                        text = initialsOf(name),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = PulseAvatarInk
+                    )
+                }
             }
         }
     }
