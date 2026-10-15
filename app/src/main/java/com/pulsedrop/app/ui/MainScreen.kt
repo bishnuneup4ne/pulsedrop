@@ -37,17 +37,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
-import androidx.compose.material3.NavigationBar
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxHeight
-import com.pulsedrop.app.ui.components.PulseBadgeBox
-import com.pulsedrop.app.ui.components.PulseSideRail
-import com.pulsedrop.app.ui.components.PulseNavItem
-import androidx.compose.material3.NavigationBarItem
+import com.pulsedrop.app.ui.components.PulseDrawerContent
+import com.pulsedrop.app.ui.components.PulseNavFrame
+import com.pulsedrop.app.ui.components.PulseSection
+import com.pulsedrop.app.ui.components.PulseStatePanel
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -98,18 +98,11 @@ import com.pulsedrop.app.ui.screens.IncomingCallCard
 import com.pulsedrop.app.ui.screens.IncomingCallStage
 import com.pulsedrop.app.ui.screens.RadarScreen
 import com.pulsedrop.app.ui.screens.SettingsSheet
+import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.ShareScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-enum class PulseNavTab(val title: String, val icon: ImageVector, val tag: String) {
-    SERVE("Server", Icons.Default.Wifi, "tab_serve"),
-    RADAR("Radar", Icons.Default.Radar, "tab_radar"),
-    CHAT("Chat", Icons.AutoMirrored.Filled.Chat, "tab_chat"),
-    HISTORY("History", Icons.Default.History, "tab_history"),
-    HOTSPOT("Hotspot", Icons.Default.WifiTethering, "tab_hotspot")
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -151,9 +144,8 @@ fun MainScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var selectedTab by rememberSaveable { mutableStateOf(PulseNavTab.SERVE) }
+    var selectedSection by rememberSaveable { mutableStateOf(PulseSection.HOME) }
     var showSecurityDialog by remember { mutableStateOf(false) }
-    var showSettings by rememberSaveable { mutableStateOf(false) }
     var selectedThreadId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showShareConsent by remember { mutableStateOf(false) }
@@ -245,11 +237,11 @@ fun MainScreen(viewModel: MainViewModel) {
         }
     }
 
-    // Drive the LAN sweep only while the radar tab is open; multicast discovery keeps running globally.
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == PulseNavTab.RADAR) viewModel.startRadarScan()
+    // Drive the LAN sweep only while the Devices section is open; multicast discovery keeps running globally.
+    LaunchedEffect(selectedSection) {
+        if (selectedSection == PulseSection.DEVICES) viewModel.startRadarScan()
         else viewModel.stopRadarScan()
-        viewModel.setChatVisible(selectedTab == PulseNavTab.CHAT)
+        viewModel.setChatVisible(selectedSection == PulseSection.MESSAGES)
     }
 
     // Merge broadcast + scanned peers, dedupe by ip:port, prefer the PulseDrop app entry.
@@ -296,8 +288,8 @@ fun MainScreen(viewModel: MainViewModel) {
         viewModel.hangUpCall()
     }
 
-    BackHandler(enabled = selectedTab != PulseNavTab.SERVE && !callState.active) {
-        selectedTab = PulseNavTab.SERVE
+    BackHandler(enabled = selectedSection != PulseSection.HOME && !callState.active) {
+        selectedSection = PulseSection.HOME
     }
 
     // Declared last so it wins over the tab handler: back leaves a conversation for the inbox.
@@ -315,16 +307,42 @@ fun MainScreen(viewModel: MainViewModel) {
             }
     }
     val navBadges = mapOf(
-        PulseNavTab.RADAR to incomingPairRequests.size,
-        PulseNavTab.CHAT to unreadThreads,
-        PulseNavTab.HISTORY to activeTransfersMap.size
+        PulseSection.DEVICES to incomingPairRequests.size,
+        PulseSection.MESSAGES to unreadThreads,
+        PulseSection.TRANSFERS to activeTransfersMap.size
     )
     val transfersLive = activeTransfersMap.isNotEmpty()
 
     Box(modifier = Modifier.fillMaxSize()) {
       BoxWithConstraints(Modifier.fillMaxSize()) {
-        val useRail = maxWidth >= 720.dp
-        Scaffold(
+        val wide = maxWidth >= 720.dp
+        val drawerState = rememberDrawerState(DrawerValue.Closed)
+        var sidebarOpen by rememberSaveable { mutableStateOf(true) }
+        val navScope = rememberCoroutineScope()
+        fun selectSection(section: PulseSection) {
+            selectedSection = section
+            if (!wide) navScope.launch { drawerState.close() }
+        }
+        fun toggleNav() {
+            if (wide) sidebarOpen = !sidebarOpen
+            else navScope.launch { drawerState.open() }
+        }
+        PulseNavFrame(
+            wide = wide,
+            drawerState = drawerState,
+            sidebarOpen = sidebarOpen,
+            drawerContent = {
+                PulseDrawerContent(
+                    selected = selectedSection,
+                    badges = navBadges,
+                    liveTransfers = transfersLive,
+                    isRunning = serverState.isRunning,
+                    deviceName = serverState.deviceName,
+                    onSelect = { selectSection(it) }
+                )
+            }
+        ) {
+          Scaffold(
             containerColor = colorScheme.background,
             snackbarHost = {
                 // Announce every transient message: transfers and connections change while you work.
@@ -335,44 +353,16 @@ fun MainScreen(viewModel: MainViewModel) {
             },
             topBar = {
                 PulseHeader(
+                    title = selectedSection.title,
                     isRunning = serverState.isRunning,
                     deviceName = serverState.deviceName,
+                    onOpenDrawer = { toggleNav() },
                     onToggleServer = { viewModel.toggleServer() },
                     onRefresh = { viewModel.refreshNetwork() },
-                    onOpenSettings = { showSettings = true },
                     modifier = Modifier.statusBarsPadding()
                 )
-            },
-            bottomBar = {
-                if (useRail) {
-                    Spacer(Modifier.height(0.dp))
-                } else {
-                    PulseBottomBar(
-                        selectedTab = selectedTab,
-                        badges = navBadges,
-                        transfersLive = transfersLive,
-                        onSelect = { selectedTab = it }
-                    )
-                }
             }
         ) { paddingValues ->
-            Row(Modifier.fillMaxSize().padding(paddingValues)) {
-                if (useRail) {
-                    PulseSideRail(
-                        selectedId = selectedTab.name,
-                        onSelect = { id -> selectedTab = PulseNavTab.valueOf(id) },
-                        items = PulseNavTab.values().map { tab ->
-                            PulseNavItem(
-                                id = tab.name,
-                                title = tab.title,
-                                icon = tab.icon,
-                                badge = navBadges[tab] ?: 0,
-                                live = tab == PulseNavTab.HISTORY && transfersLive,
-                                tag = tab.tag
-                            )
-                        }
-                    )
-                }
                 // Every section pulls: the lists are live queries, and a swipe is how people ask
                 // "is that really up to date?" without hunting for a button.
                 val ptrState = rememberPullToRefreshState()
@@ -382,13 +372,13 @@ fun MainScreen(viewModel: MainViewModel) {
                     onRefresh = {
                         if (!pulling) {
                             pulling = true
-                            viewModel.pullToRefresh(selectedTab == PulseNavTab.RADAR) { pulling = false }
+                            viewModel.pullToRefresh(selectedSection == PulseSection.DEVICES) { pulling = false }
                         }
                     },
                     state = ptrState,
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
+                        .fillMaxSize()
+                        .padding(paddingValues)
                 ) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -399,9 +389,9 @@ fun MainScreen(viewModel: MainViewModel) {
                         .fillMaxWidth()
                         .widthIn(max = 880.dp)
                 ) {
-            Crossfade(targetState = selectedTab, label = "tab_crossfade") { tab ->
-                when (tab) {
-                    PulseNavTab.SERVE -> ShareScreen(
+            Crossfade(targetState = selectedSection, label = "tab_crossfade") { section ->
+                when (section) {
+                    PulseSection.HOME -> ShareScreen(
                         serverState = serverState,
                         qrBitmap = qrBitmap,
                         sharedFiles = sharedFiles,
@@ -424,7 +414,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         relayHostName = relayHostName
                     )
 
-                    PulseNavTab.RADAR -> RadarScreen(
+                    PulseSection.DEVICES -> RadarScreen(
                         nearbyPeers = displayPeers,
                         connectedPeer = connectedPeer,
                         peerConnecting = peerConnecting,
@@ -448,7 +438,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         onToggleVerified = { pid, verified -> viewModel.setPairVerified(pid, verified) }
                     )
 
-                    PulseNavTab.CHAT -> ChatScreen(
+                    PulseSection.MESSAGES -> ChatScreen(
                         messages = clipMessages,
                         myName = serverState.deviceName,
                         typingUsers = typingUsers,
@@ -493,7 +483,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         }
                     )
 
-                    PulseNavTab.HISTORY -> HistoryScreen(
+                    PulseSection.TRANSFERS -> HistoryScreen(
                         historyList = historyList,
                         onOpenFile = { path -> viewModel.openFile(path) },
                         onShareFile = { path -> viewModel.shareFile(path) },
@@ -502,9 +492,44 @@ fun MainScreen(viewModel: MainViewModel) {
                         onClearAll = { viewModel.clearHistory() }
                     )
 
-                    PulseNavTab.HOTSPOT -> HotspotGuideScreen(
+                    PulseSection.HELP -> HotspotGuideScreen(
                         serverState = serverState
                     )
+
+                    PulseSection.SETTINGS -> SettingsSheet(
+                        serverState = serverState,
+                        pendingUploads = pendingUploads,
+                        pairedCount = pairedDevices.size,
+                        updateInfo = updateInfo,
+                        updateStatus = updateStatus,
+                        themeChoice = themeMode.label,
+                        onThemeChoice = { label ->
+                            com.pulsedrop.app.ui.theme.PulseTheme.entries
+                                .firstOrNull { it.label == label }
+                                ?.let { com.pulsedrop.app.ui.theme.ThemePreference.save(context, it) }
+                        },
+                        onAutoAcceptChange = { viewModel.setAutoAcceptTransfers(it) },
+                        onAcceptUpload = { viewModel.acceptPendingUpload(it) },
+                        onDeclineUpload = { viewModel.declinePendingUpload(it) },
+                        onCheckUpdate = { viewModel.updateManager.check(auto = false) },
+                        onSetPinRequired = { viewModel.setPinRequired(it) },
+                        onRegeneratePin = { viewModel.regeneratePin() },
+                        onOpenDevices = { selectSection(PulseSection.DEVICES) },
+                        onOpenServer = { selectSection(PulseSection.HOME) }
+                    )
+
+                    PulseSection.ABOUT -> AboutScreen()
+
+                    else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        PulseStatePanel(
+                            icon = section.icon,
+                            title = "${section.title} is not here yet",
+                            message = section.comingSoonNote
+                                ?: "This part of the app has not been built. Nothing here pretends.",
+                            actionLabel = section.shortcutLabel,
+                            onAction = { section.shortcut?.let { selectSection(it) } }
+                        )
+                    }
                 }
                 }
                 }
@@ -606,7 +631,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     text = "${serverState.serverUrl} — devices on this network can connect now.",
                     icon = Icons.Default.WifiTethering,
                     action = "Open server screen",
-                    onTap = { selectedTab = PulseNavTab.SERVE }
+                    onTap = { selectedSection = PulseSection.HOME }
                 )
             } else {
                 pushBanner(
@@ -687,7 +712,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 else "%.1f MB · %s".format(fresh.fileSize / 1048576.0, fresh.remoteDevice),
                 icon = Icons.Default.History,
                 action = "See history",
-                onTap = { selectedTab = PulseNavTab.HISTORY }
+                onTap = { selectedSection = PulseSection.TRANSFERS }
             )
         }
 
@@ -899,32 +924,6 @@ fun MainScreen(viewModel: MainViewModel) {
         )
     }
 
-    if (showSettings) {
-        ModalBottomSheet(onDismissRequest = { showSettings = false }) {
-            SettingsSheet(
-                serverState = serverState,
-                pendingUploads = pendingUploads,
-                pairedCount = pairedDevices.size,
-                updateInfo = updateInfo,
-                updateStatus = updateStatus,
-                themeChoice = themeMode.label,
-                onThemeChoice = { label ->
-                    com.pulsedrop.app.ui.theme.PulseTheme.entries
-                        .firstOrNull { it.label == label }
-                        ?.let { com.pulsedrop.app.ui.theme.ThemePreference.save(context, it) }
-                },
-                onAutoAcceptChange = { viewModel.setAutoAcceptTransfers(it) },
-                onAcceptUpload = { viewModel.acceptPendingUpload(it) },
-                onDeclineUpload = { viewModel.declinePendingUpload(it) },
-                onCheckUpdate = { viewModel.updateManager.check(auto = false) },
-                onSetPinRequired = { viewModel.setPinRequired(it) },
-                onRegeneratePin = { viewModel.regeneratePin() },
-                onOpenDevices = { selectedTab = PulseNavTab.RADAR; showSettings = false },
-                onOpenServer = { selectedTab = PulseNavTab.SERVE; showSettings = false }
-            )
-        }
-    }
-
     if (showShareConsent) {
         AlertDialog(
             onDismissRequest = { showShareConsent = false },
@@ -995,49 +994,4 @@ fun MainScreen(viewModel: MainViewModel) {
     }
 }
 
-@Composable
-private fun PulseBottomBar(
-    selectedTab: PulseNavTab,
-    badges: Map<PulseNavTab, Int>,
-    transfersLive: Boolean,
-    onSelect: (PulseNavTab) -> Unit
-) {
-    val colorScheme = MaterialTheme.colorScheme
 
-    NavigationBar(
-        modifier = Modifier.testTag("pulse_bottom_tabs"),
-        containerColor = colorScheme.surface,
-        tonalElevation = 2.dp
-    ) {
-        PulseNavTab.values().forEach { tab ->
-            val selected = tab == selectedTab
-            NavigationBarItem(
-                selected = selected,
-                onClick = { onSelect(tab) },
-                modifier = Modifier.testTag(tab.tag),
-                icon = {
-                    PulseBadgeBox(
-                        count = badges[tab] ?: 0,
-                        live = tab == PulseNavTab.HISTORY && transfersLive,
-                        icon = tab.icon
-                    )
-                },
-                label = {
-                    Text(
-                        text = tab.title,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                    )
-                },
-                alwaysShowLabel = true,
-                colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
-                    selectedIconColor = colorScheme.primary,
-                    selectedTextColor = colorScheme.primary,
-                    indicatorColor = colorScheme.primaryContainer,
-                    unselectedIconColor = colorScheme.onSurfaceVariant,
-                    unselectedTextColor = colorScheme.onSurfaceVariant
-                )
-            )
-        }
-    }
-}

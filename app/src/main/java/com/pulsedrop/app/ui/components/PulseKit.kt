@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.ui.theme.LocalPulseColors
@@ -105,7 +106,7 @@ fun PulseButton(
     )
 
     Surface(
-        onClick = onClick,
+        onClick = { if (enabled && !loading) onClick() },
         modifier = modifier
             .then(if (fullWidth) Modifier.fillMaxWidth() else Modifier)
             .defaultMinSize(minHeight = PulseSizes.touchTarget.dp)
@@ -166,7 +167,7 @@ fun PulseIconButton(
 ) {
     val c = LocalPulseColors.current
     Surface(
-        onClick = onClick,
+        onClick = { if (enabled) onClick() },
         modifier = modifier
             .size(PulseSizes.touchTarget.dp)
             .semantics { contentDescription = label },
@@ -233,7 +234,14 @@ fun PulseSectionHeader(
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
             if (detail != null) {
-                Text(detail, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
         action()
@@ -379,7 +387,14 @@ fun PulseStatus(
                 color = c.textPrimary
             )
             if (detail != null) {
-                Text(detail, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
