@@ -22,7 +22,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-        run: gh release download "$TAG" -p app-release.apk -D "$RUNNER_TEMP"
+        run: gh release download "$TAG" -p app-release.apk -D "$RUNNER_TEMP" -R "$GITHUB_REPOSITORY"
 
       - name: Submit to VirusTotal
         id: vt
