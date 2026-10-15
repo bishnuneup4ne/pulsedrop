@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.ScreenShare
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.AlertDialog
@@ -65,6 +64,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import com.pulsedrop.app.call.formatCallLength
 import com.pulsedrop.app.model.PeerDevice
@@ -80,6 +81,8 @@ import com.pulsedrop.app.ui.screens.ChatScreen
 import com.pulsedrop.app.ui.screens.CompactCallBar
 import com.pulsedrop.app.ui.screens.HistoryScreen
 import com.pulsedrop.app.ui.screens.HotspotGuideScreen
+import com.pulsedrop.app.ui.screens.IncomingCallCard
+import com.pulsedrop.app.ui.screens.IncomingCallStage
 import com.pulsedrop.app.ui.screens.RadarScreen
 import com.pulsedrop.app.ui.screens.ShareScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
@@ -645,52 +648,26 @@ fun MainScreen(viewModel: MainViewModel) {
 
     val incoming = incomingCall
     if (incoming != null) {
-        AlertDialog(
+        // The same screen a browser call rings with - one ringing UI, whatever dialled.
+        Dialog(
             onDismissRequest = { /* must answer explicitly */ },
-            icon = {
-                Icon(
-                    imageVector = if (incoming.video) Icons.Default.Videocam else Icons.Default.Call,
-                    contentDescription = null,
-                    tint = colorScheme.primary
-                )
-            },
-            title = {
-                Text(
-                    if (incoming.confId.isNotBlank()) "Incoming group call"
-                    else "Incoming ${if (incoming.video) "video" else "voice"} call"
-                )
-            },
-            text = {
-                Text(
-                    if (incoming.confId.isNotBlank()) {
-                        "${incoming.name} has started a group call. Everyone you have both paired with " +
-                                "is being invited; the call bridges through their device."
-                    } else {
-                        "${incoming.name} is calling you over your encrypted pairing. " +
-                                "Accept to connect audio${if (incoming.video) ", video and screen sharing" else ""}."
-                    }
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        withCallPermissions(incoming.video) { viewModel.respondToCall(true) }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.testTag("accept_call_btn")
-                ) {
-                    Text("Accept")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { viewModel.respondToCall(false) },
-                    modifier = Modifier.testTag("decline_call_btn")
-                ) {
-                    Text("Decline", color = colorScheme.error)
-                }
-            }
-        )
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            IncomingCallStage(
+                card = IncomingCallCard(
+                    name = incoming.name.ifBlank { "PulseDrop" },
+                    detail = "${if (incoming.video) "Video" else "Voice"} call · ${incoming.peerIp}",
+                    groupNote = if (incoming.confId.isNotBlank())
+                        "Group call — everyone you have both paired with is being invited, " +
+                                "bridged through this device"
+                    else null,
+                    hint = "Accept to connect audio${if (incoming.video) ", video and screen sharing" else ""} " +
+                            "over your encrypted pairing, or decline to send them back to the chat."
+                ),
+                onAccept = { withCallPermissions(incoming.video) { viewModel.respondToCall(true) } },
+                onDecline = { viewModel.respondToCall(false) }
+            )
+        }
     }
 
     val pendingUpdate = updateInfo
