@@ -67,6 +67,10 @@ permanent VirusTotal link:
 https://www.virustotal.com/gui/file/<sha256>
 ```
 
+Live reports for current releases:
+
+- **v1.1.2** — <https://www.virustotal.com/gui/file/6fc547fbc61922502d4b6118b2add02e8653f1f99cee1af1048d05f2b02b4b3a>
+
 `.github/workflows/virustotal-scan.yml` submits each published release to VirusTotal
 automatically and posts the permalink as an issue — set the `VT_API_KEY` repository secret
 (free at VirusTotal → personal API key) to enable it. Without a key the workflow skips quietly.
