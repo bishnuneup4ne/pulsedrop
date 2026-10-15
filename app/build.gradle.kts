@@ -14,8 +14,8 @@ android {
     applicationId = "com.pulsedrop.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 7
-    versionName = "1.5"
+    versionCode = 8
+    versionName = "1.6"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
