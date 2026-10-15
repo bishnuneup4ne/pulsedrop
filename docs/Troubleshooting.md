@@ -38,21 +38,24 @@ in, and typing the **https** address (port + 1) by hand always works as a last r
 
 1. Both devices must be on the **same** Wi-Fi/hotspot (client isolation on some guest
    networks blocks LAN traffic — use the phone's own hotspot instead).
-2. Server must be running on the callee phone (check the server card says "running").
+2. Servers must be running on **both** phones - calls signal peer to peer and are never relayed.
+   Dialling from a phone whose server is off says *"Turn your server on first - calls signal over it"*.
 3. Browser legs need the https port for media; signalling alone can look "connected but
    silent".
 4. If a stale "ringing" bubble never clears, the phone ends it after 35 s automatically.
 
 ## Server stops by itself
 
-Android 15+ enforces a ~6 h per 24 h quota on `dataSync` foreground services. When hit,
-PulseDrop deliberately stops the HTTP server instead of degrading silently — restart the
-server from the app.
+The server runs as a `specialUse` foreground service, so Android 15's `dataSync` hours-per-day cap
+does not apply. If it is stopping, look at notification permission first (Android 13+): without it
+the ongoing notification cannot exist, and the service loses the reason it stays alive. Grant
+notifications for PulseDrop in system settings, restart the app, and start the server from the
+**Server** tab.
 
 ## QR code opens the wrong port
 
-Fixed in 1.1 — older builds hardcoded 8080 in the QR even with a custom port. Update to the
-latest release.
+Fixed in 1.1 — older builds hardcoded 8080 in the QR. Update to the latest release. The port
+itself is not user-configurable today: 8080 for HTTP, 8081 for the secure browser origin.
 
 ## Files don't appear after upload
 
@@ -62,5 +65,5 @@ shows the failing transfer; retry.
 
 ## Still stuck?
 
-Open an issue: https://github.com/bishnuneup4ne/pulsedrop/issues — include app version
-(see About), Android version and what you expected vs what happened.
+Open an issue: https://github.com/bishnuneup4ne/pulsedrop/issues — include app version (the
+version row on the **Server** tab), Android version and what you expected vs what happened.

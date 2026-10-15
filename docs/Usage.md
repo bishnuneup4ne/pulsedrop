@@ -4,7 +4,8 @@
 
 The phone is always the server. The home screen shows:
 
-- **Device name** — what clients see (editable).
+- **Device name** — what clients see. It is shown in the header; renaming it has no UI yet
+  (`MainViewModel.setDeviceName` is wired but unreached).
 - **Address** — the plain `http://<ip>:<port>` URL, plus a QR code. This is the only
   address you ever type; the phone forwards browser visits to the secure port itself.
 - **PIN** — optional 4-digit gate shown when "Require PIN" is on.
@@ -24,7 +25,8 @@ screen share is bounced to `https://<ip>:<port+1>` automatically (see
 
 ## Chat
 
-- **Chats** lists paired devices and open browser sessions.
+- **Chats** lists paired devices and open browser sessions. Message text is held in memory
+  (newest 2000 per thread) and is not written to disk.
 - Messages sync over the LAN only; attachments go through `/chatupload` and are stored
   under `WebDrop_Chat/`.
 - Typing indicators are polled (`/api/typing`) — no push infrastructure involved.
@@ -39,14 +41,16 @@ nobody is intercepting.
 
 - Voice or video, phone-to-phone, phone-to-browser, or mixed.
 - In-call controls: mute, camera toggle, screen share (Android projection capture), end.
-- The browser shows a full-page call stage; the phone shows an overlay you can expand.
+- One ringing screen serves every caller - a paired phone and a browser tab both ring with
+  `IncomingCallStage`; the live call is an overlay you can minimise to a bar.
 - **Refresh safe**: reloading the browser page rejoins the live call.
 - Multiple participants are mixed by the phone's conference bridge (audio + video tiles).
 
 ## History
 
-Every transfer, message and call is recorded locally with timestamps and sizes; the
-history screen lets you re-download received files or clear entries.
+File transfers are recorded locally with timestamps, sizes and the peer involved; the history
+screen lets you filter, re-download received files or clear entries. Chat text is not part of this
+log (it lives in memory), and a finished call ends with a notification rather than an entry.
 
 ## Hotspot guide
 

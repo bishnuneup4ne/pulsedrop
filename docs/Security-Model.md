@@ -49,6 +49,8 @@ transfer.
 
 ## Foreground service
 
-The LAN server runs as a `dataSync` service. Android 15+ enforces a ~6 h per 24 h
-dataSync quota; when it hits, the service stops the HTTP server too rather than serving
-from a dying background process.
+The LAN server runs as a **`specialUse`** foreground service, declared as *"Local file-transfer
+and call server that must stay reachable to browsers and nearby devices"*. That type was chosen
+deliberately: Android 15+ caps `dataSync` services at a few hours per day, and a room server has to
+stay reachable for as long as the user leaves it on. Swiping the app away from Recents does not stop
+it, and a wake lock is held only while a transfer or call is live.

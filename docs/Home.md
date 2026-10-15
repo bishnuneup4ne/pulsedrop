@@ -18,8 +18,8 @@ device pairing is end-to-end encrypted.
 | Area | What it does |
 | --- | --- |
 | File drop | Drag-drop or pick files in the browser; multipart upload with live progress; thumbnails and inline previews |
-| Chat | Real-time chat between paired devices and browser tabs, with attachments and typing indicators |
-| Calls | Voice and video calls, screen sharing, and a conference bridge mixing every participant |
+| Chat | Real-time chat between paired devices and browser tabs: an open room plus encrypted private and group threads, with attachments, replies, typing indicators and message deletion |
+| Calls | Voice and video calls, screen sharing that carries its sound, group calls of up to five devices, and a conference bridge mixing every participant |
 | Browser client | Full responsive web UI served by the phone — upload, files, chats, history and details views |
 | Pairing | QR/NFC-style handshake with ECDH key agreement and an out-of-band safety code |
 | Security | Optional 4-digit PIN with per-IP lockout, AES-GCM upload proofs, self-signed LAN TLS |
@@ -44,7 +44,7 @@ device pairing is end-to-end encrypted.
 
 ## Project facts
 
-- Package: `com.pulsedrop.app` · current release: **v1.1.2** (versionName 1.1, versionCode 3)
+- Package: `com.pulsedrop.app` · current release: **v1.6** (versionName 1.6, versionCode 8)
 - minSdk 24 / targetSdk 36 · Kotlin + Jetpack Compose · NanoHTTPD embedded server
 - License: PolyForm Noncommercial 1.0.0 (see `LICENSE` in the repository)
 - Source: https://github.com/bishnuneup4ne/pulsedrop
