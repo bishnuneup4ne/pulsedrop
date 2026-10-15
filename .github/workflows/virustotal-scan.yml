@@ -22,7 +22,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-        run: gh release download "$TAG" -p app-release.apk -D "$RUNNER_TEMP" -R "$GITHUB_REPOSITORY"
+        run: gh release download "$TAG" -p '*.apk' -D "$RUNNER_TEMP" -R "$GITHUB_REPOSITORY"
 
       - name: Submit to VirusTotal
         id: vt
@@ -35,7 +35,8 @@ jobs:
             echo "skipped=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          APK="$RUNNER_TEMP/app-release.apk"
+          APK=$(find "$RUNNER_TEMP" -maxdepth 1 -name '*.apk' | head -1)
+          if [ -z "$APK" ]; then echo "::error::No APK found in release assets"; exit 1; fi
           SHA=$(sha256sum "$APK" | cut -d' ' -f1)
           api() { curl -s -H "x-apikey: $VT_API_KEY" "$@"; }
           CODE=$(api -o /dev/null -w "%{http_code}" "https://www.virustotal.com/api/v3/files/$SHA")
