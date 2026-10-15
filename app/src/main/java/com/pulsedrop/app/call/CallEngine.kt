@@ -155,9 +155,14 @@ class CallEngine(
     private var camera: Camera? = null
     @Volatile private var cameraParams: Camera.Parameters? = null
     @Volatile private var requestedFront = false
+    /** A lens swap the next successful open should confirm or deny out loud. */
+    @Volatile private var flipPending = false
     @Volatile private var frameRotation = 0
     @Volatile private var lastCamFrameAt = 0L
-    private val cameraFrameMs = 200L
+    /** Ten a second: the frame got cheap enough to pay for, see [startCamera]. */
+    private val cameraFrameMs = 100L
+    /** Reused rotation scratch, so a turn allocates nothing per frame. */
+    private var rotBuf = ByteArray(0)
     /** SurfaceView holder the call overlay attaches to for the local self-preview. */
     @Volatile private var previewHolder: android.view.SurfaceHolder? = null
     private var savedAudioMode = AudioManager.MODE_NORMAL
@@ -1312,8 +1317,9 @@ class CallEngine(
                     override fun onPreviewFrame(data: ByteArray?, camera: Camera?) {
                         if (data == null || !running || !_state.value.cameraOn) return
                         val now = System.currentTimeMillis()
-                        // Sensors fire at 15-30 fps; the peer wants a steady ~5 fps stream.
-                        // Sending every frame is what makes the feed stutter on 2.4 GHz links.
+                        // Sensors fire at 15-30 fps and the peer cannot take all of it over the
+                        // air, so frames are dropped rather than queued: a late frame of a face
+                        // that has already moved is not worth holding the next one for.
                         if (now - lastCamFrameAt < cameraFrameMs) {
                             cam.addCallbackBuffer(data)
                             return
@@ -1323,26 +1329,25 @@ class CallEngine(
                             val p = cameraParams
                             val w = p?.previewSize?.width ?: bw
                             val h = p?.previewSize?.height ?: bh
-                            val yuv = YuvImage(data, ImageFormat.NV21, w, h, null)
-                            val bos = ByteArrayOutputStream()
-                            yuv.compressToJpeg(Rect(0, 0, w, h), 62, bos)
-                            var bytes = bos.toByteArray()
-                            if (frameRotation != 0) {
-                                val src = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                if (src != null) {
-                                    val m = android.graphics.Matrix()
-                                    m.postRotate(frameRotation.toFloat())
-                                    val upright = Bitmap.createBitmap(
-                                        src, 0, 0, src.width, src.height, m, true
-                                    )
-                                    val bos2 = ByteArrayOutputStream()
-                                    upright.compress(Bitmap.CompressFormat.JPEG, 62, bos2)
-                                    bytes = bos2.toByteArray()
-                                    if (upright !== src) src.recycle()
-                                    upright.recycle()
+                            // Turn the bytes, then encode once. This path used to encode, decode
+                            // that JPEG back into a Bitmap, rotate it and encode again: three JPEG
+                            // passes per frame, on the one thread the sensor delivers to, which is
+                            // what made the feed stutter while it looked sharp on a still.
+                            val turn = frameRotation
+                            var fw = w
+                            var fh = h
+                            var src: ByteArray = data
+                            if (turn % 90 == 0 && turn != 0) {
+                                val need = w * h * 3 / 2
+                                if (rotBuf.size < need) rotBuf = ByteArray(need)
+                                Nv21.rotate(data, w, h, turn, rotBuf)?.let { f ->
+                                    src = f.data; fw = f.width; fh = f.height
                                 }
                             }
-                            writeFrame(TYPE_CAMERA, bytes)
+                            val yuv = YuvImage(src, ImageFormat.NV21, fw, fh, null)
+                            val bos = ByteArrayOutputStream()
+                            yuv.compressToJpeg(Rect(0, 0, fw, fh), 70, bos)
+                            writeFrame(TYPE_CAMERA, bos.toByteArray())
                         } catch (e: Exception) { }
                         cam.addCallbackBuffer(data)
                     }
@@ -1356,9 +1361,16 @@ class CallEngine(
                 cam.startPreview()
                 camera = cam
                 _state.value = _state.value.copy(cameraOn = true, video = true, cameraFront = isFront)
+                if (flipPending && isFront != requestedFront) {
+                    // The other lens is on this phone's list but not free, so the flip looked like a
+                    // no-op. Say so rather than let the button sit there having done nothing.
+                    toast.value = "The other camera is busy or not available"
+                }
+                flipPending = false
             } catch (e: Exception) {
                 try { opened?.release() } catch (ignored: Exception) { }
                 camera = null
+                flipPending = false
                 _state.value = _state.value.copy(cameraOn = false)
                 toast.value = "Camera unavailable on this device"
             } finally {
@@ -1391,7 +1403,7 @@ class CallEngine(
     }
 
     @Suppress("DEPRECATION")
-    private fun stopCamera() {
+    private fun stopCamera(andThen: (() -> Unit)? = null) {
         cameraGeneration++
         cameraOpening = false
         val thread = cameraThread
@@ -1402,12 +1414,16 @@ class CallEngine(
             try { cam?.stopPreview() } catch (e: Exception) { }
             try { cam?.release() } catch (e: Exception) { }
             thread?.quitSafely()
+            andThen?.invoke()
             return
         }
         Handler(thread.looper).post {
             try { cam?.stopPreview() } catch (e: Exception) { }
             try { cam?.release() } catch (e: Exception) { }
             thread.quitSafely()
+            // Runs on the thread that just let go of the sensor, so the next open is a follower
+            // and not a competitor.
+            andThen?.invoke()
         }
     }
 
@@ -1515,10 +1531,12 @@ class CallEngine(
     fun switchCamera() {
         requestedFront = !requestedFront
         _state.value = _state.value.copy(cameraFront = requestedFront)
-        if (_state.value.cameraOn) {
-            stopCamera()
-            startCamera()
-        }
+        if (!_state.value.cameraOn) return
+        flipPending = true
+        // The new open has to be asked for after the old release has actually run. Toggling on two
+        // threads at once is what made the flip look dead: the second Camera.open() hit "device
+        // busy", the retry gave up, and the feed ended up off with a toast about the camera.
+        stopCamera { if (running && _state.value.cameraOn) startCamera() }
     }
 
     private fun reset(reason: String) {
@@ -1552,6 +1570,7 @@ class CallEngine(
         try { socket?.close() } catch (e: Exception) { }
         try { serverSocket?.close() } catch (e: Exception) { }
         socket = null; out = null; serverSocket = null
+        flipPending = false
         cid = ""
         mediaHost = ""
         mediaPort = 0

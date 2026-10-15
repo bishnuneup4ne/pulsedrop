@@ -4107,10 +4107,16 @@ object WebClientHtml {
       });
     }
 
+    /* Which lens the browser has, and so whether the self tile should read as a mirror. Declared
+       above the view code because both decide how the tile is painted. */
+    var camFacing = 'user';
+
     /* One place decides what the self tile looks like wherever it currently sits. */
     function syncSelfView() {
       var v = el('callSelf');
-      v.classList.toggle('self-cam', !live.sharing);
+      // Only the front lens is a mirror. Flipping to the rear and still seeing the room reversed is
+      // how the self tile reads as broken, so the flip decides the transform, not just the stream.
+      v.classList.toggle('self-cam', !live.sharing && camFacing === 'user');
       el('callPip').classList.toggle('live', live.camOn || live.sharing);
       el('callCam').classList.toggle('active', live.camOn);
       el('callCam').classList.toggle('slated', !live.camOn);
@@ -4287,7 +4293,7 @@ object WebClientHtml {
     }
 
     function startFrameLoop() {
-      var iv = live.sharing ? 150 : 200;
+      var iv = live.sharing ? 130 : 120;
       if (live.vfTimer && live.vfIv === iv) return;
       if (live.vfTimer) clearInterval(live.vfTimer);
       live.vfIv = iv;
@@ -4300,7 +4306,7 @@ object WebClientHtml {
       if (!v.videoWidth) return;
       if (!live.camOn && !live.sharing) return;
       var share = live.sharing;
-      var w = share ? 1600 : 960;
+      var w = share ? 1600 : 1100;
       if (v.videoWidth < w) w = v.videoWidth;
       var h = Math.max(2, Math.round(v.videoHeight * (w / v.videoWidth)));
       var c = live.canvas || (live.canvas = document.createElement('canvas'));
@@ -4313,7 +4319,7 @@ object WebClientHtml {
         b.arrayBuffer().then(function (ab) {
           pushUp(live.sharing ? T_SCREEN : T_CAMERA, new Uint8Array(ab));
         });
-      }, 'image/jpeg', share ? 0.75 : 0.7);
+      }, 'image/jpeg', share ? 0.75 : 0.72);
     }
 
     function sendCallState() {
@@ -4456,8 +4462,6 @@ object WebClientHtml {
       sendCallState();
     }
 
-    var camFacing = 'user';
-
     function camConstraints() {
       return {
         facingMode: { ideal: camFacing },
@@ -4466,23 +4470,43 @@ object WebClientHtml {
       };
     }
 
-    // Phones have two lenses; laptops only answer one facing, so fall back quietly.
+    // A phone answers facingMode; a laptop answers deviceId and usually nothing else, so asking the
+    // browser for "environment" is why the flip looked dead on a computer with two cameras. Try the
+    // real device list first and only fall back to the lens name.
     function flipCallCamera() {
-      if (!live.camStream) return;
-      var other = camFacing === 'user' ? 'environment' : 'user';
+      if (!live.camStream) { callHint('Turn the camera on first'); return; }
       var md = navigator.mediaDevices;
       if (!md || !md.getUserMedia) return;
-      md.getUserMedia({ video: { facingMode: { exact: other }, width: { ideal: 1280 }, height: { ideal: 720 } } })
-        .then(function (s) {
-          live.camStream.getVideoTracks().forEach(function (t) { t.stop(); });
-          live.camStream = s;
-          camFacing = other;
-          el('callSelf').srcObject = s;
-          if (!live.camOn) toggleCallCamera();
-          syncSelfView();
-          callHint('');
-        })
-        .catch(function () { callHint('Only one camera on this device'); });
+      var vt = live.camStream.getVideoTracks();
+      var was = vt.length && vt[0].getSettings ? vt[0].getSettings() : {};
+      var cur = was.deviceId || '';
+      var pick = function (list) {
+        var cams = (list || []).filter(function (d) { return d.kind === 'videoinput'; });
+        if (cams.length < 2) return null;
+        var at = -1;
+        for (var i = 0; i < cams.length; i++) { if (cams[i].deviceId === cur) at = i; }
+        return cams[(at + 1) % cams.length].deviceId;
+      };
+      var list = md.enumerateDevices
+        ? md.enumerateDevices().then(function (d) { return d; }).catch(function () { return []; })
+        : Promise.resolve([]);
+      list.then(pick).then(function (want) {
+        var video = want
+          ? { deviceId: { exact: want }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          : { facingMode: { exact: camFacing === 'user' ? 'environment' : 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } };
+        return md.getUserMedia({ video: video });
+      }).then(function (s) {
+        live.camStream.getVideoTracks().forEach(function (t) { t.stop(); });
+        live.camStream = s;
+        el('callSelf').srcObject = s;
+        var st = s.getVideoTracks()[0];
+        var set = st && st.getSettings ? st.getSettings() : {};
+        // The browser knows which lens it opened even when the page never asked it by name.
+        if (set.facing === 'user' || set.facing === 'environment') camFacing = set.facing;
+        if (!live.camOn) toggleCallCamera();
+        syncSelfView();
+        callHint('');
+      }).catch(function () { callHint('Only one camera on this device'); });
     }
 
     function toggleCallCamera() {
