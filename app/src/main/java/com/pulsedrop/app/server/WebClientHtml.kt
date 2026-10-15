@@ -17,7 +17,7 @@ object WebClientHtml {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <title>PulseDrop - Private Local File Share</title>
   <style>
     /* ===== Premium light app shell. No CDN, no dark mode, no gradients-as-decoration. ===== */
@@ -40,6 +40,7 @@ object WebClientHtml {
       --hairline-strong: #CBD5E1;
       --error: #DC2626;
       --error-tint: #FEE2E2;
+      --warn: #B45309; --warn-tint: #FEF3C7;
       --success: #059669;
       --t-blue-bg: #EFF6FF;   --t-blue-fg: #1D4ED8;
       --t-green-bg: #D1FAE5;  --t-green-fg: #047857;
@@ -101,6 +102,19 @@ object WebClientHtml {
     }
     .topbar-url:hover { background: var(--accent-tint); color: var(--accent); border-color: var(--accent); }
     .topbar-url span { overflow: hidden; text-overflow: ellipsis; }
+    .topbar-act {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      min-width: 36px; height: 34px; padding: 0 9px;
+      background: transparent; border: 1px solid var(--hairline); border-radius: 10px;
+      color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    }
+    .topbar-act:hover { background: var(--accent-tint); color: var(--accent); border-color: var(--accent); }
+    .topbar-act.secure { color: var(--warn); border-color: var(--warn-tint); background: var(--warn-tint); }
+    .topbar-act.secure:hover { filter: brightness(0.96); }
+    .topbar-act.spin svg { animation: pdspin 0.8s linear infinite; }
+    @keyframes pdspin { to { transform: rotate(360deg); } }
+    .status-pill.me { background: var(--bg); color: var(--muted); border: 1px solid var(--hairline); cursor: pointer; }
+    .status-pill.me b { font-weight: 700; color: var(--ink); }
 
     /* ===== Two-pane shell ===== */
     .shell { flex: 1; min-height: 0; display: flex; }
@@ -272,9 +286,12 @@ object WebClientHtml {
     .icon-btn.soft:hover { background: var(--accent-tint); color: var(--accent); border-color: var(--accent); }
     .folder-toggle {
       appearance: none; border: none; background: transparent; cursor: pointer;
-      color: var(--accent); font-size: 12px; font-weight: 700; padding: 0; text-align: left;
+      color: var(--accent); font-size: 12px; font-weight: 700;
+      padding: 7px 10px; margin: -7px 0; text-align: left; flex-shrink: 0;
+      border-radius: 8px;
     }
     .folder-toggle:hover { text-decoration: underline; }
+    .folder-toggle:active { background: var(--accent-tint); }
     .folder-contents { display: none; flex-direction: column; gap: 5px; border-top: 1px dashed var(--hairline); padding-top: 8px; }
     .folder-contents.open { display: flex; }
     .f-row {
@@ -363,7 +380,7 @@ object WebClientHtml {
     .rail-title { font-size: 17px; font-weight: 800; letter-spacing: -0.5px; }
     .rail-title small { font-size: 11px; font-weight: 600; color: var(--muted); margin-left: 6px; letter-spacing: 0; }
     .icon-round {
-      appearance: none; width: 34px; height: 34px; border-radius: 50%;
+      appearance: none; width: 38px; height: 38px; border-radius: 50%;
       border: 1px solid var(--hairline); background: var(--surface); color: var(--muted);
       display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
       transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -555,11 +572,14 @@ object WebClientHtml {
     /* ===== Auth modal ===== */
     .overlay {
       position: fixed; inset: 0; background: rgba(15,23,42,0.45);
-      display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px;
+      display: flex; align-items: flex-start; justify-content: center; z-index: 1000; padding: 20px;
+      /* A centred flex child that does not fit is clipped on both ends; auto margins plus
+         scrolling keep the PIN field reachable when the keyboard takes half the screen. */
+      overflow-y: auto;
     }
     .modal {
       background: var(--surface); border-radius: 22px; padding: 28px;
-      width: 100%; max-width: 380px; text-align: center;
+      width: 100%; max-width: 380px; text-align: center; margin: auto;
       display: flex; flex-direction: column; gap: 14px; box-shadow: var(--shadow-2);
     }
     .modal-icon {
@@ -586,6 +606,12 @@ object WebClientHtml {
       transition: opacity 0.2s, transform 0.2s; z-index: 1100; max-width: 90vw; text-align: center;
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    /* On a phone the bottom edge is spoken for by the tab bar (and, in a call, the dock),
+       so a toast parked there reads as part of them and hides the controls behind it. */
+    @media (max-width: 959px) {
+      .toast { bottom: calc(env(safe-area-inset-bottom, 0px) + 78px); }
+      .toast.in-call { bottom: calc(env(safe-area-inset-bottom, 0px) + 142px); }
+    }
 
     /* ===== Left navigation rail ===== */
     .nav-rail {
@@ -659,6 +685,10 @@ object WebClientHtml {
     .table tr:last-child td { border-bottom: none; }
     .table .who { font-weight: 700; }
     .table .ip { color: var(--muted); font-variant-numeric: tabular-nums; }
+    /* Five columns will not squeeze into a phone. Let the table slide sideways rather than
+       crushing an address into three wrapped lines. */
+    #peersWrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    #peersWrap .table { min-width: 540px; }
     .kv { display: grid; grid-template-columns: 150px 1fr; gap: 8px 14px; font-size: 13px; }
     .kv dt { color: var(--muted); font-weight: 600; }
     .kv dd { margin: 0; font-weight: 700; word-break: break-word; }
@@ -742,7 +772,7 @@ object WebClientHtml {
     .feed-slot.small .pip-hint { display: flex; }
     .pip-flip {
       position: absolute; z-index: 3; right: 7px; top: 7px; display: none;
-      width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer;
+      width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer;
       align-items: center; justify-content: center;
       color: #E2E8F0; background: rgba(7, 11, 20, .62);
     }
@@ -750,7 +780,7 @@ object WebClientHtml {
     .pip-flip svg { pointer-events: none; }
     .call-dock {
       position: relative; z-index: 5; display: flex; align-items: center; justify-content: center;
-      gap: 16px; padding: 22px 18px 30px;
+      gap: 16px; padding: 22px 18px calc(30px + env(safe-area-inset-bottom, 0px));
       background: linear-gradient(0deg, rgba(7, 11, 20, .92), rgba(7, 11, 20, .4) 65%, rgba(7, 11, 20, 0));
     }
     .dock-cell { display: flex; flex-direction: column; align-items: center; gap: 7px; }
@@ -877,8 +907,12 @@ object WebClientHtml {
     /* ===== Mobile: single column + bottom tabs, chat fills viewport ===== */
     @media (max-width: 959px) {
       .topbar { padding: 0 12px; gap: 8px; }
-      .topbar-device { max-width: 34vw; }
-      .topbar-url { max-width: 30vw; }
+      .topbar-device { max-width: 30vw; }
+      /* Two buttons and an address will not fit above a phone's own name - the identity chip
+         lives in the Details view too, so it yields here. */
+      .topbar-url { max-width: 20vw; }
+      #meChip { display: none !important; }
+      .topbar-act.secure span { display: none; }
       .tabbar { display: flex; }
       .nav-rail { display: none; }
       .shell { display: block; position: relative; }
@@ -895,6 +929,10 @@ object WebClientHtml {
       .pane-chat:not(.open-thread) .convo { display: none; }
       .convo-back { display: inline-flex; }
       .bubble-col { max-width: 82%; }
+      /* Under 16px, iOS Safari zooms the page to the text on focus and the visitor loses
+         the view they were looking at. */
+      input, textarea, select { font-size: 16px; }
+      .search-box input { font-size: 16px; }
       .emoji-pop { grid-template-columns: repeat(6, 1fr); }
     }
   </style>
@@ -925,6 +963,16 @@ object WebClientHtml {
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
         <span id="serverUrl"></span>
       </button>
+      <!-- Browsers only hand out mic/camera/screen on a secure origin, so an http tab needs a
+           way to get there the moment the phone's https port comes up - not just a toast. -->
+      <button class="topbar-act secure" id="secureBtn" style="display: none" aria-label="Switch to secure mode" onclick="goSecure()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+        <span>Secure mode</span>
+      </button>
+      <div class="status-pill me" id="meChip" style="display: none" title="The address this phone sees you as"><span id="meChipTxt">You</span></div>
+      <button class="topbar-act" id="refreshBtn" aria-label="Refresh" title="Refresh" onclick="manualRefresh()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+      </button>
     </header>
 
     <div class="shell">
@@ -952,6 +1000,10 @@ object WebClientHtml {
         <button class="nav-btn" id="navHistory" aria-label="History" data-view="history" aria-current="false" onclick="setView('history')">
           <span class="nav-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></span>
           <span class="nav-lab">History</span>
+        </button>
+        <button class="nav-btn" id="navDetails" aria-label="Details" data-view="details" aria-current="false" onclick="setView('details')">
+          <span class="nav-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>
+          <span class="nav-lab">Details</span>
         </button>
         <button class="nav-btn" id="railToggle" aria-label="Collapse or expand the menu" title="Collapse menu" onclick="toggleRail()" style="margin-top:auto">
           <span class="nav-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 7-5 5 5 5"/></svg></span>
@@ -1432,6 +1484,8 @@ object WebClientHtml {
     function toast(msg) {
       var t = el('toast');
       t.textContent = msg;
+      // Lift the toast clear of the call dock while a call owns the bottom of the screen.
+      t.classList.toggle('in-call', typeof call !== 'undefined' && !!call && !!call.cid);
       t.classList.add('show');
       clearTimeout(t._t);
       t._t = setTimeout(function () { t.classList.remove('show'); }, 2600);
@@ -1629,8 +1683,65 @@ object WebClientHtml {
         if (!res.ok) return;
         var info = await res.json();
         myIp = info.clientIp || '';
+        renderMyIdentity();
         if (info.version) el('brandSub').textContent = 'Connected to ' + info.deviceName + ' - v' + info.version;
+        noteSecureAvailability(info);
       } catch (e) {}
+    }
+
+    /* ===== Getting an http tab onto the secure origin =====
+       A tab on plain can see and hear but cannot send a mic, camera or screen, and the phone's
+       https port may bind a moment after the page loaded. So the port's arrival is polled, and the
+       tab offers the jump rather than only explaining the limitation. */
+    var tlsPortInfo = 0, secureOffered = false, needsSecure = false;
+
+    function noteSecureAvailability(info) {
+      if (info.tlsPort) tlsPortInfo = info.tlsPort;
+      if (info.secure) { el('secureBtn').style.display = 'none'; return; }
+      if (!info.tlsUp) return;
+      if (!secureOffered) {
+        secureOffered = true;
+        el('secureBtn').style.display = 'inline-flex';
+        toast('Secure mode is ready - full calls need one tap on it');
+      }
+      // Someone already tried to use the camera or screen and was refused: move them across
+      // on their own, but never yank a tab that is mid-call or mid-upload.
+      if (needsSecure && !live.busy && !uploading) goSecure();
+    }
+
+    function goSecure() {
+      if (location.protocol === 'https:') return;
+      var host = location.hostname;
+      var port = tlsPortInfo || (parseInt(location.port || '8080', 10) + 1);
+      needsSecure = true;
+      el('secureBtn').classList.add('spin');
+      toast('Opening the secure address - accept the certificate warning, it is this phone');
+      setTimeout(function () { location.replace('https://' + host + ':' + port + '/'); }, 500);
+    }
+
+    function renderMyIdentity() {
+      var chip = el('meChip'), txt = el('meChipTxt');
+      if (!txt) return;
+      txt.textContent = '';
+      if (!myIp) { chip.style.display = 'none'; return; }
+      txt.appendChild(document.createTextNode('You '));
+      var b = document.createElement('b');
+      b.textContent = myIp;
+      txt.appendChild(b);
+      chip.onclick = function () { copyToClipboard(myIp); };
+    }
+
+    /* ===== Manual refresh ===== */
+    async function manualRefresh() {
+      var btn = el('refreshBtn');
+      btn.classList.add('spin');
+      try {
+        await Promise.all([fetchFiles(), fetchPeers(), fetchInfo(), fetchThreads(), fetchMessages()]);
+        toast('Up to date');
+      } catch (e) {
+        toast('Could not reach the phone - try again');
+      }
+      setTimeout(function () { btn.classList.remove('spin'); }, 450);
     }
 
     function setConnected(ok) {
@@ -2941,6 +3052,11 @@ object WebClientHtml {
     el('lbZoomPct').addEventListener('click', lbReset);
     el('lbFit').addEventListener('click', lbReset);
     el('lbRotate').addEventListener('click', lbRotate);
+    // Tapping the dark area around a preview is how everyone expects it to close, and on a
+    // phone the close button can sit under the browser's own chrome.
+    el('lightbox').addEventListener('click', function (e) {
+      if (e.target === this || e.target === el('lbStage')) closePreview();
+    });
 
     var lbDrag = null;
     el('lbStage').addEventListener('pointerdown', function (e) {
@@ -3333,6 +3449,12 @@ object WebClientHtml {
         ['You appear as', MY_NAME],
         ['Server address', location.href],
         ['Your address', myIp || '-'],
+        [
+          'Secure mode',
+          window.isSecureContext
+            ? 'On - camera, mic and screen sharing available'
+            : 'Off - this tab can receive calls but not send camera or mic'
+        ],
         ['Access', REQUIRES_PIN ? 'PIN protected' : 'Open to this network'],
         ['Files hosted', String(allFiles.length)],
         ['Hosted size', formatBytes(bytes)],
@@ -3475,12 +3597,24 @@ object WebClientHtml {
         selfPrimary || el('callRemote').style.display === 'block');
     }
 
-    function flipSlots() { flipped = !flipped; layoutSlots(); }
+    function flipSlots() {
+      // The swap promotes this tab's own feed onto the stage. With the camera off and no screen
+      // shared there is no feed, and the call would look like a black screen with no way back.
+      if (!flipped && !live.camOn && !live.sharing) {
+        callHint('Your camera is off - turn it on to put yourself in the big view');
+        return;
+      }
+      flipped = !flipped;
+      layoutSlots();
+    }
 
     function wireSlot(node) {
       var st = null;
       node.addEventListener('pointerdown', function (e) {
         if (!node.classList.contains('small')) return;
+        // The camera-switch button lives inside the tile: without this its tap would also
+        // register as a tile tap and swap the feeds out from under the press.
+        if (e.target.closest('.pip-flip')) return;
         e.preventDefault();
         try { node.setPointerCapture(e.pointerId); } catch (err) {}
         st = { x: e.clientX, y: e.clientY, ox: node._dx || 0, oy: node._dy || 0, moved: false };
@@ -3793,7 +3927,9 @@ object WebClientHtml {
       pumpDown(live.downAbort.signal);
       var md = navigator.mediaDevices;
       if (!md || !md.getUserMedia) {
-        callHint('Browsers only hand over the mic and camera on https or localhost, so this tab can see and hear but not send.');
+        needsSecure = true;
+        callHint('Browsers only hand over the mic and camera on https - tap "Secure mode" above, then answer the call again.');
+        fetchInfo();
         return;
       }
       try {
@@ -3810,7 +3946,13 @@ object WebClientHtml {
           syncSelfView();
         }
       } catch (e) {
-        callHint('Microphone or camera was blocked - the call still receives voice and video.');
+        if (!window.isSecureContext) {
+          needsSecure = true;
+          callHint('This page is on http, so the browser will not release the mic or camera. Tap "Secure mode" above and answer again.');
+          fetchInfo();
+        } else {
+          callHint('Microphone or camera was blocked - the call still receives voice and video.');
+        }
       }
     }
 
@@ -3876,7 +4018,15 @@ object WebClientHtml {
     function toggleCallShare() {
       if (live.sharing) { stopCallShare(); return; }
       var md = navigator.mediaDevices;
-      if (!md || !md.getDisplayMedia) { callHint('This browser will not share the screen from this page'); return; }
+      if (!md || !md.getDisplayMedia) {
+        // The picker is hidden outright on an insecure origin, so this is the usual reason a
+        // visitor "cannot share" - point them at the fix instead of at a dead end.
+        needsSecure = true;
+        callHint('Screen sharing is only offered on https. Tap "Secure mode" above and try again.');
+        el('secureBtn').style.display = 'inline-flex';
+        fetchInfo();
+        return;
+      }
       md.getDisplayMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 15 } }, audio: false }).then(function (s) {
         live.shareStream = s;
         live.sharing = true;
@@ -4029,11 +4179,16 @@ object WebClientHtml {
     }
     fetchMessages();
     // Plain http cannot send a mic or camera out of a browser. The phone normally bounces
-    // http visits to the https port automatically; this only shows if that listener is down.
+    // http visits to the https port automatically; this only shows if that listener is still
+    // coming up, so keep asking until it is and offer the jump instead of reciting an address.
     if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
       setTimeout(function () {
-        toast('This page is on http, so calls can ring and receive but not send. The secure address is https://' + location.hostname + ':' + (parseInt(location.port || '80', 10) + 1) + '/ - open that for full calls.');
+        toast('This page is on http, so calls can ring and receive but not send. "Secure mode" appears here once the phone opens its https port.');
       }, 1400);
+      var secureWatch = setInterval(function () {
+        if (secureOffered) { clearInterval(secureWatch); return; }
+        fetchInfo();
+      }, 6000);
     }
   </script>
 </body>

@@ -40,7 +40,7 @@ data class WebCall(
     val updatedAt: Long = System.currentTimeMillis(),
     /** True when the phone dialled the browser, so each side knows which end it is. */
     val outgoing: Boolean = false,
-    /** Paired devices to invite once this is answered - a group call dialled from a browser. */
+    /** Paired devices to invite once this is answered - a group call bridged through a browser tab. */
     val groupPids: List<String> = emptyList()
 )
 
@@ -54,6 +54,7 @@ interface ServerTransferListener {
 }
 
 private const val PIN_MAX_ATTEMPTS = 8
+private const val TLS_MAX_ATTEMPTS = 20
 private const val PIN_LOCKOUT_MS = 60_000L
 private const val PIN_LOCKOUT_MAX_STEPS = 4
 private const val SERVER_CHAT_RETENTION = 2000
@@ -258,14 +259,15 @@ class PulseDropServer(
     }
 
     /** The phone dials a browser tab: same channel, opposite direction. */
-    fun ringWebClient(ip: String, name: String, video: Boolean): WebCall {
+    fun ringWebClient(ip: String, name: String, video: Boolean, groupPids: List<String> = emptyList()): WebCall {
         val call = WebCall(
             cid = UUID.randomUUID().toString(),
             name = name,
             ip = ip,
             video = video,
             state = "ringing",
-            outgoing = true
+            outgoing = true,
+            groupPids = groupPids
         )
         webCall = call
         listener.onWebCall(call)
@@ -338,6 +340,7 @@ class PulseDropServer(
     @Volatile private var tlsServer: NanoHTTPD? = null
     @Volatile private var tlsHosts: List<String> = emptyList()
     @Volatile private var tlsStopped = false
+    private var tlsRetryAtMs = 0L
     private var tlsFactory: javax.net.ssl.SSLServerSocketFactory? = null
     private var tlsFactoryHosts: List<String> = emptyList()
 
@@ -381,9 +384,11 @@ class PulseDropServer(
         // RSA keypair generation is not free, and start() can be reached from a click handler.
         Thread {
             // A restart can collide with the previous delegate's closing socket; settle
-            // and retry instead of silently losing the secure origin.
+            // and retry instead of silently losing the secure origin. A browser on plain http
+            // has no mic, camera or screen access at all, so keep trying long after the
+            // first few ports free up rather than giving up for the rest of the session.
             var attempt = 0
-            while (!tlsStopped && ++attempt <= 4) {
+            while (!tlsStopped && ++attempt <= TLS_MAX_ATTEMPTS) {
                 try {
                     val hosts = listOf(NetworkUtils.getLocalIpAddress()).filter { it.isNotBlank() } + tlsHosts
                     // Reuse the keypair across retries so the browser's cert warning
@@ -420,13 +425,30 @@ class PulseDropServer(
                 } catch (e: Exception) {
                     e.printStackTrace()
                     try {
-                        Thread.sleep(400L * attempt)
+                        Thread.sleep(minOf(400L * attempt, 4_000L))
                     } catch (ie: InterruptedException) {
                         return@Thread
                     }
                 }
             }
         }.apply { isDaemon = true }.start()
+    }
+
+    /** True once the https counterpart is actually listening. */
+    fun tlsUp(): Boolean = tlsServer != null
+
+    /**
+     * A visitor stuck on plain http has no mic, camera or screen access, so their request is a
+     * good moment to try again - the port that refused us earlier may have freed up by now.
+     */
+    fun retryTls() {
+        if (tlsServer != null || tlsStopped) return
+        val now = System.currentTimeMillis()
+        synchronized(this) {
+            if (now < tlsRetryAtMs) return
+            tlsRetryAtMs = now + 5_000L
+        }
+        ensureTls()
     }
 
     fun setSharedFiles(files: List<SharedFile>) {
@@ -636,6 +658,9 @@ class PulseDropServer(
                 addCorsHeaders(res)
                 return res
             }
+            // Landing here means the secure port is not up yet; a fresh page load is a good
+            // moment to try, and the tab's own poll will offer the switch once it binds.
+            if (!secureOrigin.get()) retryTls()
             val html = WebClientHtml.getHtml(deviceName, isPinRequired && !pinCode.isNullOrBlank())
             val res = newFixedLengthResponse(Response.Status.OK, "text/html; charset=UTF-8", html)
             addCorsHeaders(res)
@@ -644,12 +669,18 @@ class PulseDropServer(
 
         // API Info
         if (uri == "/api/info" && method == Method.GET) {
+            // Plain http has no mic/camera/screen, so a tab polling this is telling us it is
+            // locked out: use the chance to bring the secure listener back if it never bound.
+            if (!secureOrigin.get()) retryTls()
             val json = JSONObject().apply {
                 put("deviceName", deviceName)
                 put("requiresPin", isPinRequired && !pinCode.isNullOrBlank())
                 put("port", port)
                 put("clientIp", clientIp)
                 put("version", "2.0.0")
+                put("secure", secureOrigin.get())
+                put("tlsUp", tlsUp())
+                put("tlsPort", tlsPort)
             }
             val res = newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
             addCorsHeaders(res)

@@ -116,6 +116,7 @@ fun ChatScreen(
     onStartCall: (String, Boolean) -> Unit,
     onStartGroupCall: (List<String>, Boolean) -> Unit,
     onStartBrowserCall: (String, String, Boolean) -> Unit,
+    onCallEveryone: (List<String>, String?, String?, Boolean) -> Unit,
     onSend: (String, String?) -> Unit,
     onTyping: (Boolean) -> Unit,
     onAttach: (String?) -> Unit,
@@ -147,6 +148,8 @@ fun ChatScreen(
                 val ip = active.browserIp
                 when {
                     pid != null -> onStartCall(pid, video)
+                    audience == "all" ->
+                        onCallEveryone(active.memberPids, ip, active.browserName ?: active.title, video)
                     audience == "browser" && ip != null ->
                         onStartBrowserCall(ip, active.browserName ?: active.title, video)
                     active.memberPids.isNotEmpty() -> onStartGroupCall(active.memberPids, video)
@@ -891,47 +894,32 @@ private fun ConversationView(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            // Every thread with somebody on the other end gets a dial: paired devices ring as
-            // calls, browser tabs ring as web calls. The room is both at once, so it carries a
-            // pair of buttons for each audience rather than letting one hide the other.
+            // Every thread with somebody on the other end gets one dial pair. The room holds both
+            // paired devices and browser tabs, and one call can only have one host, so a second
+            // pair of buttons would just be a second way to be confused - the room's pair rings
+            // everyone through whichever end picks up.
             val isPair = thread.pid != null
-            val dials = when {
-                isPair -> listOf(Triple("call_audio_btn", "call_video_btn", "pair"))
-                else -> buildList {
-                    if (thread.memberPids.isNotEmpty()) {
-                        add(Triple("group_call_btn", "group_video_btn", "group"))
-                    }
-                    if (thread.browserIp != null) {
-                        add(Triple("browser_call_btn", "browser_video_btn", "browser"))
-                    }
-                }
-            }
-            if (dials.isNotEmpty()) {
-                dials.forEachIndexed { index, (voiceTag, videoTag, audience) ->
-                    if (index > 0) Spacer(modifier = Modifier.width(10.dp))
-                    val tint = if (isPair) colorScheme.secondaryContainer else colorScheme.primaryContainer
-                    val content = if (isPair) colorScheme.onSecondaryContainer else colorScheme.onPrimaryContainer
-                    val whom = when (audience) {
-                        "group" -> "everyone"
-                        "browser" -> "browser"
-                        else -> ""
-                    }
-                    HeaderCallButton(
-                        icon = Icons.Default.Call,
-                        description = if (whom.isEmpty()) "Voice call" else "Call $whom",
-                        tag = voiceTag,
-                        container = tint,
-                        content = content
-                    ) { onStartCall(audience, false) }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    HeaderCallButton(
-                        icon = Icons.Default.Videocam,
-                        description = if (whom.isEmpty()) "Video call" else "Call $whom with video",
-                        tag = videoTag,
-                        container = tint,
-                        content = content
-                    ) { onStartCall(audience, true) }
-                }
+            val canDial = isPair || thread.memberPids.isNotEmpty() || thread.browserIp != null
+            if (canDial) {
+                val audience = if (isPair) "pair" else if (thread.memberPids.isNotEmpty() || thread.browserIp != null) "all" else "group"
+                val whom = if (isPair) "" else "everyone"
+                val tint = if (isPair) colorScheme.secondaryContainer else colorScheme.primaryContainer
+                val content = if (isPair) colorScheme.onSecondaryContainer else colorScheme.onPrimaryContainer
+                HeaderCallButton(
+                    icon = Icons.Default.Call,
+                    description = if (whom.isEmpty()) "Voice call" else "Call $whom",
+                    tag = if (isPair) "call_audio_btn" else "group_call_btn",
+                    container = tint,
+                    content = content
+                ) { onStartCall(audience, false) }
+                Spacer(modifier = Modifier.width(6.dp))
+                HeaderCallButton(
+                    icon = Icons.Default.Videocam,
+                    description = if (whom.isEmpty()) "Video call" else "Call $whom with video",
+                    tag = if (isPair) "call_video_btn" else "group_video_btn",
+                    container = tint,
+                    content = content
+                ) { onStartCall(audience, true) }
             }
             if (onDisband != null) {
                 Spacer(modifier = Modifier.width(6.dp))

@@ -999,6 +999,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         server.ringWebClient(ip, name, video)
     }
 
+    /**
+     * One dial for the room, which has two kinds of guest: paired devices and browser tabs.
+     * With a tab in the list it rings first and the devices join through it as one conference,
+     * so the caller never has to know which audience a button was for.
+     */
+    fun callEveryone(memberPids: List<String>, browserIp: String?, browserName: String?, video: Boolean) {
+        if (!_serverState.value.isRunning) {
+            _uiMessage.value = "Turn your server on first - calls signal over it"
+            return
+        }
+        if (_webCall.value != null || callEngine.state.value.active || callEngine.incomingCall.value != null) {
+            _uiMessage.value = "Another call is already up"
+            return
+        }
+        if (browserIp == null) {
+            startGroupCall(memberPids, video)
+            return
+        }
+        serverInstance?.ringWebClient(browserIp, browserName?.takeIf { it.isNotBlank() } ?: "Browser", video, memberPids)
+    }
+
     fun answerWebCall(accept: Boolean) {
         val call = _webCall.value ?: return
         serverInstance?.updateWebCall(call.cid, if (accept) "accepted" else "declined")

@@ -370,6 +370,11 @@ fun MainScreen(viewModel: MainViewModel) {
                         onStartBrowserCall = { ip, name, video ->
                             viewModel.callWebClient(ip, name, video)
                         },
+                        onCallEveryone = { pids, ip, name, video ->
+                            withCallPermissions(video) {
+                                viewModel.callEveryone(pids, ip, name, video)
+                            }
+                        },
                         onSend = { text, threadId ->
                             viewModel.sendClipMessage(text, threadId?.takeIf { it != "room" })
                         },
