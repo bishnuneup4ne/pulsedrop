@@ -4,10 +4,12 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import androidx.core.content.FileProvider
 import com.pulsedrop.app.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,15 +74,23 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
 
     private var updateVersion = ""
 
+    /** When a check last actually reached GitHub and read an answer, on the monotonic clock. */
+    private var _lastSuccessAt = 0L
+    val lastSuccessAt: Long get() = _lastSuccessAt
+
+    /** A banner the user closed stays closed for that version, until they ask again on purpose. */
+    private var dismissedVersion = ""
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
 
-    fun check(auto: Boolean) {
+    /** The launched lookup, so a caller that cares can wait for it instead of guessing. */
+    fun check(auto: Boolean): Job {
         if (_downloads.value == null) fetchDownloads()
-        scope.launch(Dispatchers.IO) {
+        return scope.launch(Dispatchers.IO) {
             try {
                 val req = Request.Builder()
                     .url(LATEST_URL)
@@ -93,6 +103,8 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
                     }
                     val body = resp.body?.string() ?: return@use
                     val json = JSONObject(body)
+                    // Reached the answer, not just the socket: this is the stamp that earns a rest.
+                    _lastSuccessAt = SystemClock.elapsedRealtime()
                     val tag = json.optString("tag_name")
                     val version = tag.removePrefix("v")
                     if (!isNewer(version, BuildConfig.VERSION_NAME)) {
@@ -101,6 +113,16 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
                         _downloadedApk.value = null
                         if (!auto) _statusMessage.value = "You are on the latest version (${BuildConfig.VERSION_NAME})"
                         return@use
+                    }
+                    if (version == dismissedVersion) {
+                        if (auto) {
+                            // A banner the user closed is not a bug to re-report on the next reconnect.
+                            updateVersion = ""
+                            _update.value = null
+                            return@use
+                        }
+                        // Asking on purpose overrides having closed it earlier.
+                        dismissedVersion = ""
                     }
                     val assets = json.optJSONArray("assets") ?: org.json.JSONArray()
                     var url = ""
@@ -222,8 +244,9 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
     }
 
     fun dismiss() {
-        _update.value = null
+        _update.value?.versionName?.let { dismissedVersion = it }
         _progress.value = null
+        _update.value = null
     }
 
     fun consumeStatus() {

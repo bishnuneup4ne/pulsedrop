@@ -167,6 +167,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val remoteFrames = callEngine.remoteFrames
 
     val updateManager = com.pulsedrop.app.update.UpdateManager(context, viewModelScope)
+    private val updateWatch = com.pulsedrop.app.update.UpdateWatch(context, updateManager)
 
     // ---- top-bar call notifications ---------------------------------------
 
@@ -427,10 +428,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         startCallNotifications()
 
-        // Every app launch quietly looks for a newer release on GitHub.
+        // Every app launch quietly looks for a newer release on GitHub, and keeps looking: a phone
+        // that opened on a plane finds out when the Wi-Fi lands rather than at the next launch.
         viewModelScope.launch {
             kotlinx.coroutines.delay(4_000L)
-            updateManager.check(auto = true)
+            updateWatch.start()
         }
         viewModelScope.launch {
             updateManager.statusMessage.collect { msg ->
@@ -1596,6 +1598,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // The server is owned by its foreground service, not this ViewModel — clearing
         // the ViewModel (config change, process trim) must not tear the server down.
         discoveryManager.stopDiscovery()
+        updateWatch.stop()
         callNotifications.cancel(CALL_NOTIF_ID)
     }
 
