@@ -3,6 +3,7 @@ package com.pulsedrop.app.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -82,15 +83,15 @@ fun PulseHeader(
                 Box(
                     modifier = Modifier
                         .size(46.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.White),
+                        .clip(RoundedCornerShape(16.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
+                    // A full-colour vector logo: Icon would flatten its gradient to a tint,
+                    // which is what made this tile render as a blank white square. Image keeps it.
+                    Image(
                         painter = painterResource(id = R.drawable.ic_localdrop_logo),
                         contentDescription = "PulseDrop logo",
-                        tint = Color.Unspecified,
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(44.dp)
                     )
                 }
 

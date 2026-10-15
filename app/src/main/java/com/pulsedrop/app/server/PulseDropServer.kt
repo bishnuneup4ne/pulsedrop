@@ -1116,6 +1116,13 @@ class PulseDropServer(
             if (method == Method.GET) {
                 val arr = JSONArray()
                 val groupIds = webThreads.map { it.id }.toSet()
+                // The phone hosting this server is the one every tab dials; a browser reads and
+                // writes that conversation under the host's own address, "ip:<selfIp>". The tab's
+                // own messages on it are caught by `mine`, but the phone's replies would otherwise
+                // be dropped below (the thread key is the host, not the tab) - so remember the host
+                // book to let those replies back to the tab that is watching it.
+                val hostIp = NetworkUtils.getLocalIpAddress()
+                val hostBook = "ip:" + hostIp
                 synchronized(messages) {
                     for (m in messages) {
                         // A browser sees the public room, its own address book, the groups
@@ -1125,7 +1132,12 @@ class PulseDropServer(
                         // which stays on the phones.
                         val thread = m.threadId
                         val mine = m.clientIp == clientIp
-                        if (thread != null && !mine && thread != "ip:$clientIp" && thread !in groupIds) continue
+                        // A reply the phone wrote into its own address book belongs to whichever
+                        // tab is watching it - the phone is not a browser and so never matches
+                        // `thread == "ip:<tab>"`, yet without this the tab sees a silent phone.
+                        val fromHost = thread == hostBook && m.clientIp == hostIp
+                        if (thread != null && !mine && !fromHost &&
+                            thread != "ip:$clientIp" && thread !in groupIds) continue
                         arr.put(JSONObject().apply {
                             put("id", m.id)
                             put("text", m.text)

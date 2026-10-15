@@ -234,22 +234,29 @@ private fun buildThreads(
         .map { tid ->
             val ip = tid.removePrefix("ip:")
             val list = messages.filter { it.threadId == tid }
-            val named = lanPeers.firstOrNull { it.ip == ip }?.name
+            // A tab dials the phone into the *phone's* address book ("ip:<phoneIp>"), so the
+            // thread suffix is the phone, not the peer. The real browser to ring is whoever
+            // wrote the other side of this thread; only when nobody but us has spoken (we
+            // opened it cold from the peer list) is the suffix the tab's own address.
+            val peerIp = list.firstOrNull { it.sender != myName && !it.clientIp.isNullOrEmpty() }?.clientIp
+            val browserIp = peerIp ?: ip
+            val named = lanPeers.firstOrNull { it.ip == browserIp }?.name
+                ?: lanPeers.firstOrNull { it.ip == ip }?.name
                 ?: list.firstOrNull { it.sender != myName }?.sender
             // A paired device already owns its private thread; its browser tab is not a second chat.
             if (named != null && paired.any { it.name == named }) null
             else {
-                val loopback = ip == "127.0.0.1" || ip == "::1" || ip == "::ffff:127.0.0.1"
+                val loopback = browserIp == "127.0.0.1" || browserIp == "::1" || browserIp == "::ffff:127.0.0.1"
                 ChatThread(
                     id = tid,
-                    title = named ?: if (loopback) "Browser tab" else ip,
+                    title = named ?: if (loopback) "Browser tab" else browserIp,
                     hint = if (loopback) "Web client on this device" else "Web client \u00b7 direct message",
                     encrypted = false,
                     isGroup = false,
                     memberNames = emptyList(),
                     memberPids = emptyList(),
                     pid = null,
-                    browserIp = ip,
+                    browserIp = browserIp,
                     messages = list,
                     unread = unreadFor(tid, list)
                 )

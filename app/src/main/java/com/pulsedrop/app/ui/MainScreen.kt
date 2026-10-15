@@ -121,6 +121,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val updateInfo by viewModel.updateManager.update.collectAsState()
     val updateProgress by viewModel.updateManager.progress.collectAsState()
     val updateApk by viewModel.updateManager.downloadedApk.collectAsState()
+    val downloadCount by viewModel.updateManager.downloads.collectAsState()
     val colorScheme = MaterialTheme.colorScheme
 
     val context = LocalContext.current
@@ -321,6 +322,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         onClearFiles = { viewModel.clearSharedFiles() },
                         onSendClip = { text -> viewModel.sendClipMessage(text) },
                         appVersion = BuildConfig.VERSION_NAME,
+                        downloads = downloadCount,
                         onUpdateCheck = {
                             dismissedUpdateVersion = null
                             viewModel.updateManager.check(auto = false)

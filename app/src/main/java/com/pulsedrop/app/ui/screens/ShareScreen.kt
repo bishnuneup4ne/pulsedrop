@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -80,6 +81,7 @@ fun ShareScreen(
     onClearFiles: () -> Unit,
     onSendClip: (String) -> Unit,
     appVersion: String,
+    downloads: Int?,
     onUpdateCheck: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -153,6 +155,26 @@ fun ShareScreen(
                     maxLines = 1,
                     modifier = Modifier.weight(1f)
                 )
+                if (downloads != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(end = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "%,d".format(downloads),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("download_count")
+                        )
+                    }
+                }
                 TextButton(
                     onClick = onUpdateCheck,
                     modifier = Modifier.testTag("check_update_btn")

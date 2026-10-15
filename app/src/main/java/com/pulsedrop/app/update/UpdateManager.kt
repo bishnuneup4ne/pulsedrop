@@ -37,6 +37,7 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
     companion object {
         private const val REPO = "bishnuneup4ne/pulsedrop"
         private const val LATEST_URL = "https://api.github.com/repos/$REPO/releases/latest"
+        private const val RELEASES_URL = "https://api.github.com/repos/$REPO/releases"
 
         /** True when `a` is a strictly newer dotted version than `b`. */
         fun isNewer(a: String, b: String): Boolean {
@@ -65,6 +66,10 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
+    /** Lifetime APK downloads across every published release, from GitHub's own counters. */
+    private val _downloads = MutableStateFlow<Int?>(null)
+    val downloads: StateFlow<Int?> = _downloads.asStateFlow()
+
     private var updateVersion = ""
 
     private val client = OkHttpClient.Builder()
@@ -74,6 +79,7 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
         .build()
 
     fun check(auto: Boolean) {
+        if (_downloads.value == null) fetchDownloads()
         scope.launch(Dispatchers.IO) {
             try {
                 val req = Request.Builder()
@@ -132,6 +138,35 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
                 }
             } catch (e: Exception) {
                 if (!auto) _statusMessage.value = "Update check failed: ${e.message}"
+            }
+        }
+    }
+
+    /** Lifetime download count summed over every published release's assets. */
+    private fun fetchDownloads() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val req = Request.Builder()
+                    .url(RELEASES_URL)
+                    .header("Accept", "application/vnd.github+json")
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val arr = org.json.JSONArray(resp.body?.string() ?: return@use)
+                    var total = 0
+                    for (i in 0 until arr.length()) {
+                        val assets = arr.getJSONObject(i).optJSONArray("assets") ?: continue
+                        for (j in 0 until assets.length()) {
+                            val a = assets.getJSONObject(j)
+                            if (a.optString("name").endsWith(".apk", ignoreCase = true)) {
+                                total += a.optInt("download_count", 0)
+                            }
+                        }
+                    }
+                    _downloads.value = total
+                }
+            } catch (e: Exception) {
+                // Counter is best-effort; leave it null so the UI hides it.
             }
         }
     }
