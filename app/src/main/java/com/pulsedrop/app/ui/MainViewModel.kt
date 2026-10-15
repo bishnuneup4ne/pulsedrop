@@ -97,6 +97,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _serverState = MutableStateFlow(UiServerState())
     val serverState: StateFlow<UiServerState> = _serverState.asStateFlow()
 
+    /**
+     * Files arriving at the phone: straight into the received folder when auto-accept is on,
+     * or parked in the pending folder for a decision when it is not. Declared beside the other
+     * flows because the constructor's startServer() clears it, and Kotlin initialises in order.
+     */
+    private val _pendingUploads = MutableStateFlow<List<com.pulsedrop.app.model.PendingUploadInfo>>(emptyList())
+    val pendingUploads: StateFlow<List<com.pulsedrop.app.model.PendingUploadInfo>> = _pendingUploads.asStateFlow()
+
     private val _sharedFiles = MutableStateFlow<List<SharedFile>>(emptyList())
     val sharedFiles: StateFlow<List<SharedFile>> = _sharedFiles.asStateFlow()
 
@@ -467,9 +475,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Files arriving at the phone: straight into the received folder when auto-accept is on,
      * or parked in the pending folder for a decision when it is not.
      */
-    private val _pendingUploads = MutableStateFlow<List<com.pulsedrop.app.model.PendingUploadInfo>>(emptyList())
-    val pendingUploads: StateFlow<List<com.pulsedrop.app.model.PendingUploadInfo>> = _pendingUploads.asStateFlow()
-
     fun setAutoAcceptTransfers(on: Boolean) {
         _serverState.update { it.copy(autoAcceptTransfers = on) }
         persistSettings()
