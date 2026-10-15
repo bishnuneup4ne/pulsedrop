@@ -10,6 +10,10 @@ import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioPlaybackCaptureConfiguration
+import android.media.AudioRecord
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -21,6 +25,7 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import kotlin.math.roundToInt
 
 /**
@@ -91,6 +96,10 @@ class ProjectionCaptureService : Service() {
         private const val MAX_EDGE = 1920
         private const val FRAME_QUALITY = 82
         private const val FRAME_INTERVAL_MS = 125L
+
+        /** What the system hands over for playback capture, and one 100 ms window of it. */
+        private const val PLAYBACK_SR = 48000
+        private const val PLAYBACK_CHUNK = PLAYBACK_SR / 10 * 2 * 2
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -98,6 +107,8 @@ class ProjectionCaptureService : Service() {
     private var reader: ImageReader? = null
     private var display: VirtualDisplay? = null
     private var grabThread: Thread? = null
+    private var audioThread: Thread? = null
+    @Volatile private var audioGrabbing = false
     @Volatile private var capW = 0
     @Volatile private var capH = 0
     @Volatile private var grabbing = false
@@ -164,8 +175,18 @@ class ProjectionCaptureService : Service() {
                 return
             }
 
+            startAudioCapture()
+
             grabbing = true
             grabThread = Thread {
+                // The plane is already RGBA in memory, which is exactly what an ARGB_8888 bitmap
+                // holds, so a frame is a bulk copy rather than two million hand-packed ints. The
+                // per-pixel loop cost more than the JPEG did, and it allocated a fresh 8 MB array
+                // every frame; both are why a share arrived late and looked like a slideshow.
+                var bufCols = 0
+                var bufRows = 0
+                var pixels = ByteArray(0)
+                var bmp: Bitmap? = null
                 while (grabbing) {
                     val image = try { reader?.acquireLatestImage() } catch (e: Exception) { null }
                     if (image != null) {
@@ -175,31 +196,36 @@ class ProjectionCaptureService : Service() {
                             val rowStride = plane.rowStride
                             val pw = minOf(rowStride / 4, image.width)
                             val ph = image.height
-                            val padded = ByteArray(rowStride * ph)
-                            buffer.get(padded, 0, minOf(buffer.remaining(), padded.size))
-                            val colors = IntArray(pw * ph)
-                            for (y in 0 until ph) {
-                                val rowBase = y * rowStride
-                                for (x in 0 until pw) {
-                                    val i = rowBase + x * 4
-                                    if (i + 3 >= padded.size) break
-                                    // Plane bytes are R,G,B,A; createBitmap wants the int as
-                                    // A<<24|R<<16|G<<8|B. Packing them in memory order swaps red
-                                    // and blue and is the green/magenta cast people reported.
-                                    colors[y * pw + x] = ((padded[i].toInt() and 0xFF) shl 16) or
-                                            ((padded[i + 1].toInt() and 0xFF) shl 8) or
-                                            (padded[i + 2].toInt() and 0xFF) or
-                                            ((padded[i + 3].toInt() and 0xFF) shl 24)
+                            val lineBytes = pw * 4
+                            if (bufCols != pw || bufRows != ph) {
+                                bufCols = pw; bufRows = ph
+                                pixels = ByteArray(lineBytes * ph)
+                                try { bmp?.recycle() } catch (e: Exception) { }
+                                bmp = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+                            }
+                            if (rowStride == lineBytes) {
+                                buffer.get(pixels, 0, pixels.size)
+                            } else {
+                                // A padded plane: lift one row at a time into a packed bitmap.
+                                var from = 0
+                                var to = 0
+                                val limit = buffer.limit()
+                                for (y in 0 until ph) {
+                                    if (from + lineBytes > limit) break
+                                    buffer.position(from)
+                                    buffer.get(pixels, to, lineBytes)
+                                    from += rowStride
+                                    to += lineBytes
                                 }
                             }
-                            val full = Bitmap.createBitmap(colors, 0, pw, pw, ph, Bitmap.Config.ARGB_8888)
+                            val full = bmp ?: error("no frame bitmap")
+                            full.copyPixelsFromBuffer(ByteBuffer.wrap(pixels))
                             val scaled = if (full.width == capW && full.height == capH) full
                             else Bitmap.createScaledBitmap(full, capW, capH, true)
                             val bos = ByteArrayOutputStream()
                             scaled.compress(Bitmap.CompressFormat.JPEG, FRAME_QUALITY, bos)
                             engine?.pushScreenFrame(bos.toByteArray())
                             if (scaled !== full) scaled.recycle()
-                            full.recycle()
                         } catch (e: Exception) {
                             // skip frame
                         }
@@ -207,10 +233,57 @@ class ProjectionCaptureService : Service() {
                     }
                     Thread.sleep(FRAME_INTERVAL_MS)
                 }
+                try { bmp?.recycle() } catch (e: Exception) { }
             }.apply { isDaemon = true; start() }
         } catch (e: Exception) {
             teardown()
         }
+    }
+
+    /**
+     * The sound the phone is playing, sent to the peer alongside the screen. Requires the record
+     * permission the call already asks for, and a device that answers playback capture at all -
+     * refusing it costs the audio of the share, never the share itself.
+     */
+    @Suppress("MissingPermission")
+    private fun startAudioCapture() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val proj = projection ?: return
+        // Playback capture is granted to whoever may record audio; a call already needed it, but a
+        // share started without that permission must simply come out silent.
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        audioGrabbing = true
+        audioThread = Thread {
+            var rec: AudioRecord? = null
+            try {
+                val fmt = AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(PLAYBACK_SR)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+                    .build()
+                val cfg = AudioPlaybackCaptureConfiguration.Builder(proj)
+                    .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                    .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                    .build()
+                rec = AudioRecord.Builder()
+                    .setAudioFormat(fmt)
+                    .setAudioPlaybackCaptureConfig(cfg)
+                    .build()
+                val capture = rec ?: error("this device refuses playback capture")
+                val buf = ByteArray(PLAYBACK_CHUNK)
+                capture.startRecording()
+                while (audioGrabbing) {
+                    val n = capture.read(buf, 0, buf.size)
+                    if (n > 0) engine?.pushShareAudio(buf, n)
+                }
+            } catch (e: Exception) {
+                // No playback capture on this device; the share continues silently.
+            } finally {
+                try { rec?.stop() } catch (e: Exception) { }
+                try { rec?.release() } catch (e: Exception) { }
+            }
+        }.apply { isDaemon = true; start() }
     }
 
     /**
@@ -274,8 +347,11 @@ class ProjectionCaptureService : Service() {
 
     private fun teardown() {
         grabbing = false
+        audioGrabbing = false
         try { grabThread?.join(500) } catch (e: Exception) { }
         grabThread = null
+        try { audioThread?.join(500) } catch (e: Exception) { }
+        audioThread = null
         try { display?.release() } catch (e: Exception) { }
         display = null
         try { reader?.close() } catch (e: Exception) { }

@@ -3857,7 +3857,8 @@ object WebClientHtml {
     var T_AUDIO = 1, T_CAMERA = 2, T_SCREEN = 3, T_STATE = 4;
     var live = {
       up: [], upTimer: null, vfTimer: null, downAbort: null, sending: 0,
-      ac: null, cap: null, sp: null, srcNode: null, micStream: null, camStream: null,
+      ac: null, cap: null, sp: null, srcNode: null, micGain: null, shareSrc: null,
+      micStream: null, camStream: null,
       shareStream: null, next: 0, inRate: 48000, camOn: false, sharing: false,
       gotFrame: false, lastUrl: '', canvas: null, busy: false
     };
@@ -4267,6 +4268,11 @@ object WebClientHtml {
       live.inRate = live.cap.sampleRate;
       live.micStream = stream;
       live.srcNode = live.cap.createMediaStreamSource(stream);
+      // The microphone sits behind a gain so muting it does not also mute a shared screen; the
+      // share connects to the same node, and the graph sums them before anything is encoded.
+      live.micGain = live.cap.createGain();
+      live.micGain.gain.value = pdMuted ? 0 : 1;
+      live.srcNode.connect(live.micGain);
       // ScriptProcessor rather than an AudioWorklet: the module would have to be a separate
       // URL or a blob, and 16 kHz mono passthrough does not need a real-time thread.
       live.sp = live.cap.createScriptProcessor(1024, 1, 1);
@@ -4274,20 +4280,22 @@ object WebClientHtml {
         var out = ev.outputBuffer.getChannelData(0);
         for (var i = 0; i < out.length; i++) out[i] = 0;
         var d = ev.inputBuffer.getChannelData(0);
-        // A muted tab sends no audio at all: the other side has the state frame to tell it why,
-        // and shipping 16 kHz of silence is pure cost.
-        if (pdMuted) return;
+        // Muted with nothing to share is 16 kHz of silence the peer already knows about.
+        if (pdMuted && !live.shareSrc) return;
         var target = live.inRate === 16000 ? d.length : Math.round(d.length * 16000 / live.inRate);
         var i16 = new Int16Array(target);
         for (var j = 0; j < target; j++) {
           var t = live.inRate === 16000 ? j : j * d.length / target;
           var k = Math.min(d.length - 1, Math.floor(t));
-          var v = pdMuted ? 0 : d[k];
+          // A voice plus a video can add up past full scale, and an Int16Array wraps that into
+          // crackle rather than clipping it, so the sum is brought back inside first.
+          var v = d[k];
+          if (v > 1) v = 1; else if (v < -1) v = -1;
           i16[j] = v < 0 ? v * 32768 : v * 32767;
         }
         pushUp(T_AUDIO, new Uint8Array(i16.buffer));
       };
-      live.srcNode.connect(live.sp);
+      live.micGain.connect(live.sp);
       live.sp.connect(live.cap.destination);
       if (live.cap.state === 'suspended') live.cap.resume();
     }
@@ -4455,6 +4463,7 @@ object WebClientHtml {
           });
         } catch (e) {}
       }
+      if (live.micGain) live.micGain.gain.value = pdMuted ? 0 : 1;
       el('callMute').classList.toggle('active', pdMuted);
       el('callMute').setAttribute('title', pdMuted ? 'Unmute' : 'Mute');
       el('callMute').setAttribute('aria-label', pdMuted ? 'Unmute microphone' : 'Mute microphone');
@@ -4542,22 +4551,40 @@ object WebClientHtml {
         fetchInfo();
         return;
       }
-      md.getDisplayMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 15 } }, audio: false }).then(function (s) {
-        live.shareStream = s;
-        live.sharing = true;
-        el('callSelf').srcObject = s;
-        el('callShareBtn').classList.add('active');
-        el('callShareLab').textContent = 'Stop';
-        var tr = s.getVideoTracks()[0];
-        if (tr) tr.addEventListener('ended', stopCallShare);
-        syncSelfView();
-        startFrameLoop();
-        sendCallState();
-        callHint('');
-      }, function () { callHint('Screen sharing was cancelled'); });
+      var shareReq = { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 15 } }, audio: true };
+      md.getDisplayMedia(shareReq).then(function (s) { openShare(s); }, function () {
+        // Browsers that will not hand over system audio still hand over the picture, so losing the
+        // sound here must not lose the share.
+        md.getDisplayMedia({ video: shareReq.video, audio: false }).then(openShare, function () {
+          callHint('Screen sharing was cancelled');
+        });
+      });
+    }
+
+    function openShare(s) {
+      if (s.getAudioTracks().length && live.cap && live.sp) {
+        // Summed into the microphone's node by the graph; see attachMic.
+        live.shareSrc = live.cap.createMediaStreamSource(s);
+        live.shareSrc.connect(live.sp);
+      }
+      live.shareStream = s;
+      live.sharing = true;
+      el('callSelf').srcObject = s;
+      el('callShareBtn').classList.add('active');
+      el('callShareLab').textContent = 'Stop';
+      var tr = s.getVideoTracks()[0];
+      if (tr) tr.addEventListener('ended', stopCallShare);
+      syncSelfView();
+      startFrameLoop();
+      sendCallState();
+      callHint('');
     }
 
     function stopCallShare() {
+      if (live.shareSrc) {
+        try { live.shareSrc.disconnect(); } catch (e) {}
+        live.shareSrc = null;
+      }
       if (live.shareStream) {
         live.shareStream.getTracks().forEach(function (t) { t.stop(); });
         live.shareStream = null;
@@ -4581,6 +4608,8 @@ object WebClientHtml {
       if (live.micStream) live.micStream.getTracks().forEach(function (t) { t.stop(); });
       if (live.sp) { try { live.sp.disconnect(); } catch (e) {} live.sp.onaudioprocess = null; live.sp = null; }
       if (live.srcNode) { try { live.srcNode.disconnect(); } catch (e) {} live.srcNode = null; }
+      if (live.micGain) { try { live.micGain.disconnect(); } catch (e) {} live.micGain = null; }
+      if (live.shareSrc) { try { live.shareSrc.disconnect(); } catch (e) {} live.shareSrc = null; }
       if (live.cap) { try { live.cap.close(); } catch (e) {} live.cap = null; }
       if (live.ac) { try { live.ac.close(); } catch (e) {} live.ac = null; }
       live.micStream = live.camStream = live.shareStream = null;

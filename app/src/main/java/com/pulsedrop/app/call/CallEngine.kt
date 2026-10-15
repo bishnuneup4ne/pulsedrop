@@ -163,6 +163,10 @@ class CallEngine(
     private val cameraFrameMs = 100L
     /** Reused rotation scratch, so a turn allocates nothing per frame. */
     private var rotBuf = ByteArray(0)
+    /** Playback audio from a screen share, waiting for the frame pacer to take it. */
+    private val shareRing = SampleRing(CALL_FRAME_SAMPLES * 4)
+    private val shareFrame = ShortArray(CALL_FRAME_SAMPLES)
+    private val shareScratch = ShortArray(CALL_FRAME_SAMPLES * 2)
     /** SurfaceView holder the call overlay attaches to for the local self-preview. */
     @Volatile private var previewHolder: android.view.SurfaceHolder? = null
     private var savedAudioMode = AudioManager.MODE_NORMAL
@@ -810,8 +814,8 @@ class CallEngine(
                     while (running) {
                         val n = rec.read(buf, 0, buf.size)
                         if (n > 0) {
-                            val frame = if (_state.value.muted) ByteArray(n) else buf.copyOf(n)
-                            writeFrame(TYPE_AUDIO, frame)
+                            val voice = if (_state.value.muted) ByteArray(n) else buf.copyOf(n)
+                            writeFrame(TYPE_AUDIO, withShareAudio(voice, n))
                         }
                     }
                 } else {
@@ -819,7 +823,8 @@ class CallEngine(
                     // Paced to the chunk length, otherwise this floods the peer's playback
                     // buffer at 5x realtime.
                     while (running) {
-                        writeFrame(TYPE_AUDIO, ByteArray(AUDIO_CHUNK))
+                        // Muted or micless, a shared video is still audible to the peer.
+                        writeFrame(TYPE_AUDIO, withShareAudio(ByteArray(AUDIO_CHUNK), AUDIO_CHUNK))
                         Thread.sleep(100)
                     }
                 }
@@ -1430,6 +1435,29 @@ class CallEngine(
     /** Screen share frames are pushed by ProjectionCaptureService. */
     fun pushScreenFrame(jpeg: ByteArray) {
         if (running && _state.value.sharing) writeFrame(TYPE_SCREEN, jpeg)
+    }
+
+    /**
+     * Playback audio from the share, as 48 kHz stereo bytes. The peer hears the game or the video,
+     * not just the voice over it - which is the whole point of sharing a screen with sound on.
+     */
+    fun pushShareAudio(bytes: ByteArray, len: Int) {
+        if (!running || !_state.value.sharing) return
+        val n = downmixToCallRate(bytes, len, shareScratch)
+        if (n > 0) shareRing.write(shareScratch, n)
+    }
+
+    /** The frame the peer gets: voice, plus whatever the share played during the same window. */
+    private fun withShareAudio(voice: ByteArray, len: Int): ByteArray {
+        if (!_state.value.sharing) {
+            // Stale samples from a share that just ended would arrive as a burst of old sound.
+            shareRing.clear()
+            return voice
+        }
+        val samples = len / 2
+        if (samples == 0) return voice
+        shareRing.read(shareFrame, samples)
+        return mixDown(voice, len, shareFrame)
     }
 
     /**
