@@ -112,6 +112,18 @@ fun WebCallScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = SheetMuted
             )
+            if (call.groupPids.isNotEmpty()) {
+                Text(
+                    text = "Group call — ${call.groupPids.size} paired device(s) join when you answer",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SheetMuted,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .testTag("web_call_group_note")
+                )
+            }
             Spacer(modifier = Modifier.height(10.dp))
 
             AnimatedVisibility(visible = !accepted, enter = fadeIn(), exit = fadeOut()) {

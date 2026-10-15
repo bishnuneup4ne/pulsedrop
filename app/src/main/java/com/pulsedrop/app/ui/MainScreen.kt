@@ -9,16 +9,20 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.ScreenShare
@@ -27,8 +31,11 @@ import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -46,18 +53,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.pulsedrop.app.model.PeerDevice
+import com.pulsedrop.app.BuildConfig
 import com.pulsedrop.app.ui.components.PinSecurityDialog
 import com.pulsedrop.app.ui.components.PulseHeader
 import com.pulsedrop.app.ui.screens.CallOverlay
 import com.pulsedrop.app.ui.screens.ChatScreen
+import com.pulsedrop.app.ui.screens.CompactCallBar
 import com.pulsedrop.app.ui.screens.HistoryScreen
 import com.pulsedrop.app.ui.screens.HotspotGuideScreen
 import com.pulsedrop.app.ui.screens.RadarScreen
@@ -99,6 +110,9 @@ fun MainScreen(viewModel: MainViewModel) {
     val webCall by viewModel.webCall.collectAsState()
     val webClients by viewModel.webClients.collectAsState()
     val lastReadAt by viewModel.lastReadAt.collectAsState()
+    val updateInfo by viewModel.updateManager.update.collectAsState()
+    val updateProgress by viewModel.updateManager.progress.collectAsState()
+    val updateApk by viewModel.updateManager.downloadedApk.collectAsState()
     val colorScheme = MaterialTheme.colorScheme
 
     val context = LocalContext.current
@@ -109,6 +123,7 @@ fun MainScreen(viewModel: MainViewModel) {
     var selectedThreadId by remember { mutableStateOf<String?>(null) }
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showShareConsent by remember { mutableStateOf(false) }
+    var dismissedUpdateVersion by remember { mutableStateOf<String?>(null) }
 
     var pendingChatAttachThread by remember { mutableStateOf<String?>(null) }
     val chatAttachLauncher = rememberLauncherForActivityResult(
@@ -296,7 +311,12 @@ fun MainScreen(viewModel: MainViewModel) {
                         onAddFiles = { uris -> viewModel.addFiles(uris) },
                         onRemoveFile = { id -> viewModel.removeSharedFile(id) },
                         onClearFiles = { viewModel.clearSharedFiles() },
-                        onSendClip = { text -> viewModel.sendClipMessage(text) }
+                        onSendClip = { text -> viewModel.sendClipMessage(text) },
+                        appVersion = BuildConfig.VERSION_NAME,
+                        onUpdateCheck = {
+                            dismissedUpdateVersion = null
+                            viewModel.updateManager.check(auto = false)
+                        }
                     )
 
                     PulseNavTab.RADAR -> RadarScreen(
@@ -304,7 +324,6 @@ fun MainScreen(viewModel: MainViewModel) {
                         connectedPeer = connectedPeer,
                         peerConnecting = peerConnecting,
                         pairedDevices = pairedDevices,
-                        incomingRequests = incomingPairRequests,
                         pendingOutgoing = pendingOutgoingPair,
                         scanning = radarScanning,
                         onSendFilesToPeer = { peer, uris, peerPin ->
@@ -319,8 +338,6 @@ fun MainScreen(viewModel: MainViewModel) {
                         onDisconnectPeer = { viewModel.disconnectPeer() },
                         onPair = { peer -> viewModel.requestPairing(peer) },
                         onCancelPairRequest = { viewModel.cancelPairingRequest() },
-                        onAcceptPair = { req -> viewModel.acceptPairing(req) },
-                        onDeclinePair = { req -> viewModel.declinePairing(req) },
                         onUnpair = { pid -> viewModel.unpair(pid) },
                         safetyCodeOf = { pid -> viewModel.pairSafetyCode(pid) },
                         onToggleVerified = { pid, verified -> viewModel.setPairVerified(pid, verified) }
@@ -378,25 +395,43 @@ fun MainScreen(viewModel: MainViewModel) {
             }
         }
 
+        var callMinimized by remember { mutableStateOf(false) }
+        LaunchedEffect(callState.active) {
+            if (!callState.active) callMinimized = false
+        }
         if (callState.active) {
-            CallOverlay(
-                state = callState,
-                remoteFrame = remoteFrame,
-                remoteFrames = remoteFrames,
-                onToggleMute = { viewModel.toggleCallMute() },
-                onToggleCamera = {
-                    // Turning the camera on mid-call needs the same permission as a video call.
-                    val missing = if (callState.cameraOn) emptyList() else missingCallPermissions(true)
-                    if (missing.isEmpty()) viewModel.toggleCallCamera()
-                    else {
-                        pendingCallAction = { viewModel.toggleCallCamera() }
-                        callPermissionLauncher.launch(missing.toTypedArray())
-                    }
-                },
-                onToggleScreenShare = { requestScreenShare() },
-                onHangUp = { viewModel.hangUpCall() },
-                onAttachPreview = { viewModel.attachCallPreview(it) }
-            )
+            if (callMinimized) {
+                CompactCallBar(
+                    state = callState,
+                    onExpand = { callMinimized = false },
+                    onHangUp = { viewModel.hangUpCall() },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .widthIn(max = 340.dp)
+                        .padding(horizontal = 16.dp, vertical = 96.dp)
+                )
+            } else {
+                CallOverlay(
+                    state = callState,
+                    remoteFrame = remoteFrame,
+                    remoteFrames = remoteFrames,
+                    onToggleMute = { viewModel.toggleCallMute() },
+                    onToggleCamera = {
+                        // Turning the camera on mid-call needs the same permission as a video call.
+                        val missing = if (callState.cameraOn) emptyList() else missingCallPermissions(true)
+                        if (missing.isEmpty()) viewModel.toggleCallCamera()
+                        else {
+                            pendingCallAction = { viewModel.toggleCallCamera() }
+                            callPermissionLauncher.launch(missing.toTypedArray())
+                        }
+                    },
+                    onToggleScreenShare = { requestScreenShare() },
+                    onHangUp = { viewModel.hangUpCall() },
+                    onAttachPreview = { viewModel.attachCallPreview(it) },
+                    onSwitchCamera = { viewModel.switchCallCamera() },
+                    onMinimize = { callMinimized = true }
+                )
+            }
         }
 
         val browserCall = webCall
@@ -463,6 +498,161 @@ fun MainScreen(viewModel: MainViewModel) {
                     modifier = Modifier.testTag("decline_call_btn")
                 ) {
                     Text("Decline", color = colorScheme.error)
+                }
+            }
+        )
+    }
+
+    val pendingUpdate = updateInfo
+    if (pendingUpdate != null && dismissedUpdateVersion != pendingUpdate.versionName) {
+        val um = viewModel.updateManager
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Update to ${pendingUpdate.versionName}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = pendingUpdate.releaseName.ifBlank { "PulseDrop ${pendingUpdate.versionName}" },
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    if (pendingUpdate.notes.isNotBlank()) {
+                        Text(
+                            text = pendingUpdate.notes,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 8,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (pendingUpdate.sizeBytes > 0) {
+                        Text(
+                            text = "Download size: %.1f MB".format(pendingUpdate.sizeBytes / 1048576.0),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    val pct = updateProgress
+                    if (pct != null) {
+                        LinearProgressIndicator(
+                            progress = { pct },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = "Downloading… ${(pct * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (updateApk != null) {
+                        Text(
+                            text = "Downloaded. Tap Install to finish.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                if (updateApk != null) {
+                    Button(
+                        onClick = {
+                            if (!um.canInstall()) {
+                                context.startActivity(um.installPermissionIntent())
+                            } else {
+                                um.install()
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.testTag("install_update_btn")
+                    ) { Text("Install") }
+                } else {
+                    Button(
+                        onClick = { um.download() },
+                        enabled = updateProgress == null,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.testTag("download_update_btn")
+                    ) { Text(if (updateProgress == null) "Download" else "Downloading…") }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        dismissedUpdateVersion = pendingUpdate.versionName
+                        um.dismiss()
+                    },
+                    modifier = Modifier.testTag("dismiss_update_btn")
+                ) { Text("Not now") }
+            }
+        )
+    }
+
+    // Pairing prompts must reach the user on ANY tab - keeping them inside the radar screen
+    // meant a device sitting on Server/Chat never saw the invite and the pair half-completed.
+    val pairInvite = incomingPairRequests.firstOrNull()
+    if (pairInvite != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.declinePairing(pairInvite) },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Link,
+                    contentDescription = null,
+                    tint = colorScheme.primary
+                )
+            },
+            title = { Text("Pairing request") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "${pairInvite.name} wants to pair with you.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "From ${pairInvite.myIp}:${pairInvite.myPort}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorScheme.onSurfaceVariant
+                    )
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = colorScheme.primaryContainer.copy(alpha = 0.5f))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Safety code",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = pairInvite.safetyCode,
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = colorScheme.primary
+                            )
+                            Text(
+                                text = "Say this code out loud to the other person. If it matches on both screens, you are paired with each other — not someone else.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.acceptPairing(pairInvite) },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.testTag("accept_pair_btn")
+                ) {
+                    Text("Accept & pair", style = MaterialTheme.typography.labelLarge)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.declinePairing(pairInvite) },
+                    modifier = Modifier.testTag("decline_pair_btn")
+                ) {
+                    Text("Decline", color = colorScheme.error, style = MaterialTheme.typography.labelLarge)
                 }
             }
         )

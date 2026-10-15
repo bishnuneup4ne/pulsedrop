@@ -28,7 +28,8 @@ device pairing is end-to-end encrypted.
 
 1. Install the app — see [Installation](Installation.md).
 2. Start the server and connect other devices to the same hotspot/Wi-Fi.
-3. Open the **https** address or scan the QR — see [Browser Calls (HTTPS)](Browser-Calls-HTTPS.md).
+3. Open the address the card shows or scan the QR (browsers are bounced to the secure
+   port automatically) — see [Browser Calls (HTTPS)](Browser-Calls-HTTPS.md).
 4. Hit a problem? [Troubleshooting](Troubleshooting.md).
 
 ## Documentation

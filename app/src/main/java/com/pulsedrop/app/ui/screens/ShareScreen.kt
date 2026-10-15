@@ -79,6 +79,8 @@ fun ShareScreen(
     onRemoveFile: (String) -> Unit,
     onClearFiles: () -> Unit,
     onSendClip: (String) -> Unit,
+    appVersion: String,
+    onUpdateCheck: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var textMessage by remember { mutableStateOf("") }
@@ -134,6 +136,29 @@ fun ShareScreen(
         if (pendingTransfers.isNotEmpty()) {
             item {
                 ActiveTransfersCard(activeTransfers = pendingTransfers)
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "PulseDrop v$appVersion",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = onUpdateCheck,
+                    modifier = Modifier.testTag("check_update_btn")
+                ) {
+                    Text("Check for updates", style = MaterialTheme.typography.labelMedium)
+                }
             }
         }
 
@@ -414,19 +439,23 @@ private fun SectionCard(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-fun SectionTitle(title: String, subtitle: String? = null) {
+fun SectionTitle(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
     val colorScheme = MaterialTheme.colorScheme
-    Column {
+    Column(modifier) {
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium,
-            color = colorScheme.onSurface
+            color = colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
         if (subtitle != null) {
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = colorScheme.onSurfaceVariant
+                color = colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

@@ -85,22 +85,32 @@ fun HotspotGuideScreen(
 
     var hotspotOn by remember { mutableStateOf(false) }
     var confirmedOff by remember { mutableStateOf(false) }
+    var manuallyHidden by remember { mutableStateOf(false) }
     var ssid by remember { mutableStateOf(prefs.getString("ssid", "") ?: "") }
     var pass by remember { mutableStateOf(prefs.getString("pass", "") ?: "") }
     var revealPass by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
 
     // Best-effort detection; the guided confirmation covers OEMs that hide
-    // tether state from third-party apps.
+    // tether state from third-party apps. Only a real off→on transition re-opens the
+    // card, so the screen stops re-announcing the hotspot a second after hiding it.
     LaunchedEffect(Unit) {
+        var lastActive = HotspotState.isActive(context)
+        hotspotOn = lastActive
         while (true) {
+            delay(2500)
             // ConnectivityManager binder calls plus a Settings.Global query: keep them off the main thread.
             val active = withContext(Dispatchers.IO) { HotspotState.isActive(context) }
-            if (active && !hotspotOn) {
+            if (active && !lastActive && !manuallyHidden) {
                 hotspotOn = true
                 confirmedOff = false
             }
-            delay(2500)
+            if (!active && lastActive) {
+                hotspotOn = false
+                confirmedOff = false
+                manuallyHidden = false
+            }
+            lastActive = active
         }
     }
 
@@ -368,6 +378,9 @@ fun HotspotGuideScreen(
                                 onClick = {
                                     hotspotOn = false
                                     confirmedOff = false
+                                    // Keep it hidden until detection sees the hotspot actually
+                                    // cycle off and back on — no re-opening 2s later.
+                                    manuallyHidden = true
                                 },
                                 modifier = Modifier.testTag("hotspot_turned_off")
                             ) {

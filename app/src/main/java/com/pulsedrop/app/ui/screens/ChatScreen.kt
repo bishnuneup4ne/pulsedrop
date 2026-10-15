@@ -341,11 +341,12 @@ private fun InboxView(
     var menuOpen by remember { mutableStateOf(false) }
     var showPrivateThreads by remember { mutableStateOf(false) }
 
-    // The inbox is for direct conversations: the open room and one-to-one IP threads.
-    // Private pair and group channels stay reachable through the filter toggle.
+    // The inbox is for direct conversations: the open room, one-to-one IP threads, and
+    // paired one-to-one channels - a pairing IS a direct chat, so it belongs here too.
+    // Only groups stay behind the filter toggle.
     val visible = remember(threads, query, showPrivateThreads) {
         val scoped = if (showPrivateThreads) threads else threads.filter {
-            it.id == ROOM_ID || it.id?.startsWith("ip:") == true
+            it.id == ROOM_ID || it.id?.startsWith("ip:") == true || it.id?.startsWith("pair:") == true
         }
         if (query.isBlank()) scoped
         else scoped.filter {

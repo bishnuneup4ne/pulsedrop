@@ -35,6 +35,7 @@ private const val MAX_INCOMING_REQUESTS = 12
 private const val INCOMING_REQUEST_TTL_MS = 120_000L
 private const val PROOF_VERSION = "pulsedrop-upload-v1"
 private const val PROOF_TTL_MS = 120_000L
+private const val LATE_ANSWER_MS = 10 * 60_000L
 
 class PairManager(private val context: Context, private val scope: CoroutineScope) {
 
@@ -195,11 +196,31 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         }
         scope.launch {
             delay(60_000L)
-            if (_pendingOutgoing.value?.reqId == reqId) {
+            val pending = _pendingOutgoing.value
+            if (pending?.reqId == reqId) {
                 _pendingOutgoing.value = null
+                rememberLateAnswer(pending)
                 _pairEvent.value = "No pairing answer from ${peer.name} yet — try again later"
             }
         }
+    }
+
+    // An answer that lands after the 60 s window used to be dropped, leaving one device
+    // paired and the other not. Keep the request a while longer so a late accept still heals.
+    private val lateAnswers = LinkedHashMap<String, Pair<PendingPairRequest, Long>>()
+
+    private fun rememberLateAnswer(pending: PendingPairRequest) {
+        synchronized(lateAnswers) {
+            val now = System.currentTimeMillis()
+            lateAnswers.entries.filter { it.value.second <= now }.forEach { lateAnswers.remove(it.key) }
+            while (lateAnswers.size > 8) lateAnswers.remove(lateAnswers.keys.first())
+            lateAnswers[pending.reqId] = pending to (now + LATE_ANSWER_MS)
+        }
+    }
+
+    private fun takeLateAnswer(reqId: String): PendingPairRequest? = synchronized(lateAnswers) {
+        val entry = lateAnswers.remove(reqId) ?: return null
+        if (entry.second <= System.currentTimeMillis()) null else entry.first
     }
 
     fun cancelPendingRequest() {
@@ -237,23 +258,30 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
     }
 
     private fun respondToPair(reqId: String, accept: Boolean, peerIp: String, peerPort: Int, myIp: String, myPort: Int) {
-        try {
-            val body = JSONObject()
-                .put("reqId", reqId)
-                .put("accept", accept)
-                .put("name", nameProvider())
-                .put("pub", myPubB64())
-                .put("myIp", myIp)
-                .put("myPort", myPort)
-                .toString()
-                .toRequestBody("application/json; charset=utf-8".toMediaType())
-            client.newCall(
-                Request.Builder().url("http://$peerIp:$peerPort/api/pair/response")
-                    .post(body).build()
-            ).execute().close()
-        } catch (e: Exception) {
-            // The accept state is already stored locally; the peer times out on its side.
+        val body = JSONObject()
+            .put("reqId", reqId)
+            .put("accept", accept)
+            .put("name", nameProvider())
+            .put("pub", myPubB64())
+            .put("myIp", myIp)
+            .put("myPort", myPort)
+            .toString()
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
+        // A single blip here used to leave us paired and the peer not, with no way to notice.
+        for (attempt in 0 until 3) {
+            if (attempt > 0) try { Thread.sleep(if (attempt == 1) 3_000L else 8_000L) } catch (e: InterruptedException) { return }
+            try {
+                client.newCall(
+                    Request.Builder().url("http://$peerIp:$peerPort/api/pair/response")
+                        .post(body).build()
+                ).execute().use { resp ->
+                    if (resp.isSuccessful) return
+                }
+            } catch (e: Exception) {
+                // retry
+            }
         }
+        // The accept state is already stored locally; the peer falls back to its late-answer window.
     }
 
     fun unpair(pid: String) {
@@ -327,12 +355,22 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         // Prefer the address the requester advertises as reachable for replies;
         // the socket peer IP is a fallback (differs under port-forwarding / NAT).
         val reachIp = json.optString("myIp").ifBlank { clientIp }
+        val reachPort = json.optInt("myPort", 8080)
+        // Already paired with this exact key: re-answer silently so a device that lost its
+        // half of the pairing (missed response, reinstall of state) heals without a prompt.
+        if (_paired.value.any { it.pid == Crypto.pairId(myPub, peerPub) }) {
+            val (myIp, myPort) = endpointProvider()
+            scope.launch(Dispatchers.IO) {
+                respondToPair(json.optString("reqId", ""), true, reachIp, reachPort, myIp, myPort)
+            }
+            return
+        }
         val req = IncomingPairRequest(
             reqId = json.optString("reqId", UUID.randomUUID().toString()),
             name = json.optString("name", "Device $clientIp"),
             pubB64 = peerPub,
             myIp = reachIp,
-            myPort = json.optInt("myPort", 8080),
+            myPort = reachPort,
             safetyCode = Crypto.safetyCode(myPub, peerPub)
         )
         _incomingRequests.update { list ->
@@ -347,9 +385,12 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
 
     /** Handles POST /api/pair/response arriving at our server. */
     fun handleIncomingResponse(json: JSONObject, clientIp: String) {
-        val pending = _pendingOutgoing.value ?: return
-        if (json.optString("reqId") != pending.reqId) return
-        _pendingOutgoing.value = null
+        val reqId = json.optString("reqId")
+        var pending = _pendingOutgoing.value?.takeIf { it.reqId == reqId }
+        if (pending != null) _pendingOutgoing.value = null
+        else {
+            pending = takeLateAnswer(reqId) ?: return
+        }
         if (!json.optBoolean("accept", false)) {
             _pairEvent.value = "${pending.peer.name} declined pairing"
             return

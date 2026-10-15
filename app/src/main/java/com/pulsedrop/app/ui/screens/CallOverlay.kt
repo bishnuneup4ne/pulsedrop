@@ -8,6 +8,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +26,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.ScreenShare
@@ -62,6 +66,8 @@ fun CallOverlay(
     onHangUp: () -> Unit,
     /** Hands the local camera the SurfaceView below, or null when it goes away. */
     onAttachPreview: (SurfaceHolder?) -> Unit = {},
+    onSwitchCamera: () -> Unit = {},
+    onMinimize: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -137,6 +143,31 @@ fun CallOverlay(
                     )
                 }
             }
+        }
+
+        // Tuck the call into a small bar so the rest of the app stays reachable.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(10.dp)
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(Color(0x33FFFFFF))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClick = onMinimize
+                )
+                .testTag("call_minimize_btn"),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowDown,
+                contentDescription = "Minimize call",
+                tint = Color.White,
+                modifier = Modifier.size(24.dp)
+            )
         }
 
         if (state.cameraOn) {
@@ -231,7 +262,9 @@ fun CallOverlay(
             Spacer(modifier = Modifier.weight(1f))
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -242,7 +275,7 @@ fun CallOverlay(
                     onClick = onToggleMute,
                     tag = "call_mute_btn"
                 )
-                Spacer(modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.size(12.dp))
                 CallControl(
                     icon = if (state.cameraOn) Icons.Default.Videocam else Icons.Default.VideocamOff,
                     label = if (state.cameraOn) "Cam off" else "Cam on",
@@ -250,7 +283,16 @@ fun CallOverlay(
                     onClick = onToggleCamera,
                     tag = "call_camera_btn"
                 )
-                Spacer(modifier = Modifier.size(18.dp))
+                if (state.cameraOn) {
+                    Spacer(modifier = Modifier.size(12.dp))
+                    CallControl(
+                        icon = Icons.Default.SwapHoriz,
+                        label = if (state.cameraFront) "Back" else "Front",
+                        onClick = onSwitchCamera,
+                        tag = "call_flip_btn"
+                    )
+                }
+                Spacer(modifier = Modifier.size(12.dp))
                 CallControl(
                     icon = if (state.sharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare,
                     label = if (state.sharing) "Stop share" else "Share",
@@ -258,7 +300,7 @@ fun CallOverlay(
                     onClick = onToggleScreenShare,
                     tag = "call_share_btn"
                 )
-                Spacer(modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.size(12.dp))
                 CallControl(
                     icon = Icons.Default.CallEnd,
                     label = "End",
@@ -451,6 +493,90 @@ private fun ShareBanner(
                     .clip(RoundedCornerShape(999.dp))
                     .background(foreground)
                     .padding(horizontal = 10.dp, vertical = 3.dp)
+            )
+        }
+    }
+}
+
+/**
+ * The call shrunk to a pill: tap it to bring the stage back, red stays for hanging up.
+ */
+@Composable
+fun CompactCallBar(
+    state: CallState,
+    onExpand: () -> Unit,
+    onHangUp: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color(0xFF111C2E))
+            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(999.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClick = onExpand
+            )
+            .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
+            .testTag("compact_call_bar"),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF1D2939)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = state.peerName.take(1).uppercase().ifBlank { "P" },
+                style = MaterialTheme.typography.titleMedium,
+                color = Color(0xFF93C5FD)
+            )
+        }
+        Spacer(modifier = Modifier.size(9.dp))
+        Column(modifier = Modifier.weight(1f, fill = false)) {
+            Text(
+                text = state.peerName.ifBlank { if (state.conference) "Group call" else "Call" },
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = when {
+                    state.cameraOn || state.sharing -> "Video on · tap to expand"
+                    state.connected -> "Connected · tap to expand"
+                    else -> state.status.ifBlank { "Ringing…" }
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF9CA3AF),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.size(8.dp))
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFDC2626))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClick = onHangUp
+                )
+                .testTag("compact_call_end"),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.CallEnd,
+                contentDescription = "End call",
+                tint = Color.White,
+                modifier = Modifier.size(19.dp)
             )
         }
     }

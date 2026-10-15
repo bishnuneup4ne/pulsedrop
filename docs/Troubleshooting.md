@@ -22,11 +22,14 @@ the release notes) and proceed.
 
 ## Browser can't use camera/mic/screen
 
-You opened the **http** address. Browsers only expose capture APIs on secure origins.
+You reached the page over plain **http**. Browsers only expose capture APIs on secure
+origins.
 
-**Fix:** use the **https** address (port 8081) shown by the QR/server card and accept the
-self-signed certificate warning once. The web UI shows a toast when it detects it is not a
-secure context.
+**Fix:** the phone bounces `http://…:8080` to `https://…:8081` automatically, so just
+accept the self-signed certificate warning once and the redirect lands you on the secure
+origin. If it never redirects (a stale cache can pin the http URL), type the **https**
+address (port + 1) yourself. The web UI shows a toast when it detects it is not a secure
+context.
 
 ## Calls don't connect
 

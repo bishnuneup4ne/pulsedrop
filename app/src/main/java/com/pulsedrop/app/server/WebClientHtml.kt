@@ -740,6 +740,14 @@ object WebClientHtml {
       pointer-events: none;
     }
     .feed-slot.small .pip-hint { display: flex; }
+    .pip-flip {
+      position: absolute; z-index: 3; right: 7px; top: 7px; display: none;
+      width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer;
+      align-items: center; justify-content: center;
+      color: #E2E8F0; background: rgba(7, 11, 20, .62);
+    }
+    .pip-flip.show { display: flex; }
+    .pip-flip svg { pointer-events: none; }
     .call-dock {
       position: relative; z-index: 5; display: flex; align-items: center; justify-content: center;
       gap: 16px; padding: 22px 18px 30px;
@@ -1244,6 +1252,9 @@ object WebClientHtml {
       </div>
       <div class="feed-slot small call-pip" id="callPip" style="display: none">
         <video id="callSelf" class="self-cam" autoplay playsinline muted></video>
+        <button class="pip-flip" id="callFlip" title="Switch camera" aria-label="Switch camera" onclick="flipCallCamera()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4h9a4 4 0 0 1 0 8H8"/><path d="M16 2l2 2-2 2"/><path d="M16 20H8a4 4 0 0 1 0-8h8"/><path d="M8 18l-2 2 2 2"/></svg>
+        </button>
         <div class="call-pip-off" id="callPipOff">Camera off</div>
         <div class="pip-hint" aria-hidden="true">tap to swap</div>
       </div>
@@ -3507,6 +3518,8 @@ object WebClientHtml {
       el('callCam').classList.toggle('active', live.camOn);
       el('callCam').classList.toggle('slated', !live.camOn);
       el('callCamLab').textContent = live.camOn ? 'Camera' : 'Camera off';
+      // The lens swap belongs to a live camera feed, not a shared screen.
+      el('callFlip').classList.toggle('show', live.camOn && !live.sharing);
       var on = call.state === 'accepted';
       el('callPip').style.display = (on && (call.video || live.camOn || live.sharing)) ? 'block' : 'none';
       layoutSlots();
@@ -3526,16 +3539,19 @@ object WebClientHtml {
 
     async function startCall(video) {
       var res;
+      /* Dialing from inside a group thread invites the whole group once the phone answers. */
+      var inGroup = currentThread && currentThread.indexOf('group:') === 0;
       try {
         res = await fetch('/api/call/web', {
           method: 'POST',
           headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, authHeaders()),
-          body: JSON.stringify({ action: 'ring', name: MY_NAME, video: !!video })
+          body: JSON.stringify({ action: 'ring', name: MY_NAME, video: !!video, group: inGroup ? currentThread : '' })
         });
       } catch (e) { toast('Phone is unreachable'); return; }
       if (!res.ok) { toast('Could not start the call'); return; }
       var j = await res.json().catch(function () { return {}; });
       if (!j.success) { toast(j.error || 'A call is already up'); return; }
+      if (inGroup) toast('Group call — the phones join when the owner answers');
       showCall(j.cid, video, 'out', 'ringing', 0);
     }
 
@@ -3783,7 +3799,7 @@ object WebClientHtml {
       try {
         var stream = await md.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          video: call.video ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false
+          video: call.video ? camConstraints() : false
         });
         attachMic(stream);
         if (call.video) {
@@ -3807,11 +3823,40 @@ object WebClientHtml {
       sendCallState();
     }
 
+    var camFacing = 'user';
+
+    function camConstraints() {
+      return {
+        facingMode: { ideal: camFacing },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      };
+    }
+
+    // Phones have two lenses; laptops only answer one facing, so fall back quietly.
+    function flipCallCamera() {
+      if (!live.camStream) return;
+      var other = camFacing === 'user' ? 'environment' : 'user';
+      var md = navigator.mediaDevices;
+      if (!md || !md.getUserMedia) return;
+      md.getUserMedia({ video: { facingMode: { exact: other }, width: { ideal: 1280 }, height: { ideal: 720 } } })
+        .then(function (s) {
+          live.camStream.getVideoTracks().forEach(function (t) { t.stop(); });
+          live.camStream = s;
+          camFacing = other;
+          el('callSelf').srcObject = s;
+          if (!live.camOn) toggleCallCamera();
+          syncSelfView();
+          callHint('');
+        })
+        .catch(function () { callHint('Only one camera on this device'); });
+    }
+
     function toggleCallCamera() {
       if (!live.camStream) {
         var md = navigator.mediaDevices;
         if (!md || !md.getUserMedia) { callHint('This origin cannot use the camera'); return; }
-        md.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } } })
+        md.getUserMedia({ video: camConstraints() })
           .then(function (s) {
             live.camStream = s;
             live.camOn = true;
@@ -3876,6 +3921,7 @@ object WebClientHtml {
       live.micStream = live.camStream = live.shareStream = null;
       live.up = []; live.sending = 0; live.gotFrame = false;
       live.sharing = false; live.camOn = false; live.next = 0;
+      camFacing = 'user';
       pdMuted = false;
       el('callSelf').srcObject = null;
       el('callRemote').style.display = 'none';
@@ -3916,6 +3962,9 @@ object WebClientHtml {
     });
     wireSlot(el('slotRemote'));
     wireSlot(el('callPip'));
+    // The lens-swap button sits inside a slot that answers to tap and drag; its presses
+    // must never reach the slot handlers.
+    el('callFlip').addEventListener('pointerdown', function (e) { e.stopPropagation(); });
 
 
     /* ===== Global keys ===== */

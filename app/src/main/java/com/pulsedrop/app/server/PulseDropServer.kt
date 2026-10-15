@@ -39,7 +39,9 @@ data class WebCall(
     val state: String,
     val updatedAt: Long = System.currentTimeMillis(),
     /** True when the phone dialled the browser, so each side knows which end it is. */
-    val outgoing: Boolean = false
+    val outgoing: Boolean = false,
+    /** Paired devices to invite once this is answered - a group call dialled from a browser. */
+    val groupPids: List<String> = emptyList()
 )
 
 interface ServerTransferListener {
@@ -208,7 +210,11 @@ class PulseDropServer(
         when (call.state) {
             "accepted" -> if (!engine.state.value.active) {
                 markActivity()
-                engine.startWebCall(call.video, webClientName(call.ip))
+                if (call.groupPids.isNotEmpty()) {
+                    engine.startWebCallGroup(call.video, webClientName(call.ip), call.groupPids)
+                } else {
+                    engine.startWebCall(call.video, webClientName(call.ip))
+                }
             }
             "ended", "declined" -> if (engine.state.value.peerPid ==
                 com.pulsedrop.app.call.CallEngine.WEB_PID
@@ -331,6 +337,9 @@ class PulseDropServer(
 
     @Volatile private var tlsServer: NanoHTTPD? = null
     @Volatile private var tlsHosts: List<String> = emptyList()
+    @Volatile private var tlsStopped = false
+    private var tlsFactory: javax.net.ssl.SSLServerSocketFactory? = null
+    private var tlsFactoryHosts: List<String> = emptyList()
 
     // NanoHTTPD's legacy session carries no secure flag, so the TLS delegate marks its
     // own worker threads and the redirect below asks them instead.
@@ -338,11 +347,17 @@ class PulseDropServer(
 
     override fun start() {
         super.start()
+        current = this
+        tlsStopped = false
         ensureTls()
     }
 
     override fun stop() {
+        // Flag first: the TLS builder thread checks this, otherwise a delegate that
+        // finishes binding after stop() would orphan port 8081 on a dead server.
+        tlsStopped = true
         synchronized(this) { tlsServer?.stop(); tlsServer = null }
+        if (current === this) current = null
         super.stop()
     }
 
@@ -353,6 +368,7 @@ class PulseDropServer(
     }
 
     private fun restartTls() {
+        if (tlsStopped) return
         synchronized(this) {
             tlsServer?.stop()
             tlsServer = null
@@ -361,29 +377,54 @@ class PulseDropServer(
     }
 
     private fun ensureTls() {
-        if (tlsServer != null) return
+        if (tlsServer != null || tlsStopped) return
         // RSA keypair generation is not free, and start() can be reached from a click handler.
         Thread {
-            try {
-                val hosts = listOf(NetworkUtils.getLocalIpAddress()).filter { it.isNotBlank() } + tlsHosts
-                val factory = WebTls.socketFactory(hosts)
-                val delegate = object : NanoHTTPD(tlsPort) {
-                    override fun serve(session: IHTTPSession): Response {
-                        secureOrigin.set(true)
-                        try {
-                            return this@PulseDropServer.serve(session)
-                        } finally {
-                            secureOrigin.set(false)
+            // A restart can collide with the previous delegate's closing socket; settle
+            // and retry instead of silently losing the secure origin.
+            var attempt = 0
+            while (!tlsStopped && ++attempt <= 4) {
+                try {
+                    val hosts = listOf(NetworkUtils.getLocalIpAddress()).filter { it.isNotBlank() } + tlsHosts
+                    // Reuse the keypair across retries so the browser's cert warning
+                    // doesn't reset every time the listener bounces.
+                    var factory = tlsFactory
+                    if (factory == null || tlsFactoryHosts != hosts) {
+                        factory = WebTls.socketFactory(hosts)
+                        tlsFactory = factory
+                        tlsFactoryHosts = hosts
+                    }
+                    if (tlsStopped) return@Thread
+                    val delegate = object : NanoHTTPD(tlsPort) {
+                        override fun serve(session: IHTTPSession): Response {
+                            secureOrigin.set(true)
+                            try {
+                                return this@PulseDropServer.serve(session)
+                            } finally {
+                                secureOrigin.set(false)
+                            }
                         }
                     }
+                    delegate.tempFileManagerFactory = androidTempFiles()
+                    delegate.makeSecure(factory, null)
+                    delegate.start(SOCKET_READ_TIMEOUT, false)
+                    if (tlsStopped) {
+                        try { delegate.stop() } catch (ignored: Exception) {}
+                        return@Thread
+                    }
+                    synchronized(this) {
+                        tlsHosts = hosts
+                        tlsServer = delegate
+                    }
+                    return@Thread
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    try {
+                        Thread.sleep(400L * attempt)
+                    } catch (ie: InterruptedException) {
+                        return@Thread
+                    }
                 }
-                delegate.tempFileManagerFactory = androidTempFiles()
-                delegate.makeSecure(factory, null)
-                delegate.start(SOCKET_READ_TIMEOUT, false)
-                tlsHosts = hosts
-                tlsServer = delegate
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
         }.apply { isDaemon = true }.start()
     }
@@ -711,12 +752,23 @@ class PulseDropServer(
                             ) {
                                 jsonResponse(false, "error" to "A call is already up")
                             } else {
+                                // A tab dialling from inside a group thread asks the phone to
+                                // bridge the whole group once it answers.
+                                val gid = json.optString("group").removePrefix("group:")
+                                val pids = if (gid.isNotBlank()) {
+                                    pairManager?.groups?.value
+                                        ?.firstOrNull { it.id == gid }?.memberPids
+                                        .orEmpty()
+                                } else {
+                                    emptyList()
+                                }
                                 val call = WebCall(
                                     cid = json.optString("cid", UUID.randomUUID().toString()),
                                     name = json.optString("name", "Browser $clientIp"),
                                     ip = clientIp,
                                     video = json.optBoolean("video", false),
-                                    state = "ringing"
+                                    state = "ringing",
+                                    groupPids = pids
                                 )
                                 webCall = call
                                 listener.onWebCall(call)
@@ -1554,7 +1606,23 @@ class PulseDropServer(
         response.addHeader("Access-Control-Allow-Headers", "Content-Type, X-Pulse-Auth")
     }
 
-    private companion object {
+    companion object {
+        /** The instance holding our port right now, so a restart can kill a stray listener. */
+        @Volatile
+        var current: PulseDropServer? = null
+
+        /** Stop any forgotten instance still bound to the port (e.g. after a ViewModel swap). */
+        fun silenceStray(except: PulseDropServer?) {
+            val stray = current
+            if (stray != null && stray !== except) {
+                try {
+                    stray.stop()
+                } catch (ignored: Exception) {
+                }
+                if (current === stray) current = null
+            }
+        }
+
         val WEB_FONTS = mapOf(
             "/fonts/google-sans-regular.ttf" to R.font.google_sans_regular,
             "/fonts/google-sans-medium.ttf" to R.font.google_sans_medium,

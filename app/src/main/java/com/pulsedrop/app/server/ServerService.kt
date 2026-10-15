@@ -39,9 +39,24 @@ class ServerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
+        if (action == null) {
+            // START_STICKY redelivery after the system killed us. The server died with the
+            // process, so don't post a "running" notification over a closed port: only stay
+            // up when a live server actually exists in this process.
+            if (hostedServer?.isAlive == true) {
+                val notification = buildIdleNotification(currentServerUrl)
+                startForeground(NOTIFICATION_ID, notification)
+                owner = this
+                return START_STICKY
+            }
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (action == ACTION_STOP) {
             // Stop the HTTP server too: leaving it running behind a dead notification means
             // Android kills the process at an arbitrary time and the server dies mid-transfer.
+            userStopped = true
             stopHostedServer()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -62,6 +77,7 @@ class ServerService : Service() {
         }
 
         currentServerUrl = intent?.getStringExtra(EXTRA_URL) ?: currentServerUrl
+        userStopped = false
         val notification = buildIdleNotification(currentServerUrl)
         startForeground(NOTIFICATION_ID, notification)
         owner = this
@@ -172,6 +188,10 @@ class ServerService : Service() {
          */
         @Volatile
         var hostedServer: PulseDropServer? = null
+
+        /** True when the last shutdown came from the notification's Stop action. */
+        @Volatile
+        var userStopped = false
 
         /** The service instance currently responsible for [hostedServer]; see onDestroy. */
         @Volatile

@@ -34,6 +34,14 @@ Full guides live in [`docs/`](docs/Home.md):
 Files shared from any app land in `WebDrop_Received/` in the app's external storage; PulseDrop
 also appears in the system share sheet (`SEND` / `SEND_MULTIPLE`).
 
+## Keeping up to date
+
+The Server screen shows the current version and a **Check for updates** button, and every app
+launch quietly asks GitHub for a newer release. When one exists, PulseDrop downloads the APK
+in-app and hands it to the system installer — no browser trip and no hunting for the file.
+The first time, Android asks you to allow PulseDrop to install apps; tap **Install** again
+after granting it.
+
 ## Requirements
 
 - **Building:** an Android SDK providing `compileSdk` 36, and any JDK 21+ to launch the wrapper.
@@ -132,9 +140,9 @@ POST /api/webcall/up        browser media uplink (batched frames)
   is a local-network tool with no certificate authority available to it. Threat model is a
   trusted Wi-Fi/hotspot, not a hostile network. A TLS side-listener also runs on the HTTP
   port + 1 (8081 by default) with a process-lifetime self-signed certificate: browsers only
-  expose `getUserMedia`/`getDisplayMedia` on a secure origin, so voice/video/screen-share
-  calls with a PC require the `https://` address shown in the app (accept the certificate
-  warning once per browser).
+  expose `getUserMedia`/`getDisplayMedia` on a secure origin, so the app always shows the plain
+  `http://` address and bounces browser visits to the `https://` port on its behalf (accept the
+  certificate warning once per browser).
 - **PIN:** 4 digits, enforced per client IP. Eight *distinct* wrong values trigger a 60 s
   lockout that doubles on further bursts (capped at ~16 min). A stale token repeated by an old
   browser tab counts once, not once per poll.

@@ -72,6 +72,7 @@ data class CallState(
     val video: Boolean = false,
     val muted: Boolean = false,
     val cameraOn: Boolean = false,
+    val cameraFront: Boolean = false,
     val sharing: Boolean = false,
     val peerSharing: Boolean = false,
     val status: String = "",
@@ -123,6 +124,10 @@ class CallEngine(
     private var track: AudioTrack? = null
     private var camera: Camera? = null
     @Volatile private var cameraParams: Camera.Parameters? = null
+    @Volatile private var requestedFront = false
+    @Volatile private var frameRotation = 0
+    @Volatile private var lastCamFrameAt = 0L
+    private val cameraFrameMs = 200L
     /** SurfaceView holder the call overlay attaches to for the local self-preview. */
     @Volatile private var previewHolder: android.view.SurfaceHolder? = null
     private var savedAudioMode = AudioManager.MODE_NORMAL
@@ -144,6 +149,18 @@ class CallEngine(
     private val webOut = java.util.concurrent.LinkedBlockingQueue<ByteArray>(96)
     /** A batch may end mid-frame, so the remainder waits here for the next one. */
     private val pendingIn = java.io.ByteArrayOutputStream(64 * 1024)
+
+    /**
+     * A browser tab riding along in a hosted conference. The host is the bridge, so this is
+     * the only shape where web media and socket legs exist at the same time: member audio
+     * arrives per-leg and leaves to the tab as one mixed stream.
+     */
+    @Volatile private var webAttached = false
+    @Volatile private var webTabName = ""
+    @Volatile private var webMuted = false
+    @Volatile private var webSharing = false
+    private val webAudioLatest = java.util.concurrent.ConcurrentHashMap<String, Pair<ByteArray, Long>>()
+    @Volatile private var webMixThread: Thread? = null
 
     /** Host-side fan-out: one leg per joined member, each with its own reader thread. */
     private class ConfLeg(
@@ -435,7 +452,7 @@ class CallEngine(
     // ---- media ------------------------------------------------------------
 
     /** True while the far end of the live call is a browser tab rather than a paired device. */
-    fun hasWebLeg(): Boolean = webOnly && running
+    fun hasWebLeg(): Boolean = (webOnly || webAttached) && running
 
     /**
      * Bring up a call whose other end is a browser tab. There is no socket to dial: the frames
@@ -465,17 +482,112 @@ class CallEngine(
         }
     }
 
-    /** Tear a browser leg down from the server side, with no peer socket to notify. */
-    fun stopWebCall(reason: String = "Call ended") {
-        if (!webOnly) return
-        reset(reason)
+    /**
+     * A browser dialled this phone and asked for a whole group. The phone answers as host of
+     * a star conference, the tab rides in as an extra seat, and every member device gets its
+     * normal incoming group-call invite - so calling from a browser rings everybody, not
+     * just the phone the tab happens to be served by.
+     */
+    fun startWebCallGroup(video: Boolean, tabName: String, pids: List<String>) {
+        val pm = pairManager() ?: return
+        if (_state.value.active) { toast.value = "Already in a call"; return }
+        val members = pids.mapNotNull { pm.findPairing(it) }.distinctBy { it.pid }.take(MAX_CONF_MEMBERS)
+        if (members.isEmpty()) {
+            startWebCall(video, tabName)
+            return
+        }
+
+        val newCid = UUID.randomUUID().toString()
+        cid = newCid
+        confId = newCid
+        webAttached = true
+        webTabName = tabName.ifBlank { "Browser" }
+        running = true
+        mediaStarted = true
+        webOut.clear()
+        synchronized(pendingIn) { pendingIn.reset() }
+        _state.value = CallState(
+            active = true, video = video,
+            peerName = webTabName, peerPid = WEB_PID,
+            conference = true, isHost = true, confId = newCid,
+            status = "Group call from $webTabName…",
+            participants = members.map { CallParticipant(it.pid, it.name, false) } +
+                CallParticipant(HOST_SRC, nameProvider(), true) +
+                CallParticipant(WEB_PID, webTabName, true)
+        )
+
+        val (myIp, myPort) = endpointProvider()
+        confInvitees.clear()
+        members.forEach { confInvitees[it.pid] = it.name }
+        openCallAudioRoute()
+        startAudioInOut()
+        if (video) startCamera()
+        startWebMixer()
+        scope.launch(Dispatchers.IO) {
+            var reached = 0
+            members.forEach { peer ->
+                val body = JSONObject()
+                    .put("cid", newCid)
+                    .put("conf", newCid)
+                    .put("name", nameProvider())
+                    .put("pid", peer.pid)
+                    .put("video", video)
+                    .put("myIp", myIp)
+                    .put("myPort", myPort)
+                    .toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                try {
+                    client.newCall(
+                        Request.Builder().url("http://${peer.originIp}:${peer.originPort}/api/call/invite")
+                            .post(body).build()
+                    ).execute().close()
+                    reached++
+                } catch (e: Exception) {
+                    confInvitees.remove(peer.pid)
+                }
+            }
+            if (reached == 0) {
+                confInvitees.clear()
+                // Nobody could be dialled; the tab and this phone still have each other.
+                _state.value = _state.value.copy(connected = true, status = "In call with $webTabName")
+                broadcastConfState()
+                return@launch
+            }
+            var waited = 0
+            while (waited < RING_TIMEOUT_MS.toInt() && _state.value.active && confInvitees.isNotEmpty()) {
+                delay(500); waited += 500
+                val keys = synchronized(responses) { responses.keys.filter { it.startsWith("$newCid|") } }
+                keys.forEach { key ->
+                    val answer = synchronized(responses) { responses.remove(key) } ?: return@forEach
+                    val who = key.substringAfter("|")
+                    val ip = answer.optString("mediaIp")
+                    val port = answer.optInt("mediaPort", 0)
+                    if (answer.optBoolean("accept", false) && ip.isNotBlank() && port > 0) {
+                        dialLeg(who, ip, port)
+                    }
+                    confInvitees.remove(who)
+                    broadcastConfState()
+                }
+            }
+            if (!_state.value.active) return@launch
+            val live = legs.values.count { it.connected }
+            _state.value = _state.value.copy(
+                connected = true,
+                status = if (live > 0) "Group call · ${live + 2} devices" else "In call with $webTabName"
+            )
+            broadcastConfState()
+        }
     }
 
+    /** Tear a browser leg down from the server side, with no peer socket to notify. */
+    fun stopWebCall(reason: String = "Call ended") {
+        if (!webOnly && !webAttached) return
+        reset(reason)
+    }
     /** Block for the next frame headed to the tab. Null means the leg is gone. */
     fun nextWebOutFrame(timeoutMs: Long): ByteArray? {
-        if (!webOnly) return null
+        if (!webOnly && !webAttached) return null
         val f = webOut.poll(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-        return if (f == null && !webOnly) null else f
+        return if (f == null && !webOnly && !webAttached) null else f
     }
 
     /**
@@ -483,7 +595,7 @@ class CallEngine(
      * partial frame is held until the next batch completes it.
      */
     fun ingestWebFrames(bytes: ByteArray) {
-        if (!webOnly || !running) return
+        if ((!webOnly && !webAttached) || !running) return
         synchronized(pendingIn) {
             if (bytes.isNotEmpty()) pendingIn.write(bytes)
             val buf = pendingIn.toByteArray()
@@ -496,7 +608,23 @@ class CallEngine(
                     (buf[i + 4].toInt() and 0xFF)
                 if (len <= 0 || len > 4 * 1024 * 1024) { i = buf.size; break }
                 if (i + 5 + len > buf.size) break
-                handleFrame(WEB_PID, type, buf.copyOfRange(i + 5, i + 5 + len))
+                val payload = buf.copyOfRange(i + 5, i + 5 + len)
+                handleFrame(WEB_PID, type, payload)
+                // In a hosted conference the tab is a seat like any other member.
+                if (webAttached && !webOnly) {
+                    when (type) {
+                        TYPE_AUDIO, TYPE_CAMERA, TYPE_SCREEN ->
+                            relayToLegs(WEB_PID, null, type, payload)
+                        TYPE_SCREEN_STATE -> {
+                            val obj = try { JSONObject(String(payload, Charsets.UTF_8)) } catch (e: Exception) { null }
+                            if (obj != null) {
+                                webSharing = obj.optBoolean("sharing", false)
+                                webMuted = obj.optBoolean("muted", false)
+                                broadcastConfState()
+                            }
+                        }
+                    }
+                }
                 i += 5 + len
             }
             pendingIn.reset()
@@ -545,6 +673,8 @@ class CallEngine(
             legs.values.forEach { leg ->
                 if (!writeTo(leg.out, type, payload)) reapLeg(leg.pid)
             }
+            // A browser riding the conference receives the host's own frames directly.
+            if (webAttached) writeWebFrame(type, payload)
             return
         }
         val o = out ?: return
@@ -590,7 +720,7 @@ class CallEngine(
     }
 
     /** Forward one member's frames to everyone else, tagged with who sent them. */
-    private fun relayToLegs(fromPid: String, legOut: DataOutputStream, type: Int, payload: ByteArray) {
+    private fun relayToLegs(fromPid: String, legOut: DataOutputStream?, type: Int, payload: ByteArray) {
         val relayType: Int
         val body: ByteArray?
         when (type) {
@@ -607,7 +737,7 @@ class CallEngine(
         }
         if (body == null) return
         legs.values.forEach { leg ->
-            if (leg.out === legOut) return@forEach
+            if (legOut != null && leg.out === legOut) return@forEach
             if (!writeTo(leg.out, relayType, body)) reapLeg(leg.pid)
         }
     }
@@ -897,6 +1027,7 @@ class CallEngine(
                     handleFrame(leg.pid, type, payload)
                     if (type == TYPE_AUDIO || type == TYPE_CAMERA || type == TYPE_SCREEN) {
                         relayToLegs(leg.pid, leg.out, type, payload)
+                        if (webAttached) feedWebLeg(type, leg.pid, payload)
                     }
                 }
             } catch (e: Exception) {
@@ -938,6 +1069,14 @@ class CallEngine(
             .put("muted", _state.value.muted)
             .put("sharing", _state.value.sharing)
         if (_state.value.isHost) arr.put(me)
+        if (_state.value.isHost && webAttached) arr.put(
+            JSONObject()
+                .put("pid", WEB_PID)
+                .put("name", webTabName.ifBlank { "Browser" })
+                .put("connected", true)
+                .put("muted", webMuted)
+                .put("sharing", webSharing)
+        )
         return arr
     }
 
@@ -951,6 +1090,49 @@ class CallEngine(
             applyRoster(json)
         }
         // Members only ever receive the roster from the host.
+    }
+
+    /**
+     * A tab has one remote feed, not a grid: audio from every member is summed into one chunk
+     * stream by [startWebMixer], and video forwards whoever spoke last. Group calling from a
+     * browser is a bridge with a guest seat, so hearing everyone is the part that must work.
+     */
+    private fun feedWebLeg(type: Int, fromPid: String, payload: ByteArray) {
+        when (type) {
+            TYPE_AUDIO -> webAudioLatest[fromPid] = payload to System.currentTimeMillis()
+            TYPE_CAMERA, TYPE_SCREEN -> writeWebFrame(type, payload)
+        }
+    }
+
+    private fun startWebMixer() {
+        if (webMixThread != null) return
+        webMixThread = Thread {
+            val samples = AUDIO_CHUNK / 2
+            while (running && (webOnly || webAttached)) {
+                val now = System.currentTimeMillis()
+                val live = webAudioLatest.entries.filter { it.value.second > now - 400 }
+                if (live.isNotEmpty()) {
+                    val acc = IntArray(samples)
+                    live.forEach { (_, v) ->
+                        val pcm = v.first
+                        var i = 0
+                        var s = 0
+                        while (i + 1 < pcm.size && s < samples) {
+                            acc[s] += (((pcm[i].toInt() and 0xFF) or (pcm[i + 1].toInt() shl 8)).toShort()).toInt()
+                            i += 2; s++
+                        }
+                    }
+                    val mixed = ByteArray(samples * 2)
+                    for (k in 0 until samples) {
+                        val clamped = acc[k].coerceIn(-32768, 32767).toShort().toInt()
+                        mixed[k * 2] = (clamped and 0xFF).toByte()
+                        mixed[k * 2 + 1] = ((clamped shr 8) and 0xFF).toByte()
+                    }
+                    writeWebFrame(TYPE_AUDIO, mixed)
+                }
+                try { Thread.sleep(100) } catch (e: InterruptedException) { break }
+            }
+        }.apply { isDaemon = true; name = "PulseDropWebMix"; start() }
     }
 
     private fun applyRoster(bytes: ByteArray) {
@@ -1031,7 +1213,19 @@ class CallEngine(
         Handler(thread.looper).post {
             var opened: Camera? = null
             try {
-                val cam = Camera.open(0)
+                val camId = findCameraId(requestedFront)
+                var cam: Camera? = null
+                // Flipping lenses releases the old sensor on its own thread; the new open
+                // can land a beat early and hit "device busy", so give the release a moment.
+                var tries = 0
+                while (cam == null) {
+                    try {
+                        cam = Camera.open(camId)
+                    } catch (e: Exception) {
+                        if (++tries >= 3) throw e
+                        Thread.sleep(220)
+                    }
+                }
                 opened = cam
                 if (generation != cameraGeneration) {
                     // Toggled off, or the call ended, while the sensor was opening.
@@ -1039,28 +1233,73 @@ class CallEngine(
                     opened = null
                     return@post
                 }
+                val info = Camera.CameraInfo()
+                try { Camera.getCameraInfo(camId, info) } catch (e: Exception) { }
+                val isFront = info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT
+                frameRotation = info.orientation
                 val params = cam.parameters
-                val best = params.supportedPreviewSizes.minByOrNull {
-                    kotlin.math.abs(it.width - 480) + kotlin.math.abs(it.height - 360)
-                }
-                val bw = best?.width ?: 480
-                val bh = best?.height ?: 360
+                // Keep the feed light enough to ride the Wi-Fi at a steady frame rate,
+                // but take the biggest size under that cap — phones offer far more than 480x360.
+                val sizes = params.supportedPreviewSizes
+                fun areaOf(s: Camera.Size) = s.width.toLong() * s.height
+                val cap = 1280L * 720L
+                val best = sizes.filter { areaOf(it) <= cap }.maxByOrNull { areaOf(it) }
+                    ?: sizes.minByOrNull {
+                        kotlin.math.abs(it.width - 640) + kotlin.math.abs(it.height - 480)
+                    }
+                val bw = best?.width ?: 640
+                val bh = best?.height ?: 480
                 params.setPreviewSize(bw, bh)
-                try { params.set("rotation", 90) } catch (e: Exception) { }
                 cam.parameters = params
                 cameraParams = params
+                // On-screen preview must follow the sensor or the self-view shows up sideways.
+                try {
+                    val wm = context.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
+                    @Suppress("DEPRECATION")
+                    val degrees = (wm?.defaultDisplay?.rotation ?: android.view.Surface.ROTATION_0) * 90
+                    val displayRotation = if (isFront) {
+                        (360 - (info.orientation + degrees) % 360) % 360
+                    } else {
+                        (info.orientation - degrees + 360) % 360
+                    }
+                    cam.setDisplayOrientation(displayRotation)
+                } catch (e: Exception) { }
                 cam.addCallbackBuffer(ByteArray(bw * bh * 3 / 2))
                 cam.setPreviewCallbackWithBuffer(object : Camera.PreviewCallback {
                     override fun onPreviewFrame(data: ByteArray?, camera: Camera?) {
                         if (data == null || !running || !_state.value.cameraOn) return
+                        val now = System.currentTimeMillis()
+                        // Sensors fire at 15-30 fps; the peer wants a steady ~5 fps stream.
+                        // Sending every frame is what makes the feed stutter on 2.4 GHz links.
+                        if (now - lastCamFrameAt < cameraFrameMs) {
+                            cam.addCallbackBuffer(data)
+                            return
+                        }
+                        lastCamFrameAt = now
                         try {
                             val p = cameraParams
                             val w = p?.previewSize?.width ?: bw
                             val h = p?.previewSize?.height ?: bh
                             val yuv = YuvImage(data, ImageFormat.NV21, w, h, null)
                             val bos = ByteArrayOutputStream()
-                            yuv.compressToJpeg(Rect(0, 0, w, h), 45, bos)
-                            writeFrame(TYPE_CAMERA, bos.toByteArray())
+                            yuv.compressToJpeg(Rect(0, 0, w, h), 62, bos)
+                            var bytes = bos.toByteArray()
+                            if (frameRotation != 0) {
+                                val src = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                if (src != null) {
+                                    val m = android.graphics.Matrix()
+                                    m.postRotate(frameRotation.toFloat())
+                                    val upright = Bitmap.createBitmap(
+                                        src, 0, 0, src.width, src.height, m, true
+                                    )
+                                    val bos2 = ByteArrayOutputStream()
+                                    upright.compress(Bitmap.CompressFormat.JPEG, 62, bos2)
+                                    bytes = bos2.toByteArray()
+                                    if (upright !== src) src.recycle()
+                                    upright.recycle()
+                                }
+                            }
+                            writeFrame(TYPE_CAMERA, bytes)
                         } catch (e: Exception) { }
                         cam.addCallbackBuffer(data)
                     }
@@ -1073,7 +1312,7 @@ class CallEngine(
                 }
                 cam.startPreview()
                 camera = cam
-                _state.value = _state.value.copy(cameraOn = true, video = true)
+                _state.value = _state.value.copy(cameraOn = true, video = true, cameraFront = isFront)
             } catch (e: Exception) {
                 try { opened?.release() } catch (ignored: Exception) { }
                 camera = null
@@ -1087,6 +1326,25 @@ class CallEngine(
                 }
             }
         }
+    }
+
+    /** Nearest requested lens, falling back to whatever the device actually has. */
+    private fun findCameraId(front: Boolean): Int {
+        val want = if (front) {
+            Camera.CameraInfo.CAMERA_FACING_FRONT
+        } else {
+            Camera.CameraInfo.CAMERA_FACING_BACK
+        }
+        var fallback = -1
+        try {
+            for (i in 0 until Camera.getNumberOfCameras()) {
+                val info = Camera.CameraInfo()
+                Camera.getCameraInfo(i, info)
+                if (info.facing == want) return i
+                if (fallback < 0) fallback = i
+            }
+        } catch (e: Exception) { }
+        return if (fallback >= 0) fallback else 0
     }
 
     @Suppress("DEPRECATION")
@@ -1210,10 +1468,26 @@ class CallEngine(
         }
     }
 
+    /** Swap between the front and back lens; re-opens the sensor on the next id. */
+    fun switchCamera() {
+        requestedFront = !requestedFront
+        _state.value = _state.value.copy(cameraFront = requestedFront)
+        if (_state.value.cameraOn) {
+            stopCamera()
+            startCamera()
+        }
+    }
+
     private fun reset(reason: String) {
         running = false
         mediaStarted = false
         webOnly = false
+        webAttached = false
+        webTabName = ""
+        webMuted = false
+        webSharing = false
+        webMixThread = null
+        webAudioLatest.clear()
         webOut.clear()
         synchronized(pendingIn) { pendingIn.reset() }
         ringExpiryJob?.cancel()

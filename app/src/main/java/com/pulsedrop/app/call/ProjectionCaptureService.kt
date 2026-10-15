@@ -177,9 +177,12 @@ class ProjectionCaptureService : Service() {
                                 for (x in 0 until pw) {
                                     val i = rowBase + x * 4
                                     if (i + 3 >= padded.size) break
-                                    colors[y * pw + x] = (padded[i].toInt() and 0xFF) or
+                                    // Plane bytes are R,G,B,A; createBitmap wants the int as
+                                    // A<<24|R<<16|G<<8|B. Packing them in memory order swaps red
+                                    // and blue and is the green/magenta cast people reported.
+                                    colors[y * pw + x] = ((padded[i].toInt() and 0xFF) shl 16) or
                                             ((padded[i + 1].toInt() and 0xFF) shl 8) or
-                                            ((padded[i + 2].toInt() and 0xFF) shl 16) or
+                                            (padded[i + 2].toInt() and 0xFF) or
                                             ((padded[i + 3].toInt() and 0xFF) shl 24)
                                 }
                             }

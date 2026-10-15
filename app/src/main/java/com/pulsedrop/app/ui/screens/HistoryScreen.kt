@@ -114,7 +114,11 @@ fun HistoryScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                SectionTitle("History", "${filteredList.size} of ${historyList.size} records shown")
+                SectionTitle(
+                    "History",
+                    "${filteredList.size} of ${historyList.size} records",
+                    modifier = Modifier.weight(1f)
+                )
 
                 if (historyList.isNotEmpty()) {
                     Row(
@@ -130,7 +134,12 @@ fun HistoryScreen(
                             onClick = { showClearConfirm = true },
                             modifier = Modifier.testTag("clear_history_btn")
                         ) {
-                            Text("Clear all", color = colorScheme.error, style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                "Clear all",
+                                color = colorScheme.error,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1
+                            )
                         }
                     }
                 }

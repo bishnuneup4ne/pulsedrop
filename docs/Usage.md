@@ -5,12 +5,15 @@
 The phone is always the server. The home screen shows:
 
 - **Device name** — what clients see (editable).
-- **Address** — the secure `https://<ip>:<port+1>` URL for browsers, plus a QR code.
+- **Address** — the plain `http://<ip>:<port>` URL, plus a QR code. This is the only
+  address you ever type; the phone forwards browser visits to the secure port itself.
 - **PIN** — optional 4-digit gate shown when "Require PIN" is on.
 - **Start/Stop** — runs the HTTP server as a foreground service.
 
-Clients on the same Wi-Fi or hotspot open the address in any browser. The plain-HTTP
-port still works for pairing and app-to-app traffic; use **https** for browser calls.
+Clients on the same Wi-Fi or hotspot open that address in any browser. Pairing and
+app-to-app traffic use the plain-HTTP port directly; a browser that needs mic, camera, or
+screen share is bounced to `https://<ip>:<port+1>` automatically (see
+[Browser Calls (HTTPS)](Browser-Calls-HTTPS.md)).
 
 ## Files
 
@@ -48,4 +51,4 @@ history screen lets you re-download received files or clear entries.
 ## Hotspot guide
 
 The in-app guide walks through hosting on the phone's own hotspot when no Wi-Fi exists —
-clients join the hotspot, then open the same https address.
+clients join the hotspot, then open the same address the server card shows.

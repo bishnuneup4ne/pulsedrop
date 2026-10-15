@@ -18,6 +18,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -71,9 +74,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.pulsedrop.app.model.IncomingPairRequest
 import com.pulsedrop.app.model.PairedDevice
 import com.pulsedrop.app.model.PeerDevice
 import com.pulsedrop.app.model.PendingPairRequest
@@ -82,13 +85,13 @@ import com.pulsedrop.app.ui.components.PeerPinInputDialog
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RadarScreen(
     nearbyPeers: List<PeerDevice>,
     connectedPeer: UiPeerConnection?,
     peerConnecting: Boolean,
     pairedDevices: List<PairedDevice>,
-    incomingRequests: List<IncomingPairRequest>,
     pendingOutgoing: PendingPairRequest?,
     scanning: Boolean,
     onSendFilesToPeer: (PeerDevice, List<Uri>, String?) -> Unit,
@@ -96,8 +99,6 @@ fun RadarScreen(
     onDisconnectPeer: () -> Unit,
     onPair: (PeerDevice) -> Unit,
     onCancelPairRequest: () -> Unit,
-    onAcceptPair: (IncomingPairRequest) -> Unit,
-    onDeclinePair: (IncomingPairRequest) -> Unit,
     onUnpair: (String) -> Unit,
     safetyCodeOf: (String) -> String?,
     onToggleVerified: (String, Boolean) -> Unit,
@@ -278,6 +279,46 @@ fun RadarScreen(
                         style = MaterialTheme.typography.titleMedium,
                         color = if (nearbyPeers.isEmpty()) colorScheme.onSurfaceVariant else colorScheme.primary
                     )
+
+                    // Show what was found right at the top of the radar, not only further down.
+                    if (nearbyPeers.isNotEmpty()) {
+                        FlowRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            maxItemsInEachRow = 3
+                        ) {
+                            nearbyPeers.take(6).forEach { p ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(colorScheme.secondaryContainer)
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = p.name,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = colorScheme.onSecondaryContainer,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 150.dp)
+                                    )
+                                }
+                            }
+                            if (nearbyPeers.size > 6) {
+                                Text(
+                                    text = "+${nearbyPeers.size - 6} more",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
                     Text(
                         text = "Pairing sends an invite. You both must accept — then files and messages travel encrypted between your two devices only.",
                         style = MaterialTheme.typography.bodySmall,
@@ -703,78 +744,6 @@ fun RadarScreen(
                 }
                 peerRequiringPin = null
                 pendingUrisForPeer = emptyList()
-            }
-        )
-    }
-
-    val incoming = incomingRequests.firstOrNull()
-    if (incoming != null) {
-        AlertDialog(
-            onDismissRequest = { onDeclinePair(incoming) },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Link,
-                    contentDescription = null,
-                    tint = colorScheme.primary
-                )
-            },
-            title = { Text("Pairing request") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "${incoming.name} wants to pair with you.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text(
-                        text = "From ${incoming.myIp}:${incoming.myPort}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorScheme.onSurfaceVariant
-                    )
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = colorScheme.primaryContainer.copy(alpha = 0.5f))
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "Safety code",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = incoming.safetyCode,
-                                style = MaterialTheme.typography.headlineMedium,
-                                color = colorScheme.primary
-                            )
-                            Text(
-                                text = "Say this code out loud to the other person. If it matches on both screens, you are paired with each other — not someone else.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { onAcceptPair(incoming) },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.testTag("accept_pair_btn")
-                ) {
-                    Text("Accept & pair", style = MaterialTheme.typography.labelLarge)
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { onDeclinePair(incoming) },
-                    modifier = Modifier.testTag("decline_pair_btn")
-                ) {
-                    Text("Decline", color = colorScheme.error, style = MaterialTheme.typography.labelLarge)
-                }
             }
         )
     }

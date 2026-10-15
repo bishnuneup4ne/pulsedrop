@@ -67,7 +67,7 @@ data class UiServerState(
     val isRunning: Boolean = false,
     val ipAddress: String = "127.0.0.1",
     val port: Int = 8080,
-    val serverUrl: String = "https://127.0.0.1:8081",
+    val serverUrl: String = "http://127.0.0.1:8080",
     val isPinRequired: Boolean = false,
     val pin: String = "1234",
     val deviceName: String = "PulseDrop Phone",
@@ -149,6 +149,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val incomingCall = callEngine.incomingCall
     val remoteFrame = callEngine.remoteFrame
     val remoteFrames = callEngine.remoteFrames
+
+    val updateManager = com.pulsedrop.app.update.UpdateManager(context, viewModelScope)
 
     // ---- top-bar call notifications ---------------------------------------
 
@@ -244,13 +246,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 deviceName = settingsPrefs.getString("deviceName", null) ?: defaultDeviceName,
                 ipAddress = initialIp,
-                serverUrl = "https://$initialIp:${it.port + 1}",
+                serverUrl = "http://$initialIp:${it.port}",
                 isPinRequired = settingsPrefs.getBoolean("pinRequired", false),
                 pin = settingsPrefs.getString("pin", null) ?: generateRandomPin()
             )
         }
-        updateQrCode("https://$initialIp:${_serverState.value.port + 1}")
+        updateQrCode("http://$initialIp:${_serverState.value.port}")
         startIdleWatchdog()
+        // Hosting on launch means pairing never needs "start the server on BOTH phones":
+        // whichever app is open already answers the dial. If a previous ViewModel left the
+        // server listening, startServer() adopts it instead of fighting it for the port.
+        startServer()
 
         pairManager.nameProvider = { _serverState.value.deviceName }
         pairManager.endpointProvider = { _serverState.value.ipAddress to _serverState.value.port }
@@ -267,6 +273,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         startCallNotifications()
+
+        // Every app launch quietly looks for a newer release on GitHub.
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(4_000L)
+            updateManager.check(auto = true)
+        }
+        viewModelScope.launch {
+            updateManager.statusMessage.collect { msg ->
+                if (msg != null) _uiMessage.value = msg
+            }
+        }
     }
 
     private fun persistSettings() {
@@ -378,6 +395,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleCallCamera() = callEngine.toggleCamera()
 
+    fun switchCallCamera() = callEngine.switchCamera()
+
     fun attachCallPreview(holder: android.view.SurfaceHolder?) = callEngine.attachPreview(holder)
 
     fun stopScreenShare() = callEngine.stopScreenShare()
@@ -411,12 +430,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val server = serverInstance ?: continue
                 if (!_serverState.value.isRunning) continue
                 // The service (or the system) may have stopped the server underneath us;
-                // reconcile the UI instead of showing a server that is no longer listening.
+                // bring it back instead of leaving a dead card — unless the user pressed
+                // Stop on the notification, which is a real stop and must stick.
                 if (!server.isAlive) {
                     serverInstance = null
                     ServerService.hostedServer = null
                     _serverState.update { it.copy(isRunning = false, startedAt = 0L) }
-                    _uiMessage.value = "Server stopped"
+                    if (ServerService.userStopped) {
+                        _uiMessage.value = "Server stopped from the notification"
+                    } else {
+                        _uiMessage.value = "Server dropped — bringing it back up"
+                        startServer()
+                    }
                     continue
                 }
                 // Anything live keeps the server awake: an in-flight transfer or a call.
@@ -688,7 +713,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val ip = NetworkUtils.getLocalIpAddress()
         val currentPort = _serverState.value.port
         val previous = _serverState.value.ipAddress
-        val url = "https://$ip:${currentPort + 1}"
+        // The plain address is what people expect; since v1.2 the phone bounces browser
+        // visits from it onto the secure port on their behalf, so never show "+1" here.
+        val url = "http://$ip:$currentPort"
         _serverState.update {
             it.copy(
                 ipAddress = ip,
@@ -728,6 +755,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startServer() {
+        // Grab the reference before stopServer() clears it: a leftover ViewModel swap can
+        // leave the port bound by a server nobody remembers, and re-binding it ourselves
+        // is exactly the "port 8080 already in use" the user sees on a restart.
+        val stray = ServerService.hostedServer
         stopServer()
         refreshNetwork()
 
@@ -762,12 +793,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
-            val live = ServerService.hostedServer
-            val server = if (live != null && live.isAlive) {
+            PulseDropServer.silenceStray(null)
+            val server = if (stray != null && stray.isAlive) {
                 // A previous ViewModel left this server serving; take it over rather than
                 // trying to bind the same port and silently failing.
-                live.attachListener(listener)
-                live
+                stray.attachListener(listener)
+                stray
             } else {
                 PulseDropServer(
                     port = state.port,
@@ -787,7 +818,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             server.webCall?.takeIf { it.state == "ringing" || it.state == "accepted" }?.let {
                 _webCall.value = it
             }
-            if (!server.isAlive) server.start()
+            if (!server.isAlive) startWithSettle(server)
             serverInstance = server
             ServerService.publishServer(server)
             syncWebThreads()
@@ -836,6 +867,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         discoveryManager.stopDiscovery()
         ServerService.stopService(context)
         _serverState.update { it.copy(isRunning = false, startedAt = 0L) }
+    }
+
+    /**
+     * Bind with a short settle: a server stopped moments ago can keep the port a beat
+     * while its sockets close, and one retry beats telling the user their own port is taken.
+     */
+    private fun startWithSettle(server: PulseDropServer) {
+        var attempt = 0
+        while (true) {
+            try {
+                server.start()
+                return
+            } catch (e: Exception) {
+                if (e !is java.net.BindException || ++attempt >= 4) throw e
+                PulseDropServer.silenceStray(server)
+                try {
+                    Thread.sleep(350L * attempt)
+                } catch (ie: InterruptedException) {
+                    throw e
+                }
+            }
+        }
     }
 
     private fun restartServer() {
