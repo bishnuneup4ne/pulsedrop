@@ -56,6 +56,24 @@ Keystores and `signing.properties` are git-ignored — never commit them.
 Debug builds use AGP's built-in signing config, which generates `~/.android/debug.keystore`
 on demand.
 
+### Verifying a downloaded APK
+
+Every release ships `app-release.apk` signed with APK Signature Scheme v2 + v3. To confirm the
+file you downloaded is byte-for-byte what this repository published, compare its SHA-256
+(`sha256sum app-release.apk`) against the hash in the release notes. That hash doubles as the
+permanent VirusTotal link:
+
+```
+https://www.virustotal.com/gui/file/<sha256>
+```
+
+`.github/workflows/virustotal-scan.yml` submits each published release to VirusTotal
+automatically and posts the permalink as an issue — set the `VT_API_KEY` repository secret
+(free at VirusTotal → personal API key) to enable it. Without a key the workflow skips quietly.
+
+If installation reports "App not installed", an older PulseDrop signed with a different key is
+on the device — uninstall it first; Android cannot update across signing keys.
+
 ## Architecture
 
 ```
