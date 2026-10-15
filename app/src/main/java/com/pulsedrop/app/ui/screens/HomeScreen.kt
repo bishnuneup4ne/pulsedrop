@@ -185,7 +185,7 @@ fun HomeScreen(
                     PulseButton(
                         label = "Send files",
                         icon = Icons.AutoMirrored.Filled.Send,
-                        onClick = { onNavigate(PulseSection.DEVICES) },
+                        onClick = { onNavigate(PulseSection.SEND_FILES) },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("home_send_files")

@@ -62,10 +62,10 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -96,7 +96,9 @@ import com.pulsedrop.app.ui.screens.HistoryScreen
 import com.pulsedrop.app.ui.screens.HotspotGuideScreen
 import com.pulsedrop.app.ui.screens.IncomingCallCard
 import com.pulsedrop.app.ui.screens.IncomingCallStage
+import android.net.Uri
 import com.pulsedrop.app.ui.screens.DevicesScreen
+import com.pulsedrop.app.ui.screens.SendScreen
 import com.pulsedrop.app.ui.screens.SettingsSheet
 import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.HomeScreen
@@ -145,6 +147,9 @@ fun MainScreen(viewModel: MainViewModel) {
     val snackbarHostState = remember { SnackbarHostState() }
 
     var selectedSection by rememberSaveable { mutableStateOf(PulseSection.HOME) }
+    // The send selection lives here, not on the Send screen, so visiting Devices or Home
+    // mid-arrangement does not quietly throw away an hour of file picking.
+    var sendSelectionUris by rememberSaveable { mutableStateOf(listOf<String>()) }
     var showSecurityDialog by remember { mutableStateOf(false) }
     var selectedThreadId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -239,7 +244,8 @@ fun MainScreen(viewModel: MainViewModel) {
 
     // Drive the LAN sweep only while the Devices section is open; multicast discovery keeps running globally.
     LaunchedEffect(selectedSection) {
-        if (selectedSection == PulseSection.DEVICES) viewModel.startRadarScan()
+        if (selectedSection == PulseSection.DEVICES || selectedSection == PulseSection.SEND_FILES)
+            viewModel.startRadarScan()
         else viewModel.stopRadarScan()
         viewModel.setChatVisible(selectedSection == PulseSection.MESSAGES)
     }
@@ -452,6 +458,21 @@ fun MainScreen(viewModel: MainViewModel) {
                         onUnpair = { pid -> viewModel.unpair(pid) },
                         safetyCodeOf = { pid -> viewModel.pairSafetyCode(pid) },
                         onToggleVerified = { pid, verified -> viewModel.setPairVerified(pid, verified) },
+                        onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
+                    )
+
+                    PulseSection.SEND_FILES -> SendScreen(
+                        selectedFiles = sendSelectionUris.map(Uri::parse),
+                        onSelectedFilesChange = { uris -> sendSelectionUris = uris.map { it.toString() } },
+                        nearbyPeers = displayPeers,
+                        connectedPeer = connectedPeer,
+                        pairedDevices = pairedDevices,
+                        scanning = radarScanning,
+                        onSendToPeer = { peer, uris, pin ->
+                            viewModel.sendFilesToPeer(peer, uris, pin) { _, _ -> }
+                        },
+                        onSendToBrowser = { ip, uris -> uris.forEach { uri -> viewModel.sendFileToBrowser(ip, uri) } },
+                        onOpenDevices = { selectSection(PulseSection.DEVICES) },
                         onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
                     )
 

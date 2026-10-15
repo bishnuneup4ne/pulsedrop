@@ -169,7 +169,7 @@ class HomeScreenTest {
         show(nav = nav)
         compose.onNodeWithText("Send files").performClick()
         compose.onNodeWithText("Transfers").performClick()
-        assertEquals(listOf(PulseSection.DEVICES, PulseSection.TRANSFERS), nav.visited)
+        assertEquals(listOf(PulseSection.SEND_FILES, PulseSection.TRANSFERS), nav.visited)
     }
 
     @Test

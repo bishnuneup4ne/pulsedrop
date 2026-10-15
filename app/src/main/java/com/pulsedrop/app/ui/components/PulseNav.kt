@@ -91,10 +91,7 @@ enum class PulseSection(
 ) {
     HOME("Home", Icons.Filled.Home, "section_home"),
     DEVICES("Devices", Icons.Filled.Radar, "section_devices"),
-    SEND_FILES("Send files", Icons.AutoMirrored.Filled.Send, "section_send",
-        comingSoonNote = "Sending works today: open Devices, pick a paired phone, and tap Send. " +
-                "A dedicated quick-send screen will live here.",
-        shortcutLabel = "Open devices", shortcut = DEVICES),
+    SEND_FILES("Send files", Icons.AutoMirrored.Filled.Send, "section_send"),
     RECEIVE_FILES("Receive files", Icons.Filled.Download, "section_receive",
         comingSoonNote = "Receiving works today: start the server on Home and any device on your " +
                 "network can send to this phone.",
