@@ -550,7 +550,8 @@ fun RadarScreen(
                                 maxLines = 1
                             )
                             Text(
-                                text = "Pair ${paired.pid.take(6).uppercase()} · ${paired.originIp}:${paired.originPort}",
+                                text = "Pair ${paired.pid.take(6).uppercase()} · ${paired.originIp}:${paired.originPort}" +
+                                    if (paired.appVersion.isNotBlank()) " · PulseDrop ${paired.appVersion}" else "",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorScheme.onSurfaceVariant
                             )

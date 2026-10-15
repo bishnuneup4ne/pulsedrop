@@ -72,7 +72,9 @@ data class PairedDevice(
     val originPort: Int,
     val createdAt: Long = System.currentTimeMillis(),
     /** The user read the 6-digit safety code aloud on both devices and confirmed it matches. */
-    val verified: Boolean = false
+    val verified: Boolean = false,
+    /** Release the peer ran when it paired; blank when an older app never said. */
+    val appVersion: String = ""
 )
 
 data class IncomingPairRequest(
@@ -84,7 +86,8 @@ data class IncomingPairRequest(
     val safetyCode: String,
     val timestamp: Long = System.currentTimeMillis(),
     /** The requester runs no server, so the answer has to be polled back rather than dialled in. */
-    val viaRelay: Boolean = false
+    val viaRelay: Boolean = false,
+    val appVersion: String = ""
 )
 
 data class PendingPairRequest(

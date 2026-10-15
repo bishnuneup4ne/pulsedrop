@@ -61,6 +61,12 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
     val groups: StateFlow<List<ChatGroup>> = _groups.asStateFlow()
 
     var nameProvider: () -> String = { "PulseDrop Phone" }
+
+    /**
+     * The release this app runs, exchanged at pairing so both halves of a connection know what
+     * the other can actually do. An empty string is what an app from before this handshake has.
+     */
+    var versionProvider: () -> String = { "" }
     var endpointProvider: () -> Pair<String, Int> = { "127.0.0.1" to 8080 }
     var onPairedMessage: ((ClipMessage) -> Unit)? = null
 
@@ -150,6 +156,18 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         _paired.value.firstOrNull { it.originIp == peer.ip || it.pid == peer.id }
 
     fun findPairing(pid: String): PairedDevice? = _paired.value.firstOrNull { it.pid == pid }
+
+    /**
+     * Whether a paired device has announced a release at least [major].[minor]. A device that
+     * paired before versions were exchanged reports nothing, and nothing is treated honestly:
+     * as older than anything we could ask of it.
+     */
+    fun peerAtLeast(pairing: PairedDevice, major: Int, minor: Int): Boolean {
+        val parts = pairing.appVersion.trim().split('.')
+        val a = parts.getOrNull(0)?.toIntOrNull() ?: return false
+        val b = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        return a > major || (a == major && b >= minor)
+    }
 
     fun myDeviceId(): String = Crypto.deviceId(myPubB64())
 
@@ -251,6 +269,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                     .put("reqId", reqId)
                     .put("name", nameProvider())
                     .put("pub", myPubB64())
+                    .put("appVersion", versionProvider())
                     .put("myIp", myIp)
                     .put("myPort", myPort)
                     .put("relay", relayed)
@@ -341,6 +360,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
             pubB64 = request.pubB64,
             originIp = request.myIp,
             originPort = request.myPort,
+            appVersion = request.appVersion,
         )
         // Keep the key the user already confirmed; accepting again from the same device is a
         // network hiccup far more often than it is a genuine rekey.
@@ -377,6 +397,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
             .put("type", "pair-response")
             .put("accept", accept)
             .put("name", nameProvider())
+            .put("appVersion", versionProvider())
             .put("pub", myPubB64())
             .put("myIp", myIp)
             .put("myPort", myPort)
@@ -566,7 +587,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
             myIp = reachIp,
             myPort = reachPort,
             safetyCode = Crypto.safetyCode(myPub, peerPub),
-            viaRelay = json.optBoolean("relay", false)
+            viaRelay = json.optBoolean("relay", false),
+            appVersion = json.optString("appVersion", "")
         )
         _incomingRequests.update { list ->
             val now = System.currentTimeMillis()
@@ -602,7 +624,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                 name = json.optString("name", pending.peer.name),
                 pubB64 = peerPub,
                 originIp = reachIp,
-                originPort = reachPort
+                originPort = reachPort,
+                appVersion = json.optString("appVersion", "")
             )
         )
         _pairEvent.value = pairingOutcome(pending.peer.name, replaced)
@@ -926,7 +949,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                     originIp = o.optString("ip"),
                     originPort = o.optInt("port", 8080),
                     createdAt = o.optLong("created", System.currentTimeMillis()),
-                    verified = o.optBoolean("verified", false)
+                    verified = o.optBoolean("verified", false),
+                    appVersion = o.optString("appVersion", "")
                 )
             }
         } catch (e: Exception) {
@@ -981,6 +1005,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                     .put("port", p.originPort)
                     .put("created", p.createdAt)
                     .put("verified", p.verified)
+                    .put("appVersion", p.appVersion)
             )
         }
         prefs.edit().putString("pairs", arr.toString()).apply()

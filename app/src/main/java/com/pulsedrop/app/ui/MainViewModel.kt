@@ -393,6 +393,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Set before anything can reach PairManager: the server and the relay both call back
         // through these, and a pairing answer arriving first would be named and addressed wrong.
         pairManager.nameProvider = { _serverState.value.deviceName }
+        pairManager.versionProvider = { com.pulsedrop.app.BuildConfig.VERSION_NAME }
         pairManager.endpointProvider = { _serverState.value.ipAddress to _serverState.value.port }
         pairManager.onPairedMessage = { msg ->
             // A room message from a paired phone goes into the shared room as well, or the
@@ -1417,6 +1418,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // otherwise two phones in one room read as two unrelated chats.
                 viewModelScope.launch(Dispatchers.IO) {
                     pairManager.broadcastToRoom(text, msg.id, reply)
+                    if (reply != null) olderPeerNotice(null, "Replies")?.let(::postEvent)
                 }
             }
 
@@ -1432,6 +1434,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 threadId = threadId, encrypted = true, reply = reply
                             )
                         )
+                        if (reply != null) olderPeerNotice(threadId, "Replies")?.let(::postEvent)
                     } else {
                         val host = relayClient.attached.value
                         postEvent(if (host != null)
@@ -1503,6 +1506,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * the original travelled. A peer on a build too old to understand that simply keeps showing the
      * message, which is why the bubble is marked rather than silently dropped.
      */
+    /**
+     * Whether to warn that an audience may not understand something this build does. Replies,
+     * retractions and relay mail arrived in 1.6; a peer that paired before versions were
+     * exchanged reported nothing, and silence is treated as older rather than guessed at.
+     */
+    private val RECENT_FEATURES = 1 to 6
+
+    private fun olderPeerNotice(threadId: String?, feature: String): String? {
+        if (threadId == null) {
+            val stale = pairedDevices.value.filterNot { pairManager.peerAtLeast(it, RECENT_FEATURES.first, RECENT_FEATURES.second) }
+            return if (stale.isEmpty()) null else
+                "$feature shows only on phones running PulseDrop ${RECENT_FEATURES.first}.${RECENT_FEATURES.second} or newer — " +
+                    stale.joinToString { it.name } + " ${if (stale.size == 1) "is" else "are"} still behind"
+        }
+        if (!threadId.startsWith("pair:")) return null
+        val pairing = pairManager.findPairing(threadId.removePrefix("pair:")) ?: return null
+        if (pairManager.peerAtLeast(pairing, RECENT_FEATURES.first, RECENT_FEATURES.second)) return null
+        return "$feature needs PulseDrop ${RECENT_FEATURES.first}.${RECENT_FEATURES.second} or newer on ${pairing.name} — " +
+            (if (pairing.appVersion.isBlank()) "it has not reported a version" else "it is running ${pairing.appVersion}")
+    }
+
     fun deleteMessage(id: String, forEveryone: Boolean) {
         val target = _clipMessages.value.firstOrNull { it.id == id } ?: return
         viewModelScope.launch(Dispatchers.IO) {
@@ -1516,7 +1540,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             val reached = pairManager.deleteEverywhere(id, target.threadId)
+            val stale = olderPeerNotice(target.threadId, "Retractions")
             postEvent(when {
+                stale != null -> stale
                 reached > 0 -> "Retracted on $reached other device${if (reached > 1) "s" else ""}"
                 target.threadId == null || target.threadId.startsWith("ip:") -> "Deleted here and on the room"
                 else -> "Deleted here — the other side is offline, so it still shows their copy"
