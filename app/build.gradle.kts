@@ -18,6 +18,12 @@ android {
     versionName = "1.6"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // Where a first install is announced, and where the public install count is shown. Both belong
+    // to the stats site, so they are filled in from that address once it exists — while they are
+    // blank the reporter has nothing to say and stays out of the way entirely.
+    buildConfigField("String", "INSTALL_PING_URL", "\"\"")
+    buildConfigField("String", "INSTALL_STATS_URL", "\"\"")
   }
 
   // Release is signed only when an upload key is actually present, so a fresh clone with no

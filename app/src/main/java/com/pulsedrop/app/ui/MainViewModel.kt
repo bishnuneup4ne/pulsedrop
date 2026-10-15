@@ -167,7 +167,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val remoteFrames = callEngine.remoteFrames
 
     val updateManager = com.pulsedrop.app.update.UpdateManager(context, viewModelScope)
-    private val updateWatch = com.pulsedrop.app.update.UpdateWatch(context, updateManager)
+    private val installReporter = com.pulsedrop.app.stats.InstallReporter(context, viewModelScope)
+    private val updateWatch = com.pulsedrop.app.update.UpdateWatch(
+        context, updateManager, onConnected = { installReporter.report() }
+    )
 
     // ---- top-bar call notifications ---------------------------------------
 

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="PulseDrop">
+  <!-- The phone's ic_localdrop_logo, ported: pulse ring opened at the top, drop falling through. -->
+  <defs>
+    <linearGradient id="tile" x1="2" y1="2" x2="46" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4F46E5"/>
+      <stop offset="0.55" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#tile)" d="M12,2 L36,2 A10,10 0 0 1 46,12 L46,36 A10,10 0 0 1 36,46 L12,46 A10,10 0 0 1 2,36 L2,12 A10,10 0 0 1 12,2 Z"/>
+  <path fill="none" stroke="#FFFFFF" stroke-width="2.7" stroke-linecap="round"
+        d="M31.43,16.92 A11.56,11.56 0 1 1 16.57,16.92"/>
+  <path fill="#FFFFFF"
+        d="M24,9.78 C20.22,14.44 17.78,17.11 17.78,19.56 C17.78,22.98 20.58,25.78 24,25.78 C27.42,25.78 30.22,22.98 30.22,19.56 C30.22,17.11 27.78,14.44 24,9.78 Z"/>
+</svg>

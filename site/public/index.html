@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PulseDrop — files, chats and calls on your own network</title>
+<meta name="description" content="PulseDrop turns your phone into a local server so any device on the same Wi-Fi or hotspot can send files, chat and start a call from a browser. Paired phones are end-to-end encrypted. No internet, no accounts.">
+<meta name="theme-color" id="themeColor" content="#0B0B0C">
+<link rel="icon" href="logo.svg">
+<link rel="stylesheet" href="styles.css">
+<script>
+/* Painted before first frame so the page never flashes the wrong theme. Same contract as the
+   web client: read the stored preference, fall back to the system one, set data-theme. */
+(function () {
+  var stored = null;
+  try { stored = localStorage.getItem("pulsedrop-theme"); } catch (e) { stored = null; }
+  var mode = stored === "light" || stored === "dark" ? stored : "system";
+  var dark = mode === "dark" || (mode === "system" &&
+    window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  var tc = document.getElementById("themeColor");
+  if (tc) tc.setAttribute("content", dark ? "#0B0B0C" : "#FFFFFF");
+})();
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="#top">
+    <img src="logo.svg" alt="" width="28" height="28">
+    <span>PulseDrop</span>
+  </a>
+  <nav class="topnav" aria-label="Page sections">
+    <a href="#live">Live</a>
+    <a href="#how">How it works</a>
+    <a href="#features">Features</a>
+    <a href="#download">Download</a>
+  </nav>
+  <button id="themeToggle" class="icon-btn" type="button" aria-label="Switch theme">
+    <span class="dot" aria-hidden="true"></span>
+    <span id="themeLabel">System</span>
+  </button>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <h1>Hand it over, not upload it.</h1>
+    <p class="lede">
+      PulseDrop runs a server on your phone. Anything on the same Wi-Fi or hotspot — a laptop,
+      another phone, a tablet — opens one address in its browser and can send files, chat, and
+      start a call with screen sharing. Two PulseDrop phones pair end-to-end encrypted, so the
+      traffic stays sealed even while it crosses the LAN. No internet, no accounts, no cloud.
+    </p>
+    <div class="hero-actions">
+      <a class="btn primary" href="https://github.com/bishnuneup4ne/pulsedrop/releases/latest">Download the APK</a>
+      <a class="btn ghost" href="https://github.com/bishnuneup4ne/pulsedrop">Source on GitHub</a>
+    </div>
+    <p class="note">Android 7.0 or newer. Sideloaded — see
+      <a href="https://github.com/bishnuneup4ne/pulsedrop/blob/main/docs/Installation.md">installation</a>
+      if Play Protect objects.</p>
+  </section>
+
+  <section class="stat" id="live" aria-labelledby="liveHeading">
+    <h2 id="liveHeading">Devices that installed PulseDrop</h2>
+    <p class="figure" id="count" aria-live="polite"><span class="pending">Counting…</span></p>
+    <p class="caption" id="countNote"></p>
+    <div class="versions" id="versions" hidden>
+      <h3>Installed on</h3>
+      <ul id="versionList"></ul>
+    </div>
+    <button id="retry" class="btn ghost small" type="button" hidden>Try again</button>
+    <p class="fineprint">
+      Counted once per device install, from the app's own first run — an in-app update is not a new
+      install and is never added. It counts installs of the app, not files sent.
+    </p>
+  </section>
+
+  <section class="how" id="how" aria-labelledby="howHeading">
+    <h2 id="howHeading">Three taps to the first transfer</h2>
+    <ol class="steps">
+      <li>
+        <span class="step-no">1</span>
+        <h3>Start the server</h3>
+        <p>One phone is enough. It shows its address and a QR code; nothing needs to be installed
+          on the other device.</p>
+      </li>
+      <li>
+        <span class="step-no">2</span>
+        <h3>Open or pair</h3>
+        <p>A browser scans the code and enters the 4-digit PIN. Another PulseDrop phone appears on
+          Radar and pairs with a safety code both screens can check.</p>
+      </li>
+      <li>
+        <span class="step-no">3</span>
+        <h3>Move</h3>
+        <p>Drag files either way, chat with replies, or ring a call with camera or screen share.
+          No Wi-Fi? Host a hotspot on the phone and join it.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="features" id="features" aria-labelledby="featHeading">
+    <h2 id="featHeading">What is in the app</h2>
+    <div class="grid">
+      <article>
+        <h3>Files, both ways</h3>
+        <p>Upload from a browser or the system share sheet, receive into
+          <code>WebDrop_Received/</code>, and keep a filterable history of every send and receive.
+          Multi-file selection included.</p>
+      </article>
+      <article>
+        <h3>Encrypted phone-to-phone</h3>
+        <p>Radar finds other PulseDrop devices on the subnet, pairs with an ECDH exchange, and
+          seals everything between them with AES-GCM — including on a network you do not control.</p>
+      </article>
+      <article>
+        <h3>Calls and screen share</h3>
+        <p>Voice and video calls, front or back camera, and a screen you can share while you talk.
+          A group call rings every member from one server.</p>
+      </article>
+      <article>
+        <h3>Stays running</h3>
+        <p>The server is a foreground service, so an open tab keeps working when the screen goes
+          off or another app comes forward.</p>
+      </article>
+      <article>
+        <h3>Updates in-app</h3>
+        <p>PulseDrop checks GitHub on launch and whenever the network comes back, downloads the
+          APK itself, and hands it to the installer — the count above is what that new install
+          added.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="download" id="download" aria-labelledby="dlHeading">
+    <h2 id="dlHeading">Get it</h2>
+    <p>One APK, no Play Store, no tracking. The source is available and free for anything
+      non-commercial under the PolyForm Noncommercial License 1.0.0.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="https://github.com/bishnuneup4ne/pulsedrop/releases/latest">Latest release</a>
+      <a class="btn ghost" href="https://github.com/bishnuneup4ne/pulsedrop/blob/main/docs/Usage.md">Usage guide</a>
+      <a class="btn ghost" href="https://github.com/bishnuneup4ne/pulsedrop/issues">Report a problem</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <p>PulseDrop · PolyForm Noncommercial 1.0.0 · <a href="https://github.com/bishnuneup4ne/pulsedrop">github.com/bishnuneup4ne/pulsedrop</a></p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

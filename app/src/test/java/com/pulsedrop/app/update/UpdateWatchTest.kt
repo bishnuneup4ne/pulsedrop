@@ -52,6 +52,16 @@ class UpdateWatchTest {
     }
 
     @Test
+    fun `an announcement waits the same spacing, and nothing more`() {
+        // The watcher's other job: telling the install counter about this device. That work settles
+        // itself once it succeeds, so the only rule it needs is not to fire once per flap.
+        val t = 60_000L
+        assertTrue("a rebooted phone has no lastConnected to wait for", shouldAnnounce(t, -1L))
+        assertFalse(shouldAnnounce(t + 1_000L, t))
+        assertTrue(shouldAnnounce(t + spacing, t))
+    }
+
+    @Test
     fun `a known update is not re-announced on every network change`() {
         val t = 60_000L
         assertFalse(allowed(now = t + refresh, lastAttempt = t, lastSuccess = t, knows = true))

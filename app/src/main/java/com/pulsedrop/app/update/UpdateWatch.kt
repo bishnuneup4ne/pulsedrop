@@ -7,6 +7,17 @@ import android.net.NetworkCapabilities
 import android.os.SystemClock
 
 /**
+ * Whether a network event is worth announcing on. Deliberately simpler than the update rule below:
+ * the work is one small POST that settles itself in preferences, so all it needs is not firing once
+ * per flap.
+ */
+internal fun shouldAnnounce(
+    now: Long,
+    lastConnected: Long,
+    spacingMs: Long = UpdateWatch.ATTEMPT_SPACING_MS
+): Boolean = lastConnected < 0 || now - lastConnected >= spacingMs
+
+/**
  * Whether an unsolicited check is worth making a request for.
  *
  * The two timestamps are different on purpose. `lastAttempt` is what a network that flaps twice a
@@ -31,10 +42,15 @@ internal fun shouldAutoCheck(
  * Follows the network so a phone that opened with no internet still finds out about a release the
  * moment it has some, instead of waiting for the next launch. The launch check itself belongs to the
  * caller; this is the part that keeps working after the app is already open.
+ *
+ * [onConnected] is the same signal for work that is not about releases — telling the install counter
+ * that this device exists, say. It runs on its own throttle, because whether an update check is due
+ * and whether an unannounced install deserves another try are different questions.
  */
 class UpdateWatch(
     context: Context,
     private val manager: UpdateManager,
+    private val onConnected: () -> Unit = {},
     private val clock: () -> Long = { SystemClock.elapsedRealtime() }
 ) {
     companion object {
@@ -50,6 +66,7 @@ class UpdateWatch(
 
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var lastAttempt = -1L
+    private var lastConnected = -1L
 
     fun start() {
         if (callback != null) return
@@ -82,6 +99,11 @@ class UpdateWatch(
 
     private fun checkNow(force: Boolean) {
         val now = clock()
+        // A network that flaps is one announcement per spacing window, not one per flap.
+        if (force || shouldAnnounce(now, lastConnected)) {
+            lastConnected = now
+            onConnected()
+        }
         if (!force && !shouldAutoCheck(now, lastAttempt, manager.lastSuccessAt, manager.update.value != null)) {
             return
         }
