@@ -9,6 +9,18 @@ them is AES-GCM sealed even while it crosses the LAN.
 Source-available and free to use for anything non-commercial, under the PolyForm
 Noncommercial License 1.0.0.
 
+## Documentation
+
+Full guides live in [`docs/`](docs/Home.md):
+
+- [Installation](docs/Installation.md) — sideloading, signing, Play Protect
+- [Usage](docs/Usage.md) — server, files, chat, radar, calls, history
+- [Browser Calls (HTTPS)](docs/Browser-Calls-HTTPS.md) — why the secure address matters
+- [Security Model](docs/Security-Model.md) — PIN, pairing crypto, upload proofs
+- [HTTP API](docs/HTTP-API.md) — every endpoint the phone serves
+- [Building from Source](docs/Building-from-Source.md) — toolchain, Gradle, signing
+- [Troubleshooting](docs/Troubleshooting.md) — install errors, calls, quotas
+
 ## What it does
 
 | Screen | Purpose |
