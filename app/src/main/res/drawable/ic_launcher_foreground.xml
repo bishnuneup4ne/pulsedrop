@@ -4,22 +4,14 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Pulse ring, opened at the top so the drop falls through the gap. -->
     <path
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="7"
+        android:strokeWidth="6"
         android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M54,34 L54,58" />
+        android:pathData="M70.71,38.08 A26,26 0 1 1 37.29,38.08" />
+    <!-- Falling drop: tip at 38, bulb bottom at 72. -->
     <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="7"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M42,46 L54,58 L66,46" />
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="7"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M37,73 L71,73" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,22 C45.5,32.5 40,38.5 40,44 C40,51.7 46.3,58 54,58 C61.7,58 68,51.7 68,44 C68,38.5 62.5,32.5 54,22 Z" />
 </vector>

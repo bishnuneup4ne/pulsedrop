@@ -1,28 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="48dp"
     android:height="48dp"
     android:viewportWidth="48"
     android:viewportHeight="48">
-    <path
-        android:fillColor="#2563EB"
-        android:pathData="M12,2 L36,2 A10,10 0 0 1 46,12 L46,36 A10,10 0 0 1 36,46 L12,46 A10,10 0 0 1 2,36 L2,12 A10,10 0 0 1 12,2 Z" />
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3.6"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M24,12 L24,27" />
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3.6"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M16.5,19.5 L24,27 L31.5,19.5" />
+    <path android:pathData="M12,2 L36,2 A10,10 0 0 1 46,12 L46,36 A10,10 0 0 1 36,46 L12,46 A10,10 0 0 1 2,36 L2,12 A10,10 0 0 1 12,2 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="2" android:startY="2"
+                android:endX="46" android:endY="46">
+                <stop android:offset="0.0" android:color="#FF4F46E5" />
+                <stop android:offset="0.55" android:color="#FF2563EB" />
+                <stop android:offset="1.0" android:color="#FF22D3EE" />
+            </gradient>
+        </aapt:attr>
+    </path>
     <path
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="3.6"
+        android:strokeWidth="2.7"
         android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M13,35 L35,35" />
+        android:pathData="M31.43,16.92 A11.56,11.56 0 1 1 16.57,16.92" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,9.78 C20.22,14.44 17.78,17.11 17.78,19.56 C17.78,22.98 20.58,25.78 24,25.78 C27.42,25.78 30.22,22.98 30.22,19.56 C30.22,17.11 27.78,14.44 24,9.78 Z" />
 </vector>
