@@ -49,6 +49,14 @@ data class PendingTransferRequest(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+/** One upload waiting on the phone for Accept or Decline. */
+data class PendingUploadInfo(
+    val id: String,
+    val fileName: String,
+    val fileSize: Long,
+    val fromDevice: String
+)
+
 data class PeerDevice(
     val id: String,
     val name: String,

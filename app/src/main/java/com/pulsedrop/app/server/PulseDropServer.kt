@@ -60,6 +60,12 @@ interface ServerTransferListener {
     fun onRoomMessageFromWeb(message: ClipMessage) {}
     /** A browser retracted one of its own room messages; the tombstone travels with the message. */
     fun onRoomDeleteFromWeb(id: String) {}
+    /**
+     * An upload arrived while the phone insists on seeing files first. It sits in a pending
+     * folder until somebody taps Accept or Decline on this device — the sending tab is already
+     * told it landed; only keeping it is what waits for permission.
+     */
+    fun onPendingUpload(id: String, fileName: String, fileSize: Long, fromDevice: String) {}
     fun onWebCall(call: WebCall)
 }
 
@@ -138,6 +144,80 @@ class PulseDropServer(
 
     /** Device ids that have pulled or posted recently, i.e. phones reachable through us. */
     private val relayVisitors = LinkedHashMap<String, Long>()
+
+    /**
+     * When false, an incoming file waits on the phone for a decision instead of simply arriving.
+     * Set from Settings; the pending folder, not the received one, holds anything waiting.
+     */
+    @Volatile
+    var autoAcceptTransfers: Boolean = true
+
+    /** One upload parked in the pending folder, with everything re-deriving needs to keep it. */
+    private class StagedUpload(
+        val id: String,
+        val file: File,
+        val name: String,
+        val size: Long,
+        val fromIp: String,
+        val fromLabel: String,
+        val toIp: String?,
+        val transferId: String
+    )
+
+    private val pendingUploads = ArrayList<StagedUpload>()
+
+    /** What the Settings sheet lists: id, name, size and who sent it, newest last. */
+    fun pendingUploadsSnapshot(): List<com.pulsedrop.app.model.PendingUploadInfo> =
+        synchronized(pendingUploads) {
+            pendingUploads.map {
+                com.pulsedrop.app.model.PendingUploadInfo(it.id, it.name, it.size, it.fromLabel)
+            }
+        }
+
+    /** Keeps the file and hands it to the received folder; returns its name or null if unknown id. */
+    fun acceptPendingUpload(id: String): String? {
+        val staged = synchronized(pendingUploads) { pendingUploads.firstOrNull { it.id == id } ?: return null }
+        val receivedDir = File(context.getExternalFilesDir(null) ?: context.filesDir, "WebDrop_Received").apply {
+            if (!exists()) mkdirs()
+        }
+        val target = File(receivedDir, staged.name)
+        target.parentFile?.mkdirs()
+        val moved = staged.file.renameTo(target) || run {
+            staged.file.copyTo(target, overwrite = true)
+            staged.file.delete()
+            true
+        }
+        if (!moved) return null
+        synchronized(pendingUploads) { pendingUploads.remove(staged) }
+        val sharedItem = SharedFile(
+            id = UUID.randomUUID().toString(),
+            name = target.name,
+            size = target.length(),
+            mimeType = guessMimeType(target.name),
+            uriString = target.absolutePath,
+            uploadedByIp = staged.fromIp,
+            targetClientIp = staged.toIp
+        )
+        synchronized(sharedFiles) { sharedFiles.add(sharedItem) }
+        listener.onTransferStarted(staged.transferId, staged.name, staged.size, TransferDirection.INCOMING, staged.fromLabel, staged.fromIp)
+        listener.onTransferCompleted(staged.transferId, staged.name, staged.size, target.absolutePath, TransferDirection.INCOMING, staged.fromLabel, staged.fromIp)
+        pushWebEvent("file") {
+            put("name", staged.name); put("size", staged.size); put("from", staged.fromLabel)
+            staged.toIp?.let { put("to", it) }
+        }
+        return staged.name
+    }
+
+    /** Throws the file away; the sender is not told it arrived at all. */
+    fun declinePendingUpload(id: String): Boolean {
+        val staged = synchronized(pendingUploads) {
+            val found = pendingUploads.firstOrNull { it.id == id } ?: return false
+            pendingUploads.remove(found)
+            try { found.file.delete() } catch (e: Exception) { }
+            true
+        }
+        return staged
+    }
 
     init {
         relayMailbox.load()
@@ -1799,6 +1879,51 @@ class PulseDropServer(
 
             if (finalFile != null && finalFile.exists()) {
                 fileSize = finalFile.length()
+
+                if (!autoAcceptTransfers) {
+                    // Park it in a pending folder the received listing never reads; nothing is
+                    // kept until a human on this phone says so.
+                    val pendingDir = File(context.getExternalFilesDir(null) ?: context.filesDir, "WebDrop_Pending").apply {
+                        if (!exists()) mkdirs()
+                    }
+                    val stageId = UUID.randomUUID().toString().take(12)
+                    val staged = File(pendingDir, "${stageId}_${savedFileName}")
+                    if (!finalFile.renameTo(staged)) {
+                        finalFile.copyTo(staged, overwrite = true)
+                        finalFile.delete()
+                    }
+                    val fromLabel = pairedSender?.name ?: webClientName(clientIp)
+                    synchronized(pendingUploads) {
+                        pendingUploads.add(
+                            StagedUpload(
+                                id = stageId,
+                                file = staged,
+                                name = savedFileName,
+                                size = staged.length(),
+                                fromIp = clientIp,
+                                fromLabel = fromLabel,
+                                toIp = session.parameters["to"]?.firstOrNull()
+                                    ?.takeIf { it.matches(Regex("(\\d{1,3}\\.){3}\\d{1,3}")) },
+                                transferId = transferId
+                            )
+                        )
+                    }
+                    listener.onPendingUpload(stageId, savedFileName, fileSize, fromLabel)
+                    // Owned by pendingUploads now; the catch must not delete a parked file.
+                    finalFile = null
+                    val res = newFixedLengthResponse(
+                        Response.Status.OK,
+                        "application/json",
+                        JSONObject().apply {
+                            put("success", true)
+                            put("pending", true)
+                            put("name", savedFileName)
+                            put("size", fileSize)
+                        }.toString()
+                    )
+                    addCorsHeaders(res)
+                    return res
+                }
 
                 // Register file with IP isolation
                 val sharedItem = SharedFile(

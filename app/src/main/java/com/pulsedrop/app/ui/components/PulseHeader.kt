@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -56,6 +57,7 @@ fun PulseHeader(
     deviceName: String,
     onToggleServer: () -> Unit,
     onRefresh: () -> Unit,
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val c = LocalPulseColors.current
@@ -153,6 +155,13 @@ fun PulseHeader(
                         }
                     }
                 }
+
+                PulseIconButton(
+                    icon = Icons.Default.Settings,
+                    label = "Settings",
+                    onClick = onOpenSettings,
+                    modifier = Modifier.testTag("header_settings_btn")
+                )
 
                 val running = isRunning
                 Surface(

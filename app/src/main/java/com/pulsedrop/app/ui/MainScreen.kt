@@ -37,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.NavigationBar
@@ -93,6 +94,7 @@ import com.pulsedrop.app.ui.screens.HotspotGuideScreen
 import com.pulsedrop.app.ui.screens.IncomingCallCard
 import com.pulsedrop.app.ui.screens.IncomingCallStage
 import com.pulsedrop.app.ui.screens.RadarScreen
+import com.pulsedrop.app.ui.screens.SettingsSheet
 import com.pulsedrop.app.ui.screens.ShareScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
 import kotlinx.coroutines.delay
@@ -138,6 +140,9 @@ fun MainScreen(viewModel: MainViewModel) {
     val updateApk by viewModel.updateManager.downloadedApk.collectAsState()
     val downloadCount by viewModel.updateManager.downloads.collectAsState()
     val relayHostName by viewModel.relayHostName.collectAsState()
+    val pendingUploads by viewModel.pendingUploads.collectAsState()
+    val updateStatus by viewModel.updateManager.statusMessage.collectAsState()
+    val themeMode = com.pulsedrop.app.ui.theme.ThemePreference.mode.value
     val colorScheme = MaterialTheme.colorScheme
 
     val context = LocalContext.current
@@ -145,6 +150,7 @@ fun MainScreen(viewModel: MainViewModel) {
 
     var selectedTab by rememberSaveable { mutableStateOf(PulseNavTab.SERVE) }
     var showSecurityDialog by remember { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     var selectedThreadId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showShareConsent by remember { mutableStateOf(false) }
@@ -324,6 +330,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     deviceName = serverState.deviceName,
                     onToggleServer = { viewModel.toggleServer() },
                     onRefresh = { viewModel.refreshNetwork() },
+                    onOpenSettings = { showSettings = true },
                     modifier = Modifier.statusBarsPadding()
                 )
             },
@@ -881,6 +888,32 @@ fun MainScreen(viewModel: MainViewModel) {
                 }
             }
         )
+    }
+
+    if (showSettings) {
+        ModalBottomSheet(onDismissRequest = { showSettings = false }) {
+            SettingsSheet(
+                serverState = serverState,
+                pendingUploads = pendingUploads,
+                pairedCount = pairedDevices.size,
+                updateInfo = updateInfo,
+                updateStatus = updateStatus,
+                themeChoice = themeMode.label,
+                onThemeChoice = { label ->
+                    com.pulsedrop.app.ui.theme.PulseTheme.entries
+                        .firstOrNull { it.label == label }
+                        ?.let { com.pulsedrop.app.ui.theme.ThemePreference.save(context, it) }
+                },
+                onAutoAcceptChange = { viewModel.setAutoAcceptTransfers(it) },
+                onAcceptUpload = { viewModel.acceptPendingUpload(it) },
+                onDeclineUpload = { viewModel.declinePendingUpload(it) },
+                onCheckUpdate = { viewModel.updateManager.check(auto = false) },
+                onSetPinRequired = { viewModel.setPinRequired(it) },
+                onRegeneratePin = { viewModel.regeneratePin() },
+                onOpenDevices = { selectedTab = PulseNavTab.RADAR; showSettings = false },
+                onOpenServer = { selectedTab = PulseNavTab.SERVE; showSettings = false }
+            )
+        }
     }
 
     if (showShareConsent) {

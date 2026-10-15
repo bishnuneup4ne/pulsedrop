@@ -384,6 +384,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ipAddress = initialIp,
                 serverUrl = "http://$initialIp:${it.port}",
                 isPinRequired = settingsPrefs.getBoolean("pinRequired", false),
+                autoAcceptTransfers = settingsPrefs.getBoolean("autoAccept", true),
                 pin = settingsPrefs.getString("pin", null) ?: generateRandomPin()
             )
         }
@@ -457,8 +458,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         settingsPrefs.edit()
             .putString("deviceName", s.deviceName)
             .putBoolean("pinRequired", s.isPinRequired)
+            .putBoolean("autoAccept", s.autoAcceptTransfers)
             .putString("pin", s.pin)
             .apply()
+    }
+
+    /**
+     * Files arriving at the phone: straight into the received folder when auto-accept is on,
+     * or parked in the pending folder for a decision when it is not.
+     */
+    private val _pendingUploads = MutableStateFlow<List<com.pulsedrop.app.model.PendingUploadInfo>>(emptyList())
+    val pendingUploads: StateFlow<List<com.pulsedrop.app.model.PendingUploadInfo>> = _pendingUploads.asStateFlow()
+
+    fun setAutoAcceptTransfers(on: Boolean) {
+        _serverState.update { it.copy(autoAcceptTransfers = on) }
+        persistSettings()
+        serverInstance?.autoAcceptTransfers = on
+        postEvent(if (on) "Files will arrive without asking"
+        else "Incoming files now wait for you to accept them on the phone")
+    }
+
+    fun acceptPendingUpload(id: String) {
+        val server = serverInstance ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val name = server.acceptPendingUpload(id)
+            _pendingUploads.value = server.pendingUploadsSnapshot()
+            postEvent(if (name != null) "Accepted $name" else "That file is no longer waiting")
+        }
+    }
+
+    fun declinePendingUpload(id: String) {
+        val server = serverInstance ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            server.declinePendingUpload(id)
+            _pendingUploads.value = server.pendingUploadsSnapshot()
+            postEvent("Declined - the file was deleted")
+        }
+    }
+
+    private fun refreshPendingUploads() {
+        _pendingUploads.value = serverInstance?.pendingUploadsSnapshot() ?: emptyList()
     }
 
     // ---- radar -----------------------------------------------------------
@@ -1000,6 +1039,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             override fun onMessageDeleted(id: String) = markLocalDeleted(id)
 
+            override fun onPendingUpload(id: String, fileName: String, fileSize: Long, fromDevice: String) {
+                refreshPendingUploads()
+                postEvent("$fileName from $fromDevice is waiting on the phone - accept or decline it in Settings")
+            }
+
             override fun onRoomMessageFromWeb(message: ClipMessage) {
                 // A browser spoke to the whole room, not only to the tabs on this phone. The
                 // message keeps the browser's author, so the other phones see who really said it.
@@ -1047,6 +1091,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             server.updatePinSecurity(state.isPinRequired, if (state.isPinRequired) state.pin else null)
+            server.autoAcceptTransfers = state.autoAcceptTransfers
             server.setSharedFiles(_sharedFiles.value)
             server.pairManager = pairManager
             server.callEngine = callEngine
@@ -1100,6 +1145,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         serverInstance = null
         ServerService.hostedServer = null
         ServerService.stopService(context)
+        // The queue lived inside that server; the files are still on disk but nobody is
+        // holding decisions for them now, so the sheet must stop pretending otherwise.
+        _pendingUploads.value = emptyList()
         _serverState.update { it.copy(isRunning = false, startedAt = 0L) }
         // Turning our own server off must not make the phone invisible: it keeps announcing,
         // now flagged server=false, and starts carrying its mail through a paired host instead.
