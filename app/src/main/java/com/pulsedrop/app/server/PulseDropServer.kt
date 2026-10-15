@@ -52,6 +52,14 @@ interface ServerTransferListener {
     fun onNewMessage(message: ClipMessage)
     /** A room message was deleted; every listener must drop it the same way, by id. */
     fun onMessageDeleted(id: String) {}
+    /**
+     * A browser posted to the shared room. The room is not just this phone's tabs: the hub has to
+     * carry the message to every paired phone too, or a phone would read a different room than the
+     * browser sitting next to it.
+     */
+    fun onRoomMessageFromWeb(message: ClipMessage) {}
+    /** A browser retracted one of its own room messages; the tombstone travels with the message. */
+    fun onRoomDeleteFromWeb(id: String) {}
     fun onWebCall(call: WebCall)
 }
 
@@ -228,6 +236,35 @@ class PulseDropServer(
     fun relayVisitorsSnapshot(): List<String> = synchronized(relayVisitors) {
         val now = System.currentTimeMillis()
         relayVisitors.entries.filter { it.value > now - RELAY_VISITOR_TTL_MS }.map { it.key }
+    }
+
+    /**
+     * Queues an already-sealed envelope for a paired device that reads its mail from this host
+     * instead of running a server of its own. Being the postbox does not make us the addressee:
+     * the bytes stay sealed with that device's pairwise key, which we hold precisely because we
+     * are paired with it — the same secret a direct POST would have used.
+     */
+    fun dropToRelayMailbox(
+        toDeviceId: String,
+        fromDeviceId: String,
+        pid: String,
+        ivB64: String,
+        ctB64: String
+    ): Boolean {
+        val pm = pairManager ?: return false
+        if (toDeviceId.isBlank() || toDeviceId == pm.myDeviceId()) return false
+        val envelope = JSONObject()
+            .put("kind", "message")
+            .put("from", fromDeviceId)
+            .put("pid", pid)
+            .put("iv", ivB64)
+            .put("ct", ctB64)
+        if (envelope.toString().toByteArray().size > MAX_RELAY_ENVELOPE) return false
+        val eid = relayMailbox.post(toDeviceId, envelope) ?: return false
+        // Told the sender it is safe; a process kill must not make that a lie.
+        relayMailbox.flush()
+        noteRelayActivity(toDeviceId, "")
+        return true
     }
 
     @Volatile
@@ -713,7 +750,9 @@ class PulseDropServer(
         threadId: String? = null,
         attachment: ChatAttachment? = null,
         replyTo: ClipMessage? = null,
-        id: String? = null
+        id: String? = null,
+        /** The browser's own post to the room, which the hub must carry to every paired phone too. */
+        fromWeb: Boolean = false
     ): ClipMessage {
         val msg = ClipMessage(
             id = id ?: UUID.randomUUID().toString(),
@@ -735,6 +774,7 @@ class PulseDropServer(
         pushWebEvent("message", exceptIp = clientIp) {
             put("id", msg.id); put("threadId", msg.threadId ?: "")
         }
+        if (fromWeb && msg.threadId == null) listener.onRoomMessageFromWeb(msg)
         return msg
     }
 
@@ -745,7 +785,7 @@ class PulseDropServer(
      * Marks one room message deleted and tells every tab watching it. Deletion is a tombstone
      * rather than a removal so the thread keeps its shape on devices that already rendered it.
      */
-    fun markMessageDeleted(id: String): Boolean {
+    fun markMessageDeleted(id: String, fromWeb: Boolean = false): Boolean {
         val found = synchronized(messages) {
             val index = messages.indexOfLast { it.id == id }
             if (index < 0) null else {
@@ -755,6 +795,7 @@ class PulseDropServer(
         } ?: return false
         listener.onMessageDeleted(found.id)
         pushWebEvent("deleted") { put("id", found.id); put("threadId", found.threadId ?: "") }
+        if (fromWeb && found.threadId == null) listener.onRoomDeleteFromWeb(found.id)
         return true
     }
 
@@ -1523,7 +1564,10 @@ class PulseDropServer(
                     }
                     val quoted = json.optString("replyTo").takeIf { it.isNotBlank() }?.let { findMessage(it) }
                     if (text.isNotBlank() || attachment != null) {
-                        addMessage(text.trim(), sender, clientIp, threadId, attachment, quoted)
+                        addMessage(
+                            text.trim(), sender, clientIp, threadId, attachment, quoted,
+                            fromWeb = threadId == null
+                        )
                     }
                     val res = newFixedLengthResponse(Response.Status.OK, "application/json", "{\"success\":true}")
                     addCorsHeaders(res)
@@ -1546,7 +1590,7 @@ class PulseDropServer(
                         addCorsHeaders(res)
                         return res
                     }
-                    markMessageDeleted(id)
+                    markMessageDeleted(id, fromWeb = true)
                     val res = newFixedLengthResponse(
                         Response.Status.OK, "application/json", "{\"success\":true}"
                     )

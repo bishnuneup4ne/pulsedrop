@@ -410,6 +410,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             serverInstance?.markMessageDeleted(id)
         }
         pairManager.relaySender = { pairing, iv, ct -> relayClient.send(pairing, iv, ct) }
+        // A phone reading mail from our own mailbox is a local drop, not a remote post:
+        // that is how a browser's room message reaches a paired phone that hosts nothing.
+        pairManager.hostMailDropper = { pairing, iv, ct ->
+            serverInstance?.dropToRelayMailbox(
+                pairManager.deviceIdOf(pairing), pairManager.myDeviceId(), pairing.pid, iv, ct
+            ) == true
+        }
         pairManager.relayPairPoller = { ip, port, reqId ->
             relayClient.pollPairAnswer(ip, port, reqId)
         }
@@ -991,6 +998,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             override fun onMessageDeleted(id: String) = markLocalDeleted(id)
+
+            override fun onRoomMessageFromWeb(message: ClipMessage) {
+                // A browser spoke to the whole room, not only to the tabs on this phone. The
+                // message keeps the browser's author, so the other phones see who really said it.
+                val reply = message.replyTo?.let {
+                    ClipMessage(
+                        id = it,
+                        text = message.replyText ?: "",
+                        sender = message.replySender ?: ""
+                    )
+                }
+                viewModelScope.launch(Dispatchers.IO) {
+                    pairManager.broadcastToRoom(
+                        message.text, message.id, reply, senderName = message.sender
+                    )
+                }
+            }
+
+            override fun onRoomDeleteFromWeb(id: String) {
+                // The tombstone travels the same paths the message did, or one phone would keep
+                // a bubble every other device has already struck out.
+                viewModelScope.launch(Dispatchers.IO) { pairManager.deleteEverywhere(id, null) }
+            }
 
             override fun onWebCall(call: WebCall) {
                 // The browser can hang up or be dismissed remotely; tear the sheet down then.

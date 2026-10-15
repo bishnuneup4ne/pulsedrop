@@ -79,6 +79,13 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
     var relaySender: ((pairing: PairedDevice, ivB64: String, ctB64: String) -> Boolean)? = null
 
     /**
+     * Set while this device is hosting. A phone that reads its mail from our own mailbox is not
+     * remote — the sealed envelope can be queued here directly, which is what lets a browser's
+     * room message reach an attached phone that runs no server of its own.
+     */
+    var hostMailDropper: ((pairing: PairedDevice, ivB64: String, ctB64: String) -> Boolean)? = null
+
+    /**
      * False on a phone whose server is off. Every handshake that used to assume both devices are
      * listening now has somewhere to look instead.
      */
@@ -746,9 +753,17 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                 return true
             }
         }
-        val sender = relaySender ?: return false
+        val sender = relaySender
+        if (sender != null) {
+            try {
+                if (sender(pairing, ivB64, ctB64)) return true
+            } catch (e: Exception) {
+                // fall through to our own mailbox if we are the host they read
+            }
+        }
+        val dropper = hostMailDropper ?: return false
         return try {
-            sender(pairing, ivB64, ctB64)
+            dropper(pairing, ivB64, ctB64)
         } catch (e: Exception) {
             false
         }
@@ -782,11 +797,17 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
      * copy is sealed with that device's own key and the senders id is carried along so every device
      * renders one bubble rather than one per recipient.
      */
-    fun broadcastToRoom(text: String, mid: String? = null, reply: ClipMessage? = null): Int {
+    fun broadcastToRoom(
+        text: String,
+        mid: String? = null,
+        reply: ClipMessage? = null,
+        /** A browser's message carried through our hub keeps its author instead of ours. */
+        senderName: String? = null
+    ): Int {
         val json = JSONObject()
             .put("mid", mid ?: UUID.randomUUID().toString())
             .put("text", text)
-            .put("sender", nameProvider())
+            .put("sender", senderName ?: nameProvider())
             .put("from", myDeviceId())
             .put("ts", System.currentTimeMillis())
             .put("thread", ROOM_THREAD)
