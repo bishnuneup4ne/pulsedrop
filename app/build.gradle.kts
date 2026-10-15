@@ -65,14 +65,7 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions {
-    unitTests {
-      isIncludeAndroidResources = true
-      // BouncyCastle reaches into InetAddress internals during the TLS handshake.
-      // ART does not enforce module boundaries, so this only gates the desktop test JVM.
-      all { it.jvmArgs("--add-opens", "java.base/java.net=ALL-UNNAMED") }
-    }
-  }
+  testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
