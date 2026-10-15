@@ -66,7 +66,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.pulsedrop.app.ui.components.PulseSectionHeader
 import com.pulsedrop.app.ui.UiServerState
+import com.pulsedrop.app.ui.theme.LocalPulseColors
 import com.pulsedrop.app.util.QrCodeGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -81,6 +83,7 @@ fun HotspotGuideScreen(
 ) {
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
+    val pulse = LocalPulseColors.current
     val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     var hotspotOn by remember { mutableStateOf(false) }
@@ -218,7 +221,7 @@ fun HotspotGuideScreen(
                                 modifier = Modifier
                                     .size(10.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFFF59E0B))
+                                    .background(pulse.warning)
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
@@ -273,7 +276,7 @@ fun HotspotGuideScreen(
                                 modifier = Modifier
                                     .size(10.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF16A34A))
+                                    .background(pulse.success)
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
@@ -355,6 +358,7 @@ fun HotspotGuideScreen(
                                         modifier = Modifier
                                             .size(160.dp)
                                             .clip(RoundedCornerShape(16.dp))
+                                            // The quiet zone of a QR code is part of the code, not a theme colour.
                                             .background(Color.White),
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -397,7 +401,7 @@ fun HotspotGuideScreen(
         }
 
         item {
-            SectionTitle("Setup", "Four steps, about a minute")
+            PulseSectionHeader("Setup", "Four steps, about a minute")
         }
 
         val steps = listOf(

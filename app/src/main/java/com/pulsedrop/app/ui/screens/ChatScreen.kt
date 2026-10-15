@@ -1,7 +1,9 @@
 package com.pulsedrop.app.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -34,15 +36,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PersonAddAlt1
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
@@ -74,10 +80,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -88,10 +94,13 @@ import com.pulsedrop.app.model.ChatGroup
 import com.pulsedrop.app.model.ClipMessage
 import com.pulsedrop.app.model.PairedDevice
 import com.pulsedrop.app.model.PeerDevice
+import com.pulsedrop.app.ui.components.PulseStatePanel
 import com.pulsedrop.app.ui.components.AttachmentPreview
 import com.pulsedrop.app.ui.components.formatAttachmentSize
 import com.pulsedrop.app.ui.components.PreviewKind
 import com.pulsedrop.app.ui.components.previewKindOf
+import com.pulsedrop.app.ui.theme.PulseAvatarInk
+import com.pulsedrop.app.ui.theme.PulseAvatarPalette
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -117,7 +126,9 @@ fun ChatScreen(
     onStartGroupCall: (List<String>, Boolean) -> Unit,
     onStartBrowserCall: (String, String, Boolean) -> Unit,
     onCallEveryone: (List<String>, String?, String?, Boolean) -> Unit,
-    onSend: (String, String?) -> Unit,
+    onSend: (String, String?, ClipMessage?) -> Unit,
+    /** Delete one bubble by id; `true` retracts it everywhere it was delivered, not just here. */
+    onDelete: (String, Boolean) -> Unit,
     onTyping: (Boolean) -> Unit,
     onAttach: (String?) -> Unit,
     resolveAttachment: (ChatAttachment) -> File?,
@@ -156,7 +167,8 @@ fun ChatScreen(
                     ip != null -> onStartBrowserCall(ip, active.browserName ?: active.title, video)
                 }
             },
-            onSend = { text -> onSend(text, active.id) },
+            onSend = { text, reply -> onSend(text, active.id, reply) },
+            onDelete = { target, forEveryone -> onDelete(target.id, forEveryone) },
             onAttach = { onAttach(active.id) },
             onTyping = onTyping,
             resolveAttachment = resolveAttachment,
@@ -182,15 +194,6 @@ fun ChatScreen(
 
 private const val ROOM_ID = "room"
 private const val TWO_MINUTES = 120_000L
-
-private val AVATAR_PALETTE: List<Pair<Int, Int>> = listOf(
-    0xFF2563EB.toInt() to 0xFF7C3AED.toInt(),
-    0xFF0EA5E9.toInt() to 0xFF2563EB.toInt(),
-    0xFF10B981.toInt() to 0xFF0EA5E9.toInt(),
-    0xFFF59E0B.toInt() to 0xFFEF4444.toInt(),
-    0xFF8B5CF6.toInt() to 0xFFEC4899.toInt(),
-    0xFF14B8A6.toInt() to 0xFF6366F1.toInt()
-)
 
 private data class ChatThread(
     val id: String?,
@@ -462,20 +465,24 @@ private fun InboxView(
         }
 
         if (visible.isEmpty()) {
-            EmptyState(
-                icon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Chat,
-                        contentDescription = null,
-                        tint = colorScheme.onSurfaceVariant
-                    )
-                },
-                title = if (query.isBlank()) "No conversations yet" else "Nothing matches \"$query\"",
-                subtitle = if (pairedDevices.isEmpty())
-                    "Pair a device from the Radar tab to open an encrypted channel, or talk to Everyone on this network."
-                else
-                    "Open the room below, or start a private channel with a paired device."
-            )
+            if (query.isNotBlank()) {
+                PulseStatePanel(
+                    icon = Icons.Outlined.SearchOff,
+                    title = "Nothing matches \"$query\"",
+                    message = "Try a shorter word, or clear the search to see every conversation.",
+                    actionLabel = "Clear search",
+                    onAction = { query = "" }
+                )
+            } else {
+                PulseStatePanel(
+                    icon = Icons.AutoMirrored.Filled.Chat,
+                    title = "No conversations yet",
+                    message = if (pairedDevices.isEmpty())
+                        "Pair a device from the Radar tab to open an encrypted channel, or talk to Everyone on this network."
+                    else
+                        "Open the room below, or start a private channel with a paired device."
+                )
+            }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -836,7 +843,9 @@ private fun ConversationView(
     onBack: () -> Unit,
     /** Dial one audience on this thread: "pair", "group" or "browser". */
     onStartCall: (String, Boolean) -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (String, ClipMessage?) -> Unit,
+    /** A bubble the long-press menu asked about, and whether to retract it on every device. */
+    onDelete: (ClipMessage, Boolean) -> Unit,
     onAttach: () -> Unit,
     onTyping: (Boolean) -> Unit,
     resolveAttachment: (ChatAttachment) -> File?,
@@ -846,6 +855,7 @@ private fun ConversationView(
     val colorScheme = MaterialTheme.colorScheme
     var input by remember { mutableStateOf("") }
     var emojiOpen by remember(thread.id) { mutableStateOf(false) }
+    var replyingTo by remember(thread.id) { mutableStateOf<ClipMessage?>(null) }
     var lastTypingSent by remember { mutableLongStateOf(0L) }
     var previewAttachment by remember { mutableStateOf<ChatAttachment?>(null) }
     val listState = rememberLazyListState()
@@ -943,16 +953,10 @@ private fun ConversationView(
                 .fillMaxWidth()
         ) {
             if (thread.messages.isEmpty()) {
-                EmptyState(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Chat,
-                            contentDescription = null,
-                            tint = colorScheme.onSurfaceVariant
-                        )
-                    },
+                PulseStatePanel(
+                    icon = Icons.AutoMirrored.Filled.Chat,
                     title = "Say hi to ${thread.title}",
-                    subtitle = if (thread.encrypted)
+                    message = if (thread.encrypted)
                         "Everything here is sealed on your device and opened only by ${thread.title}. No server can read it."
                     else
                         "Messages in this thread travel straight across the local network."
@@ -975,7 +979,12 @@ private fun ConversationView(
                                 lastOfRun = row.lastOfRun,
                                 showSender = row.showSender,
                                 grouped = thread.isGroup,
-                                onOpenAttachment = { previewAttachment = it }
+                                onOpenAttachment = { previewAttachment = it },
+                                onReply = { replyingTo = row.msg },
+                                onDelete = { forEveryone ->
+                                    if (replyingTo?.id == row.msg.id) replyingTo = null
+                                    onDelete(row.msg, forEveryone)
+                                }
                             )
                         }
                     }
@@ -1017,6 +1026,47 @@ private fun ConversationView(
             }
         }
 
+        replyingTo?.let { quoted ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(colorScheme.surfaceContainerHigh)
+                    .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Reply,
+                    contentDescription = null,
+                    tint = colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Replying to ${quoted.sender}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colorScheme.primary
+                    )
+                    Text(
+                        text = if (quoted.deleted) "This message was deleted" else quoted.text,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(
+                    onClick = { replyingTo = null },
+                    modifier = Modifier.size(36.dp).testTag("chat_reply_cancel")
+                ) {
+                    Icon(Icons.Default.Close, "Cancel reply", modifier = Modifier.size(17.dp))
+                }
+            }
+        }
+
         ChatComposer(
             input = input,
             onInputChange = {
@@ -1038,8 +1088,9 @@ private fun ConversationView(
             onSend = {
                 val text = input.trim()
                 if (text.isNotEmpty()) {
-                    onSend(text)
+                    onSend(text, replyingTo)
                     input = ""
+                    replyingTo = null
                     emojiOpen = false
                     focusManager.clearFocus()
                     onTyping(false)
@@ -1164,10 +1215,10 @@ private fun AttachmentCard(
         PreviewKind.TEXT -> Icons.Default.Description
         PreviewKind.OTHER -> Icons.Default.InsertDriveFile
     }
-    val fill = if (mine) Color.White.copy(alpha = 0.14f) else colorScheme.surface
-    val edge = if (mine) Color.White.copy(alpha = 0.32f) else colorScheme.outlineVariant
-    val title = if (mine) Color.White else colorScheme.onSurface
-    val sub = if (mine) Color.White.copy(alpha = 0.78f) else colorScheme.onSurfaceVariant
+    val fill = if (mine) colorScheme.onPrimary.copy(alpha = 0.14f) else colorScheme.surface
+    val edge = if (mine) colorScheme.onPrimary.copy(alpha = 0.32f) else colorScheme.outlineVariant
+    val title = if (mine) colorScheme.onPrimary else colorScheme.onSurface
+    val sub = if (mine) colorScheme.onPrimary.copy(alpha = 0.78f) else colorScheme.onSurfaceVariant
 
     Row(
         modifier = Modifier
@@ -1183,13 +1234,13 @@ private fun AttachmentCard(
             modifier = Modifier
                 .size(38.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(if (mine) Color.White.copy(alpha = 0.2f) else colorScheme.primaryContainer),
+                .background(if (mine) colorScheme.onPrimary.copy(alpha = 0.2f) else colorScheme.primaryContainer),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = glyph,
                 contentDescription = null,
-                tint = if (mine) Color.White else colorScheme.onPrimaryContainer,
+                tint = if (mine) colorScheme.onPrimary else colorScheme.onPrimaryContainer,
                 modifier = Modifier.size(19.dp)
             )
         }
@@ -1213,14 +1264,14 @@ private fun AttachmentCard(
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
-                .background(if (mine) Color.White.copy(alpha = 0.22f) else colorScheme.primary.copy(alpha = 0.10f))
+                .background(if (mine) colorScheme.onPrimary.copy(alpha = 0.22f) else colorScheme.primary.copy(alpha = 0.10f))
                 .padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = Icons.Default.Visibility,
                 contentDescription = null,
-                tint = if (mine) Color.White else colorScheme.primary,
+                tint = if (mine) colorScheme.onPrimary else colorScheme.primary,
                 modifier = Modifier.size(13.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
@@ -1228,7 +1279,7 @@ private fun AttachmentCard(
                 text = "Preview",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
-                color = if (mine) Color.White else colorScheme.primary
+                color = if (mine) colorScheme.onPrimary else colorScheme.primary
             )
         }
     }
@@ -1243,6 +1294,7 @@ private fun attachmentKindLabel(attachment: ChatAttachment): String = when (prev
     PreviewKind.OTHER -> attachment.name.substringAfterLast('.', "File").uppercase()
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageRow(
     msg: ClipMessage,
@@ -1250,9 +1302,12 @@ private fun MessageRow(
     lastOfRun: Boolean,
     showSender: Boolean,
     grouped: Boolean,
-    onOpenAttachment: (ChatAttachment) -> Unit
+    onOpenAttachment: (ChatAttachment) -> Unit,
+    onReply: () -> Unit,
+    onDelete: (Boolean) -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    var menuOpen by remember { mutableStateOf(false) }
     val bubbleShape = RoundedCornerShape(
         topStart = 18.dp,
         topEnd = 18.dp,
@@ -1260,64 +1315,163 @@ private fun MessageRow(
         bottomEnd = if (mine && lastOfRun) 6.dp else 18.dp
     )
 
-    Column(
+    Box {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 1.dp),
+            horizontalAlignment = if (mine) Alignment.End else Alignment.Start
+        ) {
+            if (showSender && !mine) {
+                Text(
+                    text = msg.sender,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colorScheme.primary,
+                    modifier = Modifier.padding(start = 14.dp, bottom = 2.dp)
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!mine && grouped) {
+                    if (lastOfRun) {
+                        ThreadAvatar(name = msg.sender, size = 26.dp)
+                    } else {
+                        Spacer(modifier = Modifier.width(26.dp))
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
+                Box(
+                    modifier = Modifier
+                        .widthIn(max = 320.dp)
+                        .clip(bubbleShape)
+                        .background(
+                            if (msg.deleted) colorScheme.surfaceContainerLowest
+                            else if (mine) colorScheme.primary else colorScheme.surfaceContainerHigh
+                        )
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClickLabel = "Message options",
+                            onLongClick = { menuOpen = true }
+                        )
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Column {
+                        if (msg.deleted) {
+                            // The bubble stays: a thread that renumbers under somebody already
+                            // reading it is worse than one honest placeholder.
+                            Text(
+                                text = "This message was deleted",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontStyle = FontStyle.Italic,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            if (msg.replyTo != null) ReplyQuote(msg = msg, mine = mine)
+                            msg.attachment?.let { att ->
+                                AttachmentCard(
+                                    attachment = att,
+                                    mine = mine,
+                                    onOpen = { onOpenAttachment(att) }
+                                )
+                                if (msg.text.isNotEmpty()) Spacer(modifier = Modifier.height(8.dp))
+                            }
+                            if (msg.text.isNotEmpty() || msg.attachment == null) {
+                                Text(
+                                    text = msg.text,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (mine) colorScheme.onPrimary else colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if (lastOfRun && !msg.deleted) {
+                Text(
+                    text = shortTime(msg.timestamp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp, start = 14.dp, end = 14.dp)
+                )
+            }
+        }
+
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text("Reply") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.Reply, null) },
+                onClick = {
+                    menuOpen = false
+                    onReply()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(if (mine) "Delete for me" else "Delete here") },
+                leadingIcon = { Icon(Icons.Default.Delete, null, tint = colorScheme.error) },
+                onClick = {
+                    menuOpen = false
+                    onDelete(false)
+                }
+            )
+            if (mine) {
+                DropdownMenuItem(
+                    text = { Text("Delete for everyone") },
+                    leadingIcon = { Icon(Icons.Default.Delete, null, tint = colorScheme.error) },
+                    onClick = {
+                        menuOpen = false
+                        onDelete(true)
+                    }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The quoted message inside a reply. It renders from the snapshot the sender attached rather than
+ * looking the original up, so the quote survives both a deletion and a thread the original never
+ * reached this device on.
+ */
+@Composable
+private fun ReplyQuote(msg: ClipMessage, mine: Boolean) {
+    val colorScheme = MaterialTheme.colorScheme
+    val accent = if (mine) colorScheme.onPrimary else colorScheme.primary
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 1.dp),
-        horizontalAlignment = if (mine) Alignment.End else Alignment.Start
-    ) {
-        if (showSender && !mine) {
-            Text(
-                text = msg.sender,
-                style = MaterialTheme.typography.labelMedium,
-                color = colorScheme.primary,
-                modifier = Modifier.padding(start = 14.dp, bottom = 2.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(
+                if (mine) colorScheme.onPrimary.copy(alpha = 0.13f)
+                else colorScheme.onSurface.copy(alpha = 0.07f)
             )
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (!mine && grouped) {
-                if (lastOfRun) {
-                    ThreadAvatar(name = msg.sender, size = 26.dp)
-                } else {
-                    Spacer(modifier = Modifier.width(26.dp))
-                }
-                Spacer(modifier = Modifier.width(6.dp))
-            }
-            Box(
-                modifier = Modifier
-                    .widthIn(max = 320.dp)
-                    .clip(bubbleShape)
-                    .background(if (mine) colorScheme.primary else colorScheme.surfaceContainerHigh)
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
-            ) {
-                Column {
-                    msg.attachment?.let { att ->
-                        AttachmentCard(
-                            attachment = att,
-                            mine = mine,
-                            onOpen = { onOpenAttachment(att) }
-                        )
-                        if (msg.text.isNotEmpty()) Spacer(modifier = Modifier.height(8.dp))
-                    }
-                    if (msg.text.isNotEmpty() || msg.attachment == null) {
-                        Text(
-                            text = msg.text,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (mine) colorScheme.onPrimary else colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-        }
-        if (lastOfRun) {
+            .padding(start = 7.dp, end = 9.dp, top = 5.dp, bottom = 5.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .width(2.dp)
+                .height(30.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(accent.copy(alpha = 0.75f))
+        )
+        Spacer(modifier = Modifier.width(7.dp))
+        Column {
             Text(
-                text = shortTime(msg.timestamp),
+                text = msg.replySender.orEmpty(),
                 style = MaterialTheme.typography.labelSmall,
-                color = colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp, start = 14.dp, end = 14.dp)
+                fontWeight = FontWeight.SemiBold,
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = msg.replyText.orEmpty(),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (mine) colorScheme.onPrimary.copy(alpha = 0.85f) else colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
+    Spacer(modifier = Modifier.height(5.dp))
 }
 
 @Composable
@@ -1366,26 +1520,25 @@ private fun ThreadAvatar(
     isGroup: Boolean = false,
     isRoom: Boolean = false
 ) {
-    val idx = kotlin.math.abs(name.hashCode()) % AVATAR_PALETTE.size
-    val (from, to) = AVATAR_PALETTE[idx]
+    val idx = kotlin.math.abs(name.hashCode()) % PulseAvatarPalette.size
     Box(
         modifier = Modifier
             .size(size)
             .clip(CircleShape)
-            .background(Brush.linearGradient(listOf(Color(from), Color(to)))),
+            .background(PulseAvatarPalette[idx]),
         contentAlignment = Alignment.Center
     ) {
         when {
             isRoom -> Icon(
                 imageVector = Icons.Default.Groups,
                 contentDescription = null,
-                tint = Color.White,
+                tint = PulseAvatarInk,
                 modifier = Modifier.size(size * 0.5f)
             )
             isGroup -> Icon(
                 imageVector = Icons.Default.PersonAddAlt1,
                 contentDescription = null,
-                tint = Color.White,
+                tint = PulseAvatarInk,
                 modifier = Modifier.size(size * 0.5f)
             )
             else -> Text(
@@ -1393,7 +1546,7 @@ private fun ThreadAvatar(
                 style = if (size >= 40.dp) MaterialTheme.typography.titleMedium
                 else MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = PulseAvatarInk
             )
         }
     }

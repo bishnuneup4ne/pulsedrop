@@ -37,18 +37,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.server.WebCall
+import com.pulsedrop.app.ui.theme.PulseStageColors
 import kotlinx.coroutines.delay
 
-private val SheetBg = Color(0xFF0B1220)
-private val SheetChip = Color(0xFF1D2939)
-private val SheetBlue = Color(0xFF60A5FA)
-private val SheetMuted = Color(0xFF9CA3AF)
 
 @Composable
 fun WebCallScreen(
@@ -57,6 +53,7 @@ fun WebCallScreen(
     onDecline: () -> Unit,
     onHangUp: () -> Unit
 ) {
+    val stage = PulseStageColors
     val accepted = call.state == "accepted"
     // Outgoing means this phone dialled the browser and is waiting on the other end.
     val outgoing = call.outgoing
@@ -73,7 +70,7 @@ fun WebCallScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SheetBg)
+            .background(stage.background)
             .systemBarsPadding()
             .testTag("web_call_screen")
     ) {
@@ -89,13 +86,13 @@ fun WebCallScreen(
                 modifier = Modifier
                     .size(if (accepted) 96.dp else 124.dp)
                     .clip(CircleShape)
-                    .background(SheetChip),
+                    .background(stage.surfaceElevated),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = call.name.take(1).uppercase(),
                     style = MaterialTheme.typography.displaySmall,
-                    color = SheetBlue
+                    color = stage.onAccentTint
                 )
             }
 
@@ -104,19 +101,19 @@ fun WebCallScreen(
             Text(
                 text = call.name.ifBlank { "Browser" },
                 style = MaterialTheme.typography.headlineSmall,
-                color = Color.White
+                color = stage.textPrimary
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "${if (call.video) "Video" else "Voice"} call · ${call.ip}",
                 style = MaterialTheme.typography.bodyMedium,
-                color = SheetMuted
+                color = stage.textSecondary
             )
             if (call.groupPids.isNotEmpty()) {
                 Text(
                     text = "Group call — ${call.groupPids.size} paired device(s) join when you answer",
                     style = MaterialTheme.typography.bodySmall,
-                    color = SheetMuted,
+                    color = stage.textSecondary,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -130,7 +127,7 @@ fun WebCallScreen(
                 Text(
                     text = if (outgoing) "Ringing ${call.name.ifBlank { "the browser" }}…" else "Ringing…",
                     style = MaterialTheme.typography.titleMedium,
-                    color = SheetBlue
+                    color = stage.onAccentTint
                 )
             }
             AnimatedVisibility(visible = accepted, enter = fadeIn(), exit = fadeOut()) {
@@ -138,12 +135,12 @@ fun WebCallScreen(
                     Text(
                         text = if (outgoing) "Answered" else "Connected",
                         style = MaterialTheme.typography.titleMedium,
-                        color = Color(0xFF34D399)
+                        color = stage.success
                     )
                     Text(
                         text = formatDuration(elapsed),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = SheetMuted
+                        color = stage.textSecondary
                     )
                 }
             }
@@ -217,7 +214,7 @@ fun WebCallScreen(
                         "Accept to open the call screen, or decline to send the browser back to the chat."
                 },
                 style = MaterialTheme.typography.labelMedium,
-                color = SheetMuted,
+                color = stage.textSecondary,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(bottom = 20.dp)
             )
@@ -241,6 +238,7 @@ private fun WebCallControl(
     danger: Boolean = false,
     accept: Boolean = false
 ) {
+    val stage = PulseStageColors
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
@@ -248,10 +246,10 @@ private fun WebCallControl(
                 .clip(CircleShape)
                 .background(
                     when {
-                        danger -> Color(0xFFDC2626)
-                        accept -> Color(0xFF16A34A)
-                        selected -> SheetBlue
-                        else -> SheetChip
+                        danger -> stage.danger
+                        accept -> stage.success
+                        selected -> stage.accent
+                        else -> stage.surfaceElevated
                     }
                 )
                 .clickable(
@@ -266,7 +264,12 @@ private fun WebCallControl(
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (selected) SheetBg else Color.White,
+                tint = when {
+                    danger -> stage.onDanger
+                    accept -> stage.onSuccess
+                    selected -> stage.onAccent
+                    else -> stage.textPrimary
+                },
                 modifier = Modifier.size(27.dp)
             )
         }
@@ -274,7 +277,7 @@ private fun WebCallControl(
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = SheetMuted,
+            color = stage.textSecondary,
             textAlign = TextAlign.Center
         )
     }

@@ -60,6 +60,7 @@ import com.pulsedrop.app.model.SharedFile
 import com.pulsedrop.app.model.TransferItem
 import com.pulsedrop.app.model.TransferStatus
 import com.pulsedrop.app.ui.UiServerState
+import com.pulsedrop.app.ui.components.PulseSectionHeader
 import com.pulsedrop.app.ui.components.ActiveTransfersCard
 import com.pulsedrop.app.ui.components.ServerCard
 import com.pulsedrop.app.ui.components.SessionStatsCard
@@ -83,6 +84,8 @@ fun ShareScreen(
     appVersion: String,
     downloads: Int?,
     onUpdateCheck: () -> Unit,
+    /** Whose server this phone is chatting through, when it is not the host itself. */
+    relayHostName: String? = null,
     modifier: Modifier = Modifier
 ) {
     var textMessage by remember { mutableStateOf("") }
@@ -107,7 +110,8 @@ fun ShareScreen(
                 serverState = serverState,
                 qrBitmap = qrBitmap,
                 onToggleServer = onToggleServer,
-                onOpenSecuritySettings = onOpenSecuritySettings
+                onOpenSecuritySettings = onOpenSecuritySettings,
+                relayHostName = relayHostName
             )
         }
 
@@ -218,7 +222,7 @@ private fun HostedFilesCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                SectionTitle(
+                PulseSectionHeader(
                     "Hosted files",
                     if (sharedFiles.isEmpty())
                         "Files clients can download from your browser server"
@@ -342,7 +346,7 @@ private fun TextBeamCard(
                 )
             }
             Spacer(modifier = Modifier.width(12.dp))
-            SectionTitle("Text beam", "Push a note to every client on this network")
+            PulseSectionHeader("Text beam", "Push a note to every client on this network")
         }
 
         Row(
@@ -457,69 +461,6 @@ private fun SectionCard(content: @Composable ColumnScope.() -> Unit) {
         ) {
             content()
         }
-    }
-}
-
-@Composable
-fun SectionTitle(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
-    val colorScheme = MaterialTheme.colorScheme
-    Column(modifier) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        if (subtitle != null) {
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-fun EmptyState(
-    icon: @Composable () -> Unit,
-    title: String,
-    subtitle: String,
-    modifier: Modifier = Modifier
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .padding(vertical = 26.dp, horizontal = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(colorScheme.surface),
-            contentAlignment = Alignment.Center
-        ) {
-            icon()
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            color = colorScheme.onSurface
-        )
-        Text(
-            text = subtitle,
-            style = MaterialTheme.typography.bodySmall,
-            color = colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 2.dp)
-        )
     }
 }
 

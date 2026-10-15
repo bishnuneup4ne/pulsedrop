@@ -126,6 +126,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val updateProgress by viewModel.updateManager.progress.collectAsState()
     val updateApk by viewModel.updateManager.downloadedApk.collectAsState()
     val downloadCount by viewModel.updateManager.downloads.collectAsState()
+    val relayHostName by viewModel.relayHostName.collectAsState()
     val colorScheme = MaterialTheme.colorScheme
 
     val context = LocalContext.current
@@ -345,7 +346,8 @@ fun MainScreen(viewModel: MainViewModel) {
                         onUpdateCheck = {
                             dismissedUpdateVersion = null
                             viewModel.updateManager.check(auto = false)
-                        }
+                        },
+                        relayHostName = relayHostName
                     )
 
                     PulseNavTab.RADAR -> RadarScreen(
@@ -396,9 +398,14 @@ fun MainScreen(viewModel: MainViewModel) {
                                 viewModel.callEveryone(pids, ip, name, video)
                             }
                         },
-                        onSend = { text, threadId ->
-                            viewModel.sendClipMessage(text, threadId?.takeIf { it != "room" })
+                        onSend = { text, threadId, reply ->
+                            viewModel.sendClipMessage(
+                                text,
+                                threadId?.takeIf { it != "room" },
+                                reply
+                            )
                         },
+                        onDelete = { id, forEveryone -> viewModel.deleteMessage(id, forEveryone) },
                         onTyping = { active -> viewModel.sendTyping(active) },
                         onAttach = { threadId ->
                             pendingChatAttachThread = threadId

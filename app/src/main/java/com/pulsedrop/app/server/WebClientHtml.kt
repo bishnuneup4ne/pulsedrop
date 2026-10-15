@@ -19,8 +19,23 @@ object WebClientHtml {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <title>PulseDrop - Private Local File Share</title>
+  <script>
+    /*
+      Runs before the first paint on purpose. Reading the saved choice - or the browser's own
+      preference when nothing is saved - after the body has already painted light is what makes a
+      theme switch look like a flicker, so the attribute is set here, on the html element, in the
+      head, with nothing else able to run first.
+    */
+    (function () {
+      var mode = "system";
+      try { mode = localStorage.getItem("pulsedrop-theme") || "system"; } catch (e) {}
+      var dark = mode === "dark" ||
+        (mode !== "light" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    })();
+  </script>
   <style>
-    /* ===== Premium light app shell. No CDN, no dark mode, no gradients-as-decoration. ===== */
+    /* ===== PulseDrop design tokens. Two themes, one vocabulary, no CDN, no gradients-as-decoration. ===== */
     /* Google Sans is served by this device (same subset the app bundles), so the browser
        client types identically to the phone with no upstream available. */
     @font-face { font-family: "Google Sans"; font-weight: 400; font-display: swap; src: url("/fonts/google-sans-regular.ttf") format("truetype"); }
@@ -28,30 +43,100 @@ object WebClientHtml {
     @font-face { font-family: "Google Sans"; font-weight: 600; font-display: swap; src: url("/fonts/google-sans-semibold.ttf") format("truetype"); }
     @font-face { font-family: "Google Sans"; font-weight: 700; font-display: swap; src: url("/fonts/google-sans-bold.ttf") format("truetype"); }
 
-    :root {
-      --accent: #2563EB;
-      --accent-hover: #1D4ED8;
-      --accent-tint: #EFF6FF;
-      --text: #0F172A;
-      --muted: #64748B;
-      --bg: #F8FAFC;
-      --surface: #FFFFFF;
-      --hairline: #E2E8F0;
-      --hairline-strong: #CBD5E1;
+    /*
+      The light table. Everything below this point is written against these names, so a rule that
+      hardcodes a hex is a rule that will be wrong in the other theme - which is why the dark block
+      re-declares exactly this set and nothing else.
+    */
+    :root, [data-theme="light"] {
+      --bg: #FFFFFF;              /* app background */
+      --surface: #F8F8F8;         /* primary surface: cards, rails, panels */
+      --surface-2: #FFFFFF;       /* elevated: dialogs, menus, toasts, anything floating above */
+      --sunken: #F2F2F4;          /* wells: inputs, tracks, code */
+      --highlight: #EEEEF1;       /* selected or hovered row wash */
+
+      --text: #171717;
+      --muted: #71717A;
+      --faint: #9A9AA3;
+
+      --hairline: #E7E7EA;
+      --hairline-strong: #D3D3D8;
+
+      --accent: #4F46E5;
+      --accent-hover: #4338CA;
+      --accent-tint: #E5E4FC;
+      --accent-tint-fg: #312C8C;
+      --on-accent: #FFFFFF;
+
+      /* Indicator and text are separate colours on purpose: the vivid one is for a dot, an icon or
+         a border, and only the darker -text variant clears AA as words on the tint beside it. */
+      --success: #16A34A;
+      --success-text: #166534;
+      --success-tint: #DCFCE8;
+      --warn: #B45309;
+      --warn-text: #854D0E;
+      --warn-tint: #FDEBD3;
       --error: #DC2626;
+      --error-text: #991B1B;
       --error-tint: #FEE2E2;
-      --warn: #B45309; --warn-tint: #FEF3C7;
-      --success: #059669;
-      --t-blue-bg: #EFF6FF;   --t-blue-fg: #1D4ED8;
-      --t-green-bg: #D1FAE5;  --t-green-fg: #047857;
-      --t-violet-bg: #EDE9FE; --t-violet-fg: #6D28D9;
-      --t-amber-bg: #FEF3C7;  --t-amber-fg: #B45309;
-      --t-slate-bg: #E2E8F0;  --t-slate-fg: #334155;
-      --shadow-1: 0 1px 2px rgba(15,23,42,0.04), 0 1px 3px rgba(15,23,42,0.06);
-      --shadow-2: 0 6px 20px rgba(15,23,42,0.09);
+
+      --t-blue-bg: #E5E4FC;   --t-blue-fg: #312C8C;
+      --t-green-bg: #DCFCE8;  --t-green-fg: #065F32;
+      --t-violet-bg: #EDE9FE; --t-violet-fg: #5B21B6;
+      --t-amber-bg: #FDEBD3;  --t-amber-fg: #92400E;
+      --t-slate-bg: #EEEEF1;  --t-slate-fg: #3F3F46;
+
+      --scrim: rgba(9,9,11,0.5);
+      --shadow-1: 0 1px 2px rgba(23,23,23,0.05), 0 1px 3px rgba(23,23,23,0.06);
+      --shadow-2: 0 6px 20px rgba(23,23,23,0.10);
+      --focus-ring: rgba(79,70,229,0.45);
+
       --radius: 16px;
-      --topbar-h: 52px;
+      --topbar-h: 56px;
       --tabbar-h: 60px;
+    }
+
+    /* The dark table - the default the app itself opens with. */
+    [data-theme="dark"] {
+      --bg: #0B0B0C;
+      --surface: #121214;
+      --surface-2: #1A1A1D;
+      --sunken: #08080A;
+      --highlight: #232329;
+
+      --text: #F5F5F5;
+      --muted: #A1A1AA;
+      --faint: #71717A;
+
+      --hairline: #29292D;
+      --hairline-strong: #3A3A40;
+
+      --accent: #5A54E8;
+      --accent-hover: #6A64EC;
+      --accent-tint: #24244A;
+      --accent-tint-fg: #C4C6FA;
+      --on-accent: #FFFFFF;
+
+      --success: #22C55E;
+      --success-text: #22C55E;
+      --success-tint: #12291B;
+      --warn: #F59E0B;
+      --warn-text: #F59E0B;
+      --warn-tint: #2A2011;
+      --error: #F87171;
+      --error-text: #F87171;
+      --error-tint: #2D1617;
+
+      --t-blue-bg: #24244A;   --t-blue-fg: #C4C6FA;
+      --t-green-bg: #12291B;  --t-green-fg: #6EE7B7;
+      --t-violet-bg: #241B38; --t-violet-fg: #C4B5FD;
+      --t-amber-bg: #2A2011;  --t-amber-fg: #FCD34D;
+      --t-slate-bg: #1F1F23;  --t-slate-fg: #A1A1AA;
+
+      --scrim: rgba(0,0,0,0.66);
+      --shadow-1: 0 1px 2px rgba(0,0,0,0.5);
+      --shadow-2: 0 8px 26px rgba(0,0,0,0.6);
+      --focus-ring: rgba(90,84,232,0.7);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -65,9 +150,12 @@ object WebClientHtml {
     }
     svg { display: block; flex-shrink: 0; }
     button, input, textarea, select { font-family: inherit; }
+    /* A ring that survives both tables: a hard accent line plus a soft halo, so focus reads on
+       near-black and on white without either theme needing its own colour here. */
     :focus-visible {
-      outline: 3px solid rgba(37,99,235,0.45);
+      outline: 2px solid var(--accent);
       outline-offset: 2px;
+      box-shadow: 0 0 0 4px var(--focus-ring);
       border-radius: 10px;
     }
     @media (prefers-reduced-motion: reduce) {
@@ -113,7 +201,7 @@ object WebClientHtml {
     .topbar-act.secure:hover { filter: brightness(0.96); }
     .topbar-act.spin svg { animation: pdspin 0.8s linear infinite; }
     @keyframes pdspin { to { transform: rotate(360deg); } }
-    .status-pill.me { background: var(--bg); color: var(--muted); border: 1px solid var(--hairline); cursor: pointer; }
+    .status-pill.me { background: var(--surface-2); color: var(--muted); border: 1px solid var(--hairline); cursor: pointer; }
     .status-pill.me b { font-weight: 700; color: var(--ink); }
 
     /* ===== Two-pane shell ===== */
@@ -217,7 +305,7 @@ object WebClientHtml {
     .btn-filled { background: var(--accent); color: #fff; }
     .btn-filled:hover { background: var(--accent-hover); }
     .btn-quiet { background: var(--surface); color: var(--muted); border: 1px solid var(--hairline); }
-    .btn-quiet:hover { background: var(--bg); color: var(--text); }
+    .btn-quiet:hover { background: var(--highlight); color: var(--text); }
 
     /* ===== Upload progress ===== */
     .upload-card {
@@ -232,7 +320,7 @@ object WebClientHtml {
     .search-row { display: flex; align-items: center; gap: 8px; }
     .search {
       display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
-      background: var(--bg); border: 1px solid var(--hairline); border-radius: 12px;
+      background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 12px;
       padding: 8px 12px; color: var(--muted);
     }
     .search:focus-within { border-color: var(--accent); background: var(--surface); }
@@ -247,7 +335,7 @@ object WebClientHtml {
       border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 600;
       cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s;
     }
-    .chip:hover { background: var(--bg); }
+    .chip:hover { background: var(--highlight); }
     .chip.active { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
 
     /* ===== File list ===== */
@@ -269,7 +357,7 @@ object WebClientHtml {
     .card-actions { display: flex; gap: 8px; }
     .dl-btn {
       flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0;
-      background: var(--bg); color: var(--text);
+      background: var(--surface-2); color: var(--text);
       border: 1px solid var(--hairline); border-radius: 10px;
       padding: 8px 10px; font-size: 12px; font-weight: 600; text-decoration: none;
       transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -277,7 +365,7 @@ object WebClientHtml {
     .dl-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
     .icon-btn {
       appearance: none; border: 1px solid var(--hairline);
-      background: var(--bg); color: var(--muted);
+      background: var(--surface-2); color: var(--muted);
       width: 34px; height: 34px; border-radius: 10px; cursor: pointer; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
       transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -296,7 +384,7 @@ object WebClientHtml {
     .folder-contents.open { display: flex; }
     .f-row {
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      font-size: 12px; color: var(--text); background: var(--bg); border-radius: 8px; padding: 6px 9px;
+      font-size: 12px; color: var(--text); background: var(--surface-2); border-radius: 8px; padding: 6px 9px;
     }
     .f-row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .f-row a { color: var(--accent); font-weight: 600; text-decoration: none; flex-shrink: 0; }
@@ -389,7 +477,7 @@ object WebClientHtml {
     .rail-search { padding: 0 14px 10px; }
     .rail-search input {
       width: 100%; box-sizing: border-box; font-size: 13px; color: var(--text); outline: none;
-      border: 1px solid var(--hairline); background: var(--bg); border-radius: 12px; padding: 9px 12px;
+      border: 1px solid var(--hairline); background: var(--surface-2); border-radius: 12px; padding: 9px 12px;
     }
     .rail-search input:focus { border-color: var(--accent); background: var(--surface); }
     .rail-new { display: none; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; }
@@ -401,7 +489,7 @@ object WebClientHtml {
     .new-peers { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; margin-top: 2px; }
     .new-peer {
       appearance: none; cursor: pointer; font-size: 11.5px; font-weight: 600;
-      border: 1px solid var(--hairline); background: var(--bg); color: var(--text);
+      border: 1px solid var(--hairline); background: var(--surface-2); color: var(--text);
       border-radius: 999px; padding: 5px 10px;
     }
     .new-peer:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
@@ -415,8 +503,8 @@ object WebClientHtml {
       display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 14px;
       border: 1px solid transparent; background: none; color: var(--text); transition: background 0.12s;
     }
-    .rail-item:hover { background: var(--bg); }
-    .rail-item.active { background: var(--accent-tint); border-color: #C3D4FD; }
+    .rail-item:hover { background: var(--highlight); }
+    .rail-item.active { background: var(--accent-tint); border-color: var(--accent); }
     .ravatar {
       width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
@@ -491,6 +579,47 @@ object WebClientHtml {
       font-size: 11px; font-weight: 700; color: var(--accent); padding: 0;
     }
     .bubble-copy:hover { text-decoration: underline; }
+    /* Reply, retraction and the composer's reply context. All token-driven, nothing hardcoded. */
+    .bubble.deleted {
+      background: transparent; border: 1px dashed var(--hairline-strong);
+      color: var(--muted); font-style: italic;
+    }
+    .reply-quote {
+      display: flex; gap: 8px; margin: 0 0 6px; padding: 5px 9px 5px 7px;
+      border-radius: 10px; background: var(--hairline); max-width: 100%;
+    }
+    .bubble-row.mine .reply-quote { background: var(--accent-tint); }
+    .reply-quote .rq-bar { width: 2px; border-radius: 2px; background: var(--accent); flex: none; }
+    .reply-quote .rq-body { min-width: 0; }
+    .reply-quote .rq-who { font-size: 11px; font-weight: 700; color: var(--accent); }
+    .reply-quote .rq-text {
+      font-size: 11px; color: var(--muted); overflow: hidden;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    }
+    .bubble-row.mine .reply-quote .rq-text { color: var(--text); }
+    .bubble-actions {
+      display: inline-flex; gap: 2px; margin-left: auto;
+      opacity: 0; transition: opacity 120ms ease;
+    }
+    .bubble-row:hover .bubble-actions, .bubble-actions:focus-within { opacity: 1; }
+    .bubble-actions button {
+      appearance: none; border: none; background: transparent; color: var(--muted);
+      cursor: pointer; font: inherit; font-size: 11px; font-weight: 700;
+      min-width: 34px; min-height: 34px; padding: 6px 8px; border-radius: 9px;
+    }
+    .bubble-actions button:hover { background: var(--hairline); color: var(--text); }
+    .bubble-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .bubble-actions button.danger:hover { color: var(--error); }
+    /* A finger has no hover, so the actions must not depend on it. */
+    @media (hover: none) { .bubble-actions { opacity: .75; } }
+    .reply-bar {
+      display: none; align-items: center; gap: 8px; margin: 0 0 7px; padding: 6px 8px 6px 11px;
+      border-radius: 12px; background: var(--hairline); font-size: 12px; color: var(--text);
+    }
+    .reply-bar.show { display: flex; }
+    .reply-bar .rb-body { min-width: 0; flex: 1; }
+    .reply-bar .rb-who { font-size: 11px; font-weight: 700; color: var(--accent); }
+    .reply-bar .rb-text { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .chat-empty {
       margin: auto; display: flex; flex-direction: column; align-items: center; gap: 10px;
       color: var(--muted); font-size: 13px; text-align: center; padding: 24px;
@@ -520,7 +649,7 @@ object WebClientHtml {
     }
     .composer textarea {
       flex: 1; min-width: 0; resize: none;
-      background: var(--bg); border: 1px solid var(--hairline); border-radius: 14px;
+      background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 14px;
       padding: 11px 14px; font-size: 14px; color: var(--text); outline: none;
       min-height: 44px; max-height: 120px; line-height: 1.4;
     }
@@ -538,7 +667,7 @@ object WebClientHtml {
       appearance: none; border: none; background: none; cursor: pointer;
       font-size: 20px; line-height: 1; padding: 6px 2px; border-radius: 9px;
     }
-    .emoji-pop button:hover { background: var(--bg); }
+    .emoji-pop button:hover { background: var(--highlight); }
     .attach-btn.is-busy { opacity: 0.55; pointer-events: none; }
     .send-btn {
       width: 44px; height: 44px; border-radius: 14px; border: none; cursor: pointer; flex-shrink: 0;
@@ -571,14 +700,16 @@ object WebClientHtml {
 
     /* ===== Auth modal ===== */
     .overlay {
-      position: fixed; inset: 0; background: rgba(15,23,42,0.45);
+      position: fixed; inset: 0; background: var(--scrim);
       display: flex; align-items: flex-start; justify-content: center; z-index: 1000; padding: 20px;
       /* A centred flex child that does not fit is clipped on both ends; auto margins plus
          scrolling keep the PIN field reachable when the keyboard takes half the screen. */
       overflow-y: auto;
     }
     .modal {
-      background: var(--surface); border-radius: 22px; padding: 28px;
+      /* Elevated, not merely a surface: a dialog has to separate from the grey panel behind it,
+         and in the dark theme that separation is one step up the ramp rather than a white card. */
+      background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 22px; padding: 28px;
       width: 100%; max-width: 380px; text-align: center; margin: auto;
       display: flex; flex-direction: column; gap: 14px; box-shadow: var(--shadow-2);
     }
@@ -588,7 +719,7 @@ object WebClientHtml {
       display: flex; align-items: center; justify-content: center;
     }
     .pin-input {
-      background: var(--bg); border: 2px solid var(--hairline-strong); color: var(--text);
+      background: var(--sunken); border: 2px solid var(--hairline-strong); color: var(--text);
       font-size: 26px; letter-spacing: 10px; text-align: center; padding: 12px;
       border-radius: 14px; font-weight: 700; outline: none;
       font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -636,7 +767,7 @@ object WebClientHtml {
       color: var(--muted); font-size: 13px; font-weight: 700; letter-spacing: -0.1px;
       transition: background 0.15s, color 0.15s;
     }
-    .nav-btn:hover { background: var(--bg); color: var(--text); }
+    .nav-btn:hover { background: var(--highlight); color: var(--text); }
     .nav-btn.active { background: var(--accent-tint); color: var(--accent); }
     .nav-badge {
       position: absolute; top: -4px; right: -8px; min-width: 17px; height: 17px; padding: 0 4px;
@@ -679,7 +810,7 @@ object WebClientHtml {
     .table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: hidden; }
     .table th {
       text-align: left; font-size: 10.5px; letter-spacing: 0.5px; text-transform: uppercase;
-      color: var(--muted); padding: 11px 14px; border-bottom: 1px solid var(--hairline); background: var(--bg);
+      color: var(--muted); padding: 11px 14px; border-bottom: 1px solid var(--hairline); background: var(--sunken);
     }
     .table td { padding: 11px 14px; font-size: 13px; border-bottom: 1px solid var(--hairline); }
     .table tr:last-child td { border-bottom: none; }
@@ -698,7 +829,7 @@ object WebClientHtml {
     .self-name-row { display: flex; gap: 8px; }
     .self-name-row input {
       flex: 1; min-width: 0; border: 1px solid var(--hairline); border-radius: 12px;
-      background: var(--bg); color: var(--text); font-size: 13px; padding: 9px 12px;
+      background: var(--surface-2); color: var(--text); font-size: 13px; padding: 9px 12px;
     }
     .self-name-row input:focus { outline: none; border-color: var(--accent); }
     .self-name-hint { font-size: 11.5px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
@@ -838,7 +969,7 @@ object WebClientHtml {
     .att-btn {
       font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer;
       padding: 5px 9px; border-radius: 8px; text-decoration: none; display: inline-flex; align-items: center;
-      border: 1px solid var(--hairline); background: var(--bg); color: var(--text);
+      border: 1px solid var(--hairline); background: var(--surface-2); color: var(--text);
     }
     .att-btn:hover { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
     .att-btn.prim { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -972,6 +1103,10 @@ object WebClientHtml {
       <div class="status-pill me" id="meChip" style="display: none" title="The address this phone sees you as"><span id="meChipTxt">You</span></div>
       <button class="topbar-act" id="refreshBtn" aria-label="Refresh" title="Refresh" onclick="manualRefresh()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+      </button>
+      <button class="topbar-act theme" id="themeBtn" aria-label="Appearance" title="Appearance" onclick="cycleTheme()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>
+        <span id="themeBtnLabel">Auto</span>
       </button>
     </header>
 
@@ -1183,6 +1318,15 @@ object WebClientHtml {
 
           <div class="composer-wrap">
             <div class="emoji-pop" id="emojiPop" role="menu" aria-label="Emoji"></div>
+            <div class="reply-bar" id="replyBar" role="status">
+              <div class="rb-body">
+                <div class="rb-who" id="replyBarWho">Replying</div>
+                <div class="rb-text" id="replyBarText"></div>
+              </div>
+              <button class="icon-round" id="replyBarCancel" aria-label="Cancel reply" onclick="cancelReply()">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </button>
+            </div>
             <div class="composer">
               <button class="icon-round" id="emojiBtn" aria-label="Insert emoji" aria-expanded="false" onclick="toggleEmoji()">
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.2 4.2 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01"/></svg>
@@ -1446,6 +1590,9 @@ object WebClientHtml {
 
     var allFiles = [];
     var lastMsgs = [];
+    /* Messages this tab was not allowed to retract, plus a revision that says "redraw the bubbles". */
+    var localHidden = {};
+    var chatRev = 0;
     var typingOthers = [];
     var currentCat = 'all';
     var receivedOnly = false;
@@ -1645,6 +1792,46 @@ object WebClientHtml {
       railPinned = !rail.classList.contains('mini');
       try { localStorage.setItem('pulseRailPin', railPinned ? '1' : '0'); } catch (e) {}
       applyRailMode(currentView);
+    }
+
+    /*
+      Appearance. Three choices, same as the app: follow the browser, force light, force dark.
+      The stored value is the intent, not the resolved theme, so a phone that goes dark at sunset
+      takes the tab with it while "light" means light forever. The head script applies the same
+      value before paint; this only has to keep the two in step from then on.
+    */
+    var THEME_MODES = ['system', 'light', 'dark'];
+    var THEME_NAMES = { system: 'Auto', light: 'Light', dark: 'Dark' };
+    function themeMode() {
+      var m = 'system';
+      try { m = localStorage.getItem('pulsedrop-theme') || 'system'; } catch (e) {}
+      return THEME_MODES.indexOf(m) >= 0 ? m : 'system';
+    }
+    function applyThemeMode(mode) {
+      var dark = mode === 'dark' ||
+        (mode !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      var btn = el('themeBtn');
+      if (btn) {
+        var lab = el('themeBtnLabel');
+        if (lab) lab.textContent = THEME_NAMES[mode];
+        btn.setAttribute('aria-label', 'Appearance: ' + THEME_NAMES[mode] + '. Tap to change.');
+        btn.title = 'Appearance: ' + THEME_NAMES[mode];
+        btn.setAttribute('aria-haspopup', 'menu');
+      }
+    }
+    function cycleTheme() {
+      var next = THEME_MODES[(THEME_MODES.indexOf(themeMode()) + 1) % THEME_MODES.length];
+      try { localStorage.setItem('pulsedrop-theme', next); } catch (e) {}
+      applyThemeMode(next);
+    }
+    if (window.matchMedia) {
+      try {
+        /* Only meaningful while the intent is "follow the browser" - a forced theme must not move. */
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+          applyThemeMode(themeMode());
+        });
+      } catch (e) {}
     }
     function setView(view, fromHash) {
       if (!VIEW_IDS[view]) view = 'files';
@@ -2671,7 +2858,7 @@ object WebClientHtml {
     }
 
     function currentThreadMsgs() {
-      var list = lastMsgs.filter(function (m) { return threadOf(m) === currentThread; });
+      var list = lastMsgs.filter(function (m) { return threadOf(m) === currentThread && !localHidden[m.id]; });
       return list.slice(-200);
     }
 
@@ -2679,7 +2866,9 @@ object WebClientHtml {
       var list = el('beamList');
       var disp = currentThreadMsgs();
       var lastId = disp.length ? String(disp[disp.length - 1].id || '') : '';
-      var fp = disp.length + '|' + lastId + '|' + currentThread;
+      // chatRev is what a deletion changes: the count and the last id can both stay identical when
+      // a message in the middle turns into a tombstone.
+      var fp = disp.length + '|' + lastId + '|' + currentThread + '|' + chatRev;
       if (!forceScroll && fp === list._fp) return;
       var stuck = nearBottom();
       list._fp = fp;
@@ -2744,20 +2933,28 @@ object WebClientHtml {
       var col = document.createElement('div');
       col.className = 'bubble-col';
 
-      if (m.attachment) col.appendChild(buildAttachmentCard(m.attachment));
-
-      if (String(m.text || '') !== '') {
-        var bub = document.createElement('div');
-        bub.className = 'bubble';
-        bub.textContent = m.text;
-        col.appendChild(bub);
+      if (m.deleted) {
+        /* The bubble stays so the thread keeps its shape for anybody already reading it. */
+        var gone = document.createElement('div');
+        gone.className = 'bubble deleted';
+        gone.textContent = 'This message was deleted';
+        col.appendChild(gone);
+      } else {
+        if (m.replyTo) col.appendChild(buildQuote(m));
+        if (m.attachment) col.appendChild(buildAttachmentCard(m.attachment));
+        if (String(m.text || '') !== '') {
+          var bub = document.createElement('div');
+          bub.className = 'bubble';
+          bub.textContent = m.text;
+          col.appendChild(bub);
+        }
       }
 
       var meta = document.createElement('div');
       meta.className = 'bubble-meta';
       meta.style.minHeight = isLatest ? '' : '0';
       meta.style.display = 'flex';
-      if (isLatest) {
+      if (isLatest && !m.deleted) {
         var who = document.createElement('span');
         who.className = 'meta-name';
         who.textContent = mine ? 'You' : sender;
@@ -2769,8 +2966,24 @@ object WebClientHtml {
         cp.className = 'bubble-copy';
         cp.textContent = 'copy';
         cp.setAttribute('aria-label', 'Copy message');
-        cp.addEventListener('click', function () { copyToClipboard(String(m.text || m.attachment.name || '')); });
+        cp.addEventListener('click', function () { copyToClipboard(String(m.text || (m.attachment && m.attachment.name) || '')); });
         meta.appendChild(cp);
+
+        var acts = document.createElement('span');
+        acts.className = 'bubble-actions';
+        acts.appendChild(bubbleAction('Reply', 'Reply to this message', function () { startReply(m); }));
+        acts.appendChild(bubbleAction(
+          m.mine ? 'Delete' : 'Delete here',
+          m.mine ? 'Delete this message for everyone' : 'Remove this message from this tab only',
+          function () { deleteMessage(m); },
+          true
+        ));
+        meta.appendChild(acts);
+      } else if (m.deleted) {
+        var acts2 = document.createElement('span');
+        acts2.className = 'bubble-actions';
+        acts2.appendChild(bubbleAction('Reply', 'Reply to this message', function () { startReply(m); }));
+        meta.appendChild(acts2);
       } else {
         meta.style.visibility = 'hidden';
         meta.textContent = '.';
@@ -2779,6 +2992,76 @@ object WebClientHtml {
 
       row.appendChild(col);
       return row;
+    }
+
+    function bubbleAction(label, title, onClick, danger) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.title = title;
+      b.setAttribute('aria-label', title);
+      if (danger) b.className = 'danger';
+      b.addEventListener('click', onClick);
+      return b;
+    }
+
+    /* The quote renders from the snapshot the sender attached, so it survives the original being
+       deleted - and on a shared room the original may not even be in this tab's list. */
+    function buildQuote(m) {
+      var box = document.createElement('div');
+      box.className = 'reply-quote';
+      var bar = document.createElement('div');
+      bar.className = 'rq-bar';
+      var body = document.createElement('div');
+      body.className = 'rq-body';
+      var who = document.createElement('div');
+      who.className = 'rq-who';
+      who.textContent = String(m.replySender || 'Message');
+      var text = document.createElement('div');
+      text.className = 'rq-text';
+      text.textContent = String(m.replyText || '');
+      body.appendChild(who);
+      body.appendChild(text);
+      box.appendChild(bar);
+      box.appendChild(body);
+      return box;
+    }
+
+    var replyingTo = null;
+    function startReply(m) {
+      replyingTo = m;
+      el('replyBarWho').textContent = 'Replying to ' + (m.deleted ? 'a deleted message' : (m.mine ? 'you' : (m.sender || 'the sender')));
+      el('replyBarText').textContent = m.deleted ? '' : String(m.text || (m.attachment ? m.attachment.name : ''));
+      el('replyBar').classList.add('show');
+      var input = el('beamInput');
+      if (input) input.focus();
+    }
+    function cancelReply() {
+      replyingTo = null;
+      el('replyBar').classList.remove('show');
+      el('replyBarText').textContent = '';
+    }
+
+    function deleteMessage(m) {
+      // A tab may only retract what it wrote; the phone owns the rest of the room.
+      if (!m.mine) {
+        localHidden[m.id] = true;
+        chatRev++;
+        renderChat(true);
+        toast('Deleted on this device only');
+        return;
+      }
+      var headers = authHeaders();
+      headers['Content-Type'] = 'application/json; charset=utf-8';
+      fetch('/api/messages', { method: 'DELETE', headers: headers, body: JSON.stringify({ id: m.id }) })
+        .then(function (res) {
+          if (res.status === 401) { lockOut(); return; }
+          chatRev++;
+          if (!res.ok) { toast('Could not delete that message'); return; }
+          toast('Message deleted for everyone');
+          fetchMessages();
+        })
+        .catch(function () { toast('Could not reach the phone to delete that'); });
     }
 
     /* ===== Chat attachments: the file itself lives in the bubble ===== */
@@ -3175,11 +3458,12 @@ object WebClientHtml {
       }).catch(function () {});
     }
 
-    function postThreadMessage(text, attachmentId) {
+    function postThreadMessage(text, attachmentId, replyToId) {
       var headers = authHeaders();
       headers['Content-Type'] = 'application/json; charset=utf-8';
       var body = { text: text || '', sender: MY_NAME };
       if (attachmentId) body.attachmentId = attachmentId;
+      if (replyToId) body.replyTo = replyToId;
       if (currentThread) body.thread = currentThread;
       return fetch('/api/messages', { method: 'POST', headers: headers, body: JSON.stringify(body) })
         .then(function (res) {
@@ -3193,10 +3477,12 @@ object WebClientHtml {
       var input = el('beamInput');
       var text = input.value.trim();
       if (!text) return;
-      var ok = await postThreadMessage(text);
+      var quoted = replyingTo ? replyingTo.id : '';
+      var ok = await postThreadMessage(text, '', quoted);
       if (ok) {
         input.value = '';
         input.style.height = 'auto';
+        cancelReply();
         closeEmoji();
         clearTyping();
         unread[currentThread] = 0;
@@ -3633,6 +3919,11 @@ object WebClientHtml {
       on('call', function () { pollCall(); });
       on('callstate', function () { if (call.cid) pollCall(); else pollCall(); });
       on('message', function () { try { fetchMessages(); } catch (e) {} });
+      on('deleted', function () {
+        // The store keeps a tombstone rather than dropping the row, so re-read rather than hide.
+        chatRev++;
+        try { fetchMessages(); } catch (e) {}
+      });
       on('file', function (ev) {
         var d = {}; try { d = JSON.parse(ev.data || '{}'); } catch (e) {}
         try { fetchFiles(); } catch (e) {}
@@ -4324,6 +4615,9 @@ object WebClientHtml {
 
     /* ===== Boot ===== */
     el('serverUrl').textContent = location.host;
+    // The head script already chose the palette; this only syncs the button's word to the intent
+    // ("Auto" and a resolved dark look the same on screen but mean different things to keep).
+    applyThemeMode(themeMode());
     // Some browsers have no colour-emoji font, so the tray would post empty boxes.
     if (!browserHasColorEmoji()) el('emojiBtn').style.display = 'none';
     setView(viewFromHash());

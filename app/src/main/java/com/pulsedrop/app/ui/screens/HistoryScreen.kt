@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -54,6 +55,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.data.TransferHistoryEntity
+import com.pulsedrop.app.ui.components.PulseSectionHeader
+import com.pulsedrop.app.ui.components.PulseStatePanel
 import com.pulsedrop.app.util.NetworkUtils
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -77,6 +80,11 @@ fun HistoryScreen(
     var showClearConfirm by remember { mutableStateOf(false) }
     var showFilterSheet by remember { mutableStateOf(false) }
 
+    val resetFilters = {
+        selectedFilter = "ALL"
+        selectedType = "ALL"
+        selectedIpFilter = null
+    }
     val activeFilterCount =
         (if (selectedFilter != "ALL") 1 else 0) +
             (if (selectedType != "ALL") 1 else 0) +
@@ -114,7 +122,7 @@ fun HistoryScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                SectionTitle(
+                PulseSectionHeader(
                     "History",
                     "${filteredList.size} of ${historyList.size} records",
                     modifier = Modifier.weight(1f)
@@ -180,17 +188,24 @@ fun HistoryScreen(
 
         if (filteredList.isEmpty()) {
             item {
-                EmptyState(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = null,
-                            tint = colorScheme.onSurfaceVariant
-                        )
-                    },
-                    title = "No transfers yet",
-                    subtitle = "Files sent or received through the browser or other phones will appear here."
-                )
+                if (historyList.isEmpty()) {
+                    PulseStatePanel(
+                        icon = Icons.Default.History,
+                        title = "No transfers yet",
+                        message = "Files sent or received through the browser or other phones will appear here."
+                    )
+                } else {
+                    // Filters hid everything; saying "no transfers yet" would be a lie the user
+                    // can disprove with the counter already printed above.
+                    PulseStatePanel(
+                        icon = Icons.Outlined.SearchOff,
+                        title = "Nothing matches these filters",
+                        message = "${historyList.size} transfer${if (historyList.size == 1) "" else "s"} " +
+                            "are hidden by the current filters.",
+                        actionLabel = "Clear filters",
+                        onAction = resetFilters
+                    )
+                }
             }
         } else {
             items(filteredList, key = { it.id }) { item ->
@@ -232,11 +247,7 @@ fun HistoryScreen(
                         modifier = Modifier.weight(1f)
                     )
                     if (activeFilterCount > 0) {
-                        TextButton(onClick = {
-                            selectedFilter = "ALL"
-                            selectedType = "ALL"
-                            selectedIpFilter = null
-                        }) {
+                        TextButton(onClick = resetFilters) {
                             Text("Reset", color = colorScheme.primary, style = MaterialTheme.typography.labelLarge)
                         }
                     }

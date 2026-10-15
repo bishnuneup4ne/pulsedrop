@@ -1,10 +1,6 @@
 package com.pulsedrop.app.ui.components
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,29 +13,43 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.IconButtonDefaults
 import com.pulsedrop.app.R
+import com.pulsedrop.app.ui.theme.LocalPulseColors
+import com.pulsedrop.app.ui.theme.PulseRadius
+import com.pulsedrop.app.ui.theme.PulseSizes
+import com.pulsedrop.app.ui.theme.PulseSpacing
+import com.pulsedrop.app.ui.theme.PulseTheme
+import com.pulsedrop.app.ui.theme.ThemePreference
 
+/**
+ * The top bar: who this device is, whether it is reachable, and the two things a person actually
+ * press from here — re-scan the network, and start or stop serving.
+ *
+ * The appearance menu lives beside them because that is the one setting a person reaches for while
+ * looking at the screen they want changed, and switching it here takes effect on this very frame.
+ */
 @Composable
 fun PulseHeader(
     isRunning: Boolean,
@@ -48,34 +58,23 @@ fun PulseHeader(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colorScheme = MaterialTheme.colorScheme
-    // A perpetual infinite transition kept RenderThread spinning at ~75% CPU on
-    // software-rendered emulators, so the live dot now pulses twice on state change.
-    val pulseScale = remember { Animatable(1f) }
-    LaunchedEffect(isRunning) {
-        if (isRunning) {
-            repeat(2) {
-                pulseScale.animateTo(1.3f, tween(380))
-                pulseScale.animateTo(1f, tween(380))
-            }
-        } else {
-            pulseScale.snapTo(1f)
-        }
-    }
+    val c = LocalPulseColors.current
+    val context = LocalContext.current
+    val mode = ThemePreference.mode.value
+    var appearanceOpen by remember { mutableStateOf(false) }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = colorScheme.surface,
+        color = c.surface,
         tonalElevation = 2.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
+                .padding(start = 20.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Brand mark
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
@@ -83,7 +82,7 @@ fun PulseHeader(
                 Box(
                     modifier = Modifier
                         .size(46.dp)
-                        .clip(RoundedCornerShape(16.dp)),
+                        .clip(RoundedCornerShape(PulseRadius.lg.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     // A full-colour vector logo: Icon would flatten its gradient to a tint,
@@ -101,81 +100,77 @@ fun PulseHeader(
                     Text(
                         text = "PulseDrop",
                         style = MaterialTheme.typography.titleLarge,
-                        color = colorScheme.onSurface
+                        color = c.textPrimary
                     )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 2.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .scale(pulseScale.value)
-                                .clip(CircleShape)
-                                .background(
-                                    if (isRunning) colorScheme.secondary else colorScheme.outlineVariant
-                                )
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (isRunning) "Live • $deviceName" else "Idle • $deviceName",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (isRunning) colorScheme.secondary else colorScheme.onSurfaceVariant,
-                            maxLines = 1
-                        )
-                    }
+                    // Words carry the state; the dot only reinforces it, so this reads the same
+                    // in grayscale and to a screen reader.
+                    PulseStatus(
+                        text = if (isRunning) "Live" else "Idle",
+                        tone = if (isRunning) PulseStatusTone.Positive else PulseStatusTone.Neutral,
+                        detail = deviceName,
+                        modifier = Modifier.padding(top = 2.dp).testTag("header_status")
+                    )
                 }
             }
 
-            // Actions
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FilledTonalIconButton(
+                PulseIconButton(
+                    icon = Icons.Default.Refresh,
+                    label = "Rescan the network",
                     onClick = onRefresh,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .testTag("refresh_network_btn"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = colorScheme.surfaceVariant,
-                        contentColor = colorScheme.onSurfaceVariant
+                    modifier = Modifier.testTag("refresh_network_btn")
+                )
+
+                Box {
+                    PulseIconButton(
+                        icon = Icons.Default.Palette,
+                        label = "Appearance",
+                        onClick = { appearanceOpen = true },
+                        selected = mode != PulseTheme.SYSTEM,
+                        modifier = Modifier.testTag("header_appearance_btn")
                     )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh Network",
-                        modifier = Modifier.size(20.dp)
-                    )
+                    DropdownMenu(
+                        expanded = appearanceOpen,
+                        onDismissRequest = { appearanceOpen = false }
+                    ) {
+                        PulseTheme.entries.forEach { choice ->
+                            DropdownMenuItem(
+                                text = { Text(choice.label) },
+                                leadingIcon = {
+                                    if (choice == mode) Icon(Icons.Default.Check, null)
+                                    else Spacer(Modifier.size(24.dp))
+                                },
+                                onClick = {
+                                    appearanceOpen = false
+                                    // Written straight to the store the theme reads, so the next
+                                    // frame is already the chosen one — nothing to apply.
+                                    ThemePreference.save(context, choice)
+                                }
+                            )
+                        }
+                    }
                 }
 
-                val powerBg by animateColorAsState(
-                    targetValue = if (isRunning) colorScheme.primary else colorScheme.surfaceVariant,
-                    label = "powerColor"
-                )
-                val powerContent by animateColorAsState(
-                    targetValue = if (isRunning) colorScheme.onPrimary else colorScheme.onSurfaceVariant,
-                    label = "powerContentColor"
-                )
-
-                FilledTonalIconButton(
+                val running = isRunning
+                Surface(
                     onClick = onToggleServer,
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(PulseSizes.touchTarget.dp)
                         .testTag("toggle_server_btn"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = powerBg,
-                        contentColor = powerContent
-                    )
+                    shape = RoundedCornerShape(PulseRadius.md.dp),
+                    color = if (running) c.accent else c.surfaceElevated,
+                    contentColor = if (running) c.onAccent else c.textSecondary
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.PowerSettingsNew,
-                        contentDescription = if (isRunning) "Stop Server" else "Start Server",
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.PowerSettingsNew,
+                            contentDescription = if (running) "Stop server" else "Start server",
+                            modifier = Modifier.size(PulseSizes.icon.dp)
+                        )
+                    }
                 }
             }
         }

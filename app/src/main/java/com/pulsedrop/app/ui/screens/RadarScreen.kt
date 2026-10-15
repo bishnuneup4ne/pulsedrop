@@ -81,6 +81,9 @@ import com.pulsedrop.app.model.PairedDevice
 import com.pulsedrop.app.model.PeerDevice
 import com.pulsedrop.app.model.PendingPairRequest
 import com.pulsedrop.app.ui.UiPeerConnection
+import com.pulsedrop.app.ui.components.PulseSectionHeader
+import com.pulsedrop.app.ui.components.PulseStatePanel
+import com.pulsedrop.app.ui.components.PulseSkeletonList
 import com.pulsedrop.app.ui.components.PeerPinInputDialog
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -331,22 +334,23 @@ fun RadarScreen(
 
         // Peers
         item {
-            SectionTitle("Nearby devices", if (nearbyPeers.isEmpty()) null else "Tap send to pick files")
+            PulseSectionHeader("Nearby devices", if (nearbyPeers.isEmpty()) null else "Tap send to pick files")
         }
 
         if (nearbyPeers.isEmpty()) {
             item {
-                EmptyState(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Smartphone,
-                            contentDescription = null,
-                            tint = colorScheme.onSurfaceVariant
-                        )
-                    },
-                    title = "No devices found yet",
-                    subtitle = "Open PulseDrop on another phone connected to the same Wi-Fi or hotspot, or use direct IP below."
-                )
+                if (scanning) {
+                    // The sweep is still running. A skeleton says "working on it"; "no devices
+                    // found yet" would be a claim about the network we have not finished making.
+                    PulseSkeletonList(rows = 2)
+                } else {
+                    PulseStatePanel(
+                        icon = Icons.Default.Smartphone,
+                        title = "No devices found yet",
+                        message = "Open PulseDrop on another phone connected to the same Wi-Fi or " +
+                            "hotspot, or use direct IP below."
+                    )
+                }
             }
         } else {
             items(nearbyPeers) { peer ->
@@ -506,7 +510,7 @@ fun RadarScreen(
         // Paired devices
         if (pairedDevices.isNotEmpty()) {
             item {
-                SectionTitle("Paired devices", "Encrypted channel open")
+                PulseSectionHeader("Paired devices", "Encrypted channel open")
             }
             items(pairedDevices) { paired ->
                 Card(

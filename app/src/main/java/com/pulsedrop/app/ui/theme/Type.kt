@@ -1,10 +1,6 @@
 package com.pulsedrop.app.ui.theme
 
-import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -53,19 +49,3 @@ val PulseTypography = Typography(
     labelMedium = style(12, 16, 0.4, FontWeight.Medium),
     labelSmall = style(11, 14, 0.5, FontWeight.Medium)
 )
-
-@Composable
-fun PulseDropTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = PulseLightScheme,
-        typography = PulseTypography,
-        content = {
-            // A bare Text() with no style reads LocalTextStyle, which defaults to the
-            // platform font; swapping only the family puts Google Sans on every last label.
-            CompositionLocalProvider(
-                LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = PulseFontFamily),
-                content = content
-            )
-        }
-    )
-}

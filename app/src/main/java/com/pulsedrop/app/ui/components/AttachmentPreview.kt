@@ -79,6 +79,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.pulsedrop.app.model.ChatAttachment
+import com.pulsedrop.app.ui.theme.PulseStageColors
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -139,6 +140,7 @@ fun AttachmentPreview(
     file: File?,
     onDismiss: () -> Unit
 ) {
+    val stage = PulseStageColors
     val transform = remember { StageTransform() }
     val barPadding = WindowInsets.systemBars.asPaddingValues()
     BackHandler { onDismiss() }
@@ -147,7 +149,7 @@ fun AttachmentPreview(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
-        Surface(color = Color(0xFF0B1220), modifier = Modifier.fillMaxSize()) {
+        Surface(color = stage.background, modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -163,12 +165,12 @@ fun AttachmentPreview(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onDismiss, modifier = Modifier.testTag("preview_close_btn")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close preview", tint = Color(0xFFE2E8F0))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close preview", tint = stage.textPrimary)
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = attachment.name,
-                            color = Color(0xFFF1F5F9),
+                            color = stage.textPrimary,
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -176,7 +178,7 @@ fun AttachmentPreview(
                         Text(
                             text = formatAttachmentSize(attachment.size) + "  ·  " +
                                 attachment.name.substringAfterLast('.', "file").uppercase(),
-                            color = Color(0xFF94A3B8),
+                            color = stage.textSecondary,
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
@@ -324,6 +326,7 @@ private fun VideoStage(file: File) {
 
 @Composable
 private fun AudioStage(file: File) {
+    val stage = PulseStageColors
     val colorScheme = MaterialTheme.colorScheme
     var player by remember(file) { mutableStateOf<MediaPlayer?>(null) }
     var prepared by remember(file) { mutableStateOf(false) }
@@ -372,12 +375,12 @@ private fun AudioStage(file: File) {
                 .background(colorScheme.primary),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(40.dp))
+            Icon(Icons.Default.PlayArrow, null, tint = colorScheme.onPrimary, modifier = Modifier.size(40.dp))
         }
         Spacer(modifier = Modifier.height(22.dp))
         Text(
             text = file.name.substringAfterLast('/'),
-            color = Color(0xFFF1F5F9),
+            color = stage.textPrimary,
             style = MaterialTheme.typography.titleSmall,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
@@ -398,7 +401,7 @@ private fun AudioStage(file: File) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(clockLabel(position), color = Color(0xFF94A3B8), style = MaterialTheme.typography.labelSmall)
+            Text(clockLabel(position), color = stage.textSecondary, style = MaterialTheme.typography.labelSmall)
             FilledIconButton(
                 onClick = {
                     val mp = player ?: return@FilledIconButton
@@ -417,10 +420,10 @@ private fun AudioStage(file: File) {
                 Icon(
                     imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (playing) "Pause" else "Play",
-                    tint = Color.White
+                    tint = colorScheme.onPrimary
                 )
             }
-            Text(clockLabel(duration - position), color = Color(0xFF94A3B8), style = MaterialTheme.typography.labelSmall)
+            Text(clockLabel(duration - position), color = stage.textSecondary, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
@@ -432,6 +435,7 @@ private fun clockLabel(millis: Int): String {
 
 @Composable
 private fun PdfStage(file: File, transform: StageTransform) {
+    val stage = PulseStageColors
     var failed by remember(file) { mutableStateOf(false) }
     val descriptor = remember(file) {
         runCatching { ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY) }
@@ -477,7 +481,7 @@ private fun PdfStage(file: File, transform: StageTransform) {
                 modifier = Modifier
                     .padding(bottom = 84.dp)
                     .clip(CircleShape)
-                    .background(Color(0x660B1220))
+                    .background(stage.scrim)
                     .padding(horizontal = 6.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -486,15 +490,15 @@ private fun PdfStage(file: File, transform: StageTransform) {
                     enabled = page > 0,
                     modifier = Modifier.size(34.dp)
                 ) {
-                    Icon(Icons.Default.NavigateBefore, "Previous page", tint = Color(0xFFE2E8F0))
+                    Icon(Icons.Default.NavigateBefore, "Previous page", tint = stage.textPrimary)
                 }
-                Text("${page + 1} / $pageCount", color = Color(0xFFE2E8F0), style = MaterialTheme.typography.labelMedium)
+                Text("${page + 1} / $pageCount", color = stage.textPrimary, style = MaterialTheme.typography.labelMedium)
                 IconButton(
                     onClick = { if (page < pageCount - 1) page++ },
                     enabled = page < pageCount - 1,
                     modifier = Modifier.size(34.dp)
                 ) {
-                    Icon(Icons.Default.NavigateNext, "Next page", tint = Color(0xFFE2E8F0))
+                    Icon(Icons.Default.NavigateNext, "Next page", tint = stage.textPrimary)
                 }
             }
         }
@@ -515,6 +519,7 @@ private fun renderPdfPage(renderer: PdfRenderer, index: Int): ImageBitmap? {
 
 @Composable
 private fun TextStage(file: File) {
+    val stage = PulseStageColors
     var text by remember(file) { mutableStateOf<String?>(null) }
     LaunchedEffect(file) {
         text = runCatching {
@@ -528,14 +533,14 @@ private fun TextStage(file: File) {
     val body = text
     if (body == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = Color(0xFFE2E8F0))
+            CircularProgressIndicator(color = stage.textPrimary)
         }
         return
     }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0F172A))
+            .background(stage.surface)
             .padding(horizontal = 14.dp)
     ) {
         Column(
@@ -545,7 +550,7 @@ private fun TextStage(file: File) {
         ) {
             Text(
                 text = body,
-                color = Color(0xFFE2E8F0),
+                color = stage.textPrimary,
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace
             )
@@ -555,6 +560,7 @@ private fun TextStage(file: File) {
 
 @Composable
 private fun OtherStage(file: File, attachment: ChatAttachment) {
+    val stage = PulseStageColors
     val context = LocalContext.current
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -565,22 +571,22 @@ private fun OtherStage(file: File, attachment: ChatAttachment) {
             modifier = Modifier
                 .size(84.dp)
                 .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xFF1E293B)),
+                .background(stage.surfaceElevated),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.OpenInNew,
                 contentDescription = null,
-                tint = Color(0xFF93C5FD),
+                tint = stage.onAccentTint,
                 modifier = Modifier.size(34.dp)
             )
         }
         Spacer(modifier = Modifier.height(16.dp))
-        Text(attachment.name, color = Color(0xFFF1F5F9), style = MaterialTheme.typography.titleSmall)
+        Text(attachment.name, color = stage.textPrimary, style = MaterialTheme.typography.titleSmall)
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = formatAttachmentSize(attachment.size) + " · PulseDrop has no inline viewer for this type.",
-            color = Color(0xFF94A3B8),
+            color = stage.textSecondary,
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(modifier = Modifier.height(18.dp))
@@ -588,17 +594,18 @@ private fun OtherStage(file: File, attachment: ChatAttachment) {
             onClick = { openExternally(context, file, attachment.mime, attachment.name) },
             modifier = Modifier.testTag("preview_open_with")
         ) {
-            Text("Open with another app", color = Color(0xFF93C5FD))
+            Text("Open with another app", color = stage.onAccentTint)
         }
     }
 }
 
 @Composable
 private fun PreviewMessage(message: String) {
+    val stage = PulseStageColors
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
             text = message,
-            color = Color(0xFF94A3B8),
+            color = stage.textSecondary,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(24.dp)
         )
@@ -611,44 +618,45 @@ private fun PreviewToolbar(
     file: File,
     attachment: ChatAttachment
 ) {
+    val stage = PulseStageColors
     val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF111C31))
+            .background(stage.surfaceOverlay)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
         IconButton(onClick = { transform.zoomBy(1f / 1.25f) }, modifier = Modifier.testTag("preview_zoom_out")) {
-            Icon(Icons.Default.ZoomOutMap, "Zoom out", tint = Color(0xFFE2E8F0))
+            Icon(Icons.Default.ZoomOutMap, "Zoom out", tint = stage.textPrimary)
         }
         Text(
             text = "${(transform.scale * 100).roundToInt()}%",
-            color = Color(0xFFCBD5E1),
+            color = stage.textSecondary,
             style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.width(48.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
         IconButton(onClick = { transform.zoomBy(1.25f) }, modifier = Modifier.testTag("preview_zoom_in")) {
-            Icon(Icons.Default.ZoomInMap, "Zoom in", tint = Color(0xFFE2E8F0))
+            Icon(Icons.Default.ZoomInMap, "Zoom in", tint = stage.textPrimary)
         }
         Spacer(modifier = Modifier.width(8.dp))
         IconButton(onClick = { transform.rotate() }, modifier = Modifier.testTag("preview_rotate")) {
-            Icon(Icons.Default.RotateRight, "Rotate", tint = Color(0xFFE2E8F0))
+            Icon(Icons.Default.RotateRight, "Rotate", tint = stage.textPrimary)
         }
         IconButton(onClick = { transform.fit() }, modifier = Modifier.testTag("preview_fit")) {
-            Icon(Icons.Default.Refresh, "Fit to screen", tint = Color(0xFFE2E8F0))
+            Icon(Icons.Default.Refresh, "Fit to screen", tint = stage.textPrimary)
         }
         Spacer(modifier = Modifier.weight(1f))
         TextButton(
             onClick = { openExternally(context, file, attachment.mime, attachment.name) },
             modifier = Modifier.testTag("preview_share")
         ) {
-            Icon(Icons.Default.Check, null, tint = Color(0xFF93C5FD), modifier = Modifier.size(16.dp))
+            Icon(Icons.Default.Check, null, tint = stage.onAccentTint, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Open", color = Color(0xFF93C5FD))
+            Text("Open", color = stage.onAccentTint)
         }
     }
 }

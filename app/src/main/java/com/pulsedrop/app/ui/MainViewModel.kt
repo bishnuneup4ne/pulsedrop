@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -137,6 +138,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val pairManager = PairManager(context, viewModelScope)
     val pairedDevices: StateFlow<List<PairedDevice>> = pairManager.paired
     val incomingPairRequests: StateFlow<List<IncomingPairRequest>> = pairManager.incomingRequests
+
+    /**
+     * Lets this phone chat through somebody else's server. One host is enough for a whole room:
+     * the phone that is not hosting pairs, sends and receives through the host's mailbox instead of
+     * needing a socket of its own, which is what used to force "start the server on both devices".
+     */
+    val relayClient = com.pulsedrop.app.relay.RelayClient(pairManager, viewModelScope)
+    val relayHost: StateFlow<com.pulsedrop.app.relay.RelayClient.Host?> = relayClient.attached
+
+    /** Whichever phone is doing the server work for us, as the UI has no business knowing more. */
+    val relayHostName: StateFlow<String?> = relayClient.attached
+        .map { it?.name }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val pendingOutgoingPair: StateFlow<PendingPairRequest?> = pairManager.pendingOutgoing
     val pairEvent: StateFlow<String?> = pairManager.pairEvent
 
@@ -369,18 +383,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         updateQrCode("http://$initialIp:${_serverState.value.port}")
         startIdleWatchdog()
-        // Hosting on launch means pairing never needs "start the server on BOTH phones":
-        // whichever app is open already answers the dial. If a previous ViewModel left the
-        // server listening, startServer() adopts it instead of fighting it for the port.
-        startServer()
 
+        // Set before anything can reach PairManager: the server and the relay both call back
+        // through these, and a pairing answer arriving first would be named and addressed wrong.
         pairManager.nameProvider = { _serverState.value.deviceName }
         pairManager.endpointProvider = { _serverState.value.ipAddress to _serverState.value.port }
         pairManager.onPairedMessage = { msg ->
+            // A room message from a paired phone goes into the shared room as well, or the
+            // browsers pointed at this phone would never see what another phone said.
+            if (msg.threadId == null) serverInstance?.ingestRoomMessage(msg)
             _clipMessages.update { list ->
                 if (list.any { it.id == msg.id }) list else (list + msg).takeLast(CHAT_RETENTION)
             }
         }
+        pairManager.acceptsInbound = { serverInstance != null }
+        // A retraction names a message id, and we do not know which store it lives in, so mark
+        // both: a missing id is a no-op in either.
+        pairManager.onPairedDelete = { id ->
+            markLocalDeleted(id)
+            serverInstance?.markMessageDeleted(id)
+        }
+        pairManager.relaySender = { pairing, iv, ct -> relayClient.send(pairing, iv, ct) }
+        pairManager.relayPairPoller = { ip, port, reqId ->
+            relayClient.pollPairAnswer(ip, port, reqId)
+        }
+        // Hosting: leave a relay-mode answer where its requester can pick it up.
+        pairManager.pairAnswerSink = { reqId, answer ->
+            serverInstance?.setPairAnswer(reqId, answer)
+        }
+
+        // Hosting on launch means pairing never needs "start the server on BOTH phones":
+        // whichever app is open already answers the dial. If a previous ViewModel left the
+        // server listening, startServer() adopts it instead of fighting it for the port.
+        startServer()
+        announcePresence()
+        startRelayWatch()
         com.pulsedrop.app.call.ProjectionCaptureService.engine = callEngine
 
         viewModelScope.launch {
@@ -764,21 +801,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return (1000..9999).random().toString()
     }
 
+    /**
+     * Broadcast who we are. This runs whether or not we host: a phone with its server off still
+     * has to be seen, or the radar is empty and pairing looks broken. The beacon says so explicitly
+     * (`server=false`) so peers chat with it through the relay instead of dialling a dead port.
+     */
+    private fun announcePresence() {
+        val state = _serverState.value
+        discoveryManager.startDiscovery(
+            deviceName = state.deviceName,
+            currentIp = state.ipAddress,
+            serverPort = state.port,
+            requiresPin = state.isPinRequired,
+            scope = viewModelScope,
+            hasServer = state.isRunning,
+            deviceId = runCatching { pairManager.myDeviceId() }.getOrDefault("")
+        )
+    }
+
+    /**
+     * If we are not the host, become a client of a paired phone that is. Only ever one host at a
+     * time: two mailboxes would mean two halves of the same conversation and no way to join them.
+     */
+    private fun ensureRelayAttached() {
+        if (_serverState.value.isRunning) {
+            relayClient.detach()
+            return
+        }
+        if (relayClient.attached.value != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            // The address stored on a pairing is the best guess; discovery tells us who is awake.
+            val candidates = pairManager.paired.value.sortedByDescending { it.createdAt } +
+                discoveryManager.nearbyPeers.value
+                    .filter { it.hasServer && it.deviceId.isNotBlank() }
+                    .mapNotNull { pairManager.findPairingByDeviceId(it.deviceId) }
+            for (pairing in candidates) {
+                if (_serverState.value.isRunning) break
+                if (pairing.originIp.isBlank()) continue
+                if (relayClient.attach(pairing.originIp, pairing.originPort)) break
+            }
+        }
+    }
+
+    /**
+     * A host can appear, reboot or walk out of range at any moment, so attaching is not a one-shot.
+     * The tick is cheap: it does nothing at all while we are hosting or already attached.
+     */
+    private var relayWatchJob: kotlinx.coroutines.Job? = null
+
+    private fun startRelayWatch() {
+        if (relayWatchJob?.isActive == true) return
+        relayWatchJob = viewModelScope.launch {
+            while (isActive) {
+                ensureRelayAttached()
+                delay(30_000L)
+            }
+        }
+    }
+
     fun regeneratePin() {
         val newPin = generateRandomPin()
         _serverState.update { it.copy(pin = newPin) }
         persistSettings()
         val state = _serverState.value
         serverInstance?.updatePinSecurity(state.isPinRequired, if (state.isPinRequired) newPin else null)
-        if (state.isRunning) {
-            discoveryManager.startDiscovery(
-                deviceName = state.deviceName,
-                currentIp = state.ipAddress,
-                serverPort = state.port,
-                requiresPin = state.isPinRequired,
-                scope = viewModelScope
-            )
-        }
+        announcePresence()
     }
 
     fun setPinRequired(required: Boolean) {
@@ -786,15 +873,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         persistSettings()
         val state = _serverState.value
         serverInstance?.updatePinSecurity(required, if (required) state.pin else null)
-        if (state.isRunning) {
-            discoveryManager.startDiscovery(
-                deviceName = state.deviceName,
-                currentIp = state.ipAddress,
-                serverPort = state.port,
-                requiresPin = required,
-                scope = viewModelScope
-            )
-        }
+        announcePresence()
     }
 
     fun setCustomPin(newPin: String) {
@@ -805,15 +884,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         persistSettings()
         val state = _serverState.value
         serverInstance?.updatePinSecurity(state.isPinRequired, if (state.isPinRequired) safePin else null)
-        if (state.isRunning) {
-            discoveryManager.startDiscovery(
-                deviceName = state.deviceName,
-                currentIp = state.ipAddress,
-                serverPort = state.port,
-                requiresPin = state.isPinRequired,
-                scope = viewModelScope
-            )
-        }
+        announcePresence()
     }
 
     fun setDeviceName(name: String) {
@@ -825,15 +896,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // mid-flight. The name is served from a live field now, so only the
                 // announcement has to go out again.
                 serverInstance?.rename(name)
-                val state = _serverState.value
-                discoveryManager.startDiscovery(
-                    deviceName = state.deviceName,
-                    currentIp = state.ipAddress,
-                    serverPort = state.port,
-                    requiresPin = state.isPinRequired,
-                    scope = viewModelScope
-                )
             }
+            announcePresence()
         }
     }
 
@@ -871,17 +935,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateQrCode(url)
         // Discovery announced the address captured at start-up, so after a Wi-Fi switch
         // peers kept dialling the phone's old IP. Re-broadcast, and re-point the notification.
-        if (ip != previous && _serverState.value.isRunning) {
+        if (ip != previous) {
             serverInstance?.refreshTls(listOf(ip))
-            val state = _serverState.value
-            discoveryManager.startDiscovery(
-                deviceName = state.deviceName,
-                currentIp = ip,
-                serverPort = currentPort,
-                requiresPin = state.isPinRequired,
-                scope = viewModelScope
-            )
-            ServerService.startService(context, url)
+            announcePresence()
+            if (_serverState.value.isRunning) ServerService.startService(context, url)
         }
     }
 
@@ -932,6 +989,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
+            override fun onMessageDeleted(id: String) = markLocalDeleted(id)
+
             override fun onWebCall(call: WebCall) {
                 // The browser can hang up or be dismissed remotely; tear the sheet down then.
                 _webCall.value = if (call.state == "ended" || call.state == "declined") null else call
@@ -974,19 +1033,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (chatVisible) startTypingPolling()
             startWebClientWatch()
 
-            discoveryManager.startDiscovery(
-                deviceName = state.deviceName,
-                currentIp = state.ipAddress,
-                serverPort = state.port,
-                requiresPin = state.isPinRequired,
-                scope = viewModelScope
-            )
+            announcePresence()
+            // Hosting means mail for us arrives directly, not from a mailbox to keep polling.
+            relayClient.detach()
         } catch (e: Exception) {
             e.printStackTrace()
             serverInstance = null
             ServerService.hostedServer = null
             _serverState.update { it.copy(isRunning = false, startedAt = 0L) }
             _uiMessage.value = "Could not start the server on port ${state.port}: ${e.message}"
+            // The port is taken or the radio is odd — being somebody else's client still works.
+            ensureRelayAttached()
         }
     }
 
@@ -1010,9 +1067,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         serverInstance = null
         ServerService.hostedServer = null
-        discoveryManager.stopDiscovery()
         ServerService.stopService(context)
         _serverState.update { it.copy(isRunning = false, startedAt = 0L) }
+        // Turning our own server off must not make the phone invisible: it keeps announcing,
+        // now flagged server=false, and starts carrying its mail through a paired host instead.
+        announcePresence()
+        ensureRelayAttached()
     }
 
     /**
@@ -1219,13 +1279,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * recipient's own key; room and direct-IP threads keep the file in the chat store,
      * so it stays inside the conversation instead of the hosted file list.
      */
-    fun sendFileToThread(threadId: String?, uri: Uri) {        viewModelScope.launch(Dispatchers.IO) {
+    fun sendFileToThread(threadId: String?, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
             val (name, size, _) = resolveFileMetadata(uri)
             when {
                 threadId == null || threadId.startsWith("ip:") -> {
                     val server = serverInstance
                     if (server == null) {
-                        _uiMessage.value = "Start the server to attach files to chat"
+                        // Attached to somebody else's room: chat rides the relay, but a file is
+                        // bytes, not a message. Say which of the two the user is out of.
+                        val host = relayClient.attached.value
+                        _uiMessage.value = if (host != null)
+                            "Text goes through ${host.name}'s server, but files need a server of your own — start yours to send $name"
+                        else
+                            "Start the server to attach files to chat"
                         return@launch
                     }
                     val attachment = server.storeChatAttachment(uri, name)
@@ -1300,7 +1367,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun chatAttachmentFile(attachment: com.pulsedrop.app.model.ChatAttachment): File? =
         serverInstance?.chatAttachmentFile(attachment.id)
 
-    fun sendClipMessage(text: String, threadId: String? = null) {
+    fun sendClipMessage(text: String, threadId: String? = null, reply: ClipMessage? = null) {
         if (text.isBlank()) return
         val sender = _serverState.value.deviceName
 
@@ -1312,27 +1379,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         when {
             threadId == null -> {
-                val msg = serverInstance?.addMessage(text, sender) ?: ClipMessage(
-                    id = UUID.randomUUID().toString(), text = text, sender = sender
-                )
+                val msg = serverInstance?.addMessage(text, sender, replyTo = reply)
+                    ?: sentBubble(text = text, sender = sender, reply = reply)
                 echo(msg)
+                // The room is not just this phone's browsers: every paired phone has to get it too,
+                // otherwise two phones in one room read as two unrelated chats.
+                viewModelScope.launch(Dispatchers.IO) {
+                    pairManager.broadcastToRoom(text, msg.id, reply)
+                }
             }
 
             threadId.startsWith("pair:") -> {
                 val pid = threadId.removePrefix("pair:")
                 val pairing = pairManager.findPairing(pid) ?: return
                 viewModelScope.launch(Dispatchers.IO) {
-                    val ok = pairManager.sendPairedMessage(pairing, text, threadId)
+                    val ok = pairManager.sendPairedMessage(pairing, text, threadId, reply)
                     if (ok) {
                         echo(
-                            ClipMessage(
-                                id = UUID.randomUUID().toString(),
+                            sentBubble(
                                 text = text, sender = sender,
-                                encrypted = true, threadId = threadId
+                                threadId = threadId, encrypted = true, reply = reply
                             )
                         )
                     } else {
-                        _uiMessage.value = "${pairing.name} is offline — paired chat needs both phones online"
+                        val host = relayClient.attached.value
+                        _uiMessage.value = if (host != null)
+                            "${pairing.name} is offline, and ${host.name}'s relay did not take the message"
+                        else
+                            "${pairing.name} is offline — pair with a phone that is hosting, or start your own server"
                     }
                 }
             }
@@ -1341,13 +1415,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val gid = threadId.removePrefix("group:")
                 val group = pairManager.findGroup(gid) ?: return
                 viewModelScope.launch(Dispatchers.IO) {
-                    val delivered = pairManager.sendGroupMessage(group, text)
+                    val delivered = pairManager.sendGroupMessage(group, text, reply)
                     if (delivered > 0) {
                         echo(
-                            ClipMessage(
-                                id = UUID.randomUUID().toString(),
+                            sentBubble(
                                 text = text, sender = sender,
-                                encrypted = true, threadId = threadId
+                                threadId = threadId, encrypted = true, reply = reply
                             )
                         )
                         if (delivered < group.memberPids.size) {
@@ -1360,16 +1433,69 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             threadId.startsWith("ip:") -> {
-                val to = threadId.removePrefix("ip:")
+                val selfIp = _serverState.value.ipAddress
                 val msg = serverInstance?.addMessage(
-                    text = text, sender = sender, clientIp = _serverState.value.ipAddress,
-                    threadId = threadId
-                ) ?: ClipMessage(
-                    id = UUID.randomUUID().toString(), text = text, sender = sender,
-                    clientIp = _serverState.value.ipAddress, threadId = threadId
+                    text = text, sender = sender, clientIp = selfIp,
+                    threadId = threadId, replyTo = reply
+                ) ?: sentBubble(
+                    text = text, sender = sender, threadId = threadId,
+                    clientIp = selfIp, reply = reply
                 )
                 echo(msg)
             }
+        }
+    }
+
+    /** The bubble this device shows for something it just wrote, carrying the same quote as the wire. */
+    private fun sentBubble(
+        text: String,
+        sender: String,
+        threadId: String? = null,
+        encrypted: Boolean = false,
+        clientIp: String? = null,
+        reply: ClipMessage? = null
+    ) = ClipMessage(
+        id = UUID.randomUUID().toString(),
+        text = text,
+        sender = sender,
+        clientIp = clientIp,
+        encrypted = encrypted,
+        threadId = threadId,
+        replyTo = reply?.id,
+        replySender = reply?.sender,
+        replyText = reply?.text?.take(200)
+    )
+
+    /**
+     * Removes a chat message. Locally it always becomes a tombstone, so the thread does not shift
+     * under anything already drawn; "for everyone" additionally seals a retraction along the paths
+     * the original travelled. A peer on a build too old to understand that simply keeps showing the
+     * message, which is why the bubble is marked rather than silently dropped.
+     */
+    fun deleteMessage(id: String, forEveryone: Boolean) {
+        val target = _clipMessages.value.firstOrNull { it.id == id } ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            markLocalDeleted(id)
+            if (target.threadId == null || target.threadId.startsWith("ip:")) {
+                serverInstance?.markMessageDeleted(id)
+            }
+            if (!forEveryone) return@launch
+            if (target.encrypted && !target.sender.equals(_serverState.value.deviceName, ignoreCase = true)) {
+                _uiMessage.value = "Only ${target.sender} can retract their own message"
+                return@launch
+            }
+            val reached = pairManager.deleteEverywhere(id, target.threadId)
+            _uiMessage.value = when {
+                reached > 0 -> "Retracted on $reached other device${if (reached > 1) "s" else ""}"
+                target.threadId == null || target.threadId.startsWith("ip:") -> "Deleted here and on the room"
+                else -> "Deleted here — the other side is offline, so it still shows their copy"
+            }
+        }
+    }
+
+    private fun markLocalDeleted(id: String) {
+        _clipMessages.update { list ->
+            list.map { if (it.id == id) it.copy(deleted = true, text = "") else it }
         }
     }
 

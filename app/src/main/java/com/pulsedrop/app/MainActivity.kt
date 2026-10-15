@@ -9,9 +9,14 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
 import com.pulsedrop.app.ui.MainScreen
 import com.pulsedrop.app.ui.MainViewModel
 import com.pulsedrop.app.ui.theme.PulseDropTheme
+import com.pulsedrop.app.ui.theme.ThemePreference
+import com.pulsedrop.app.ui.theme.isPulseDark
+import com.pulsedrop.app.ui.theme.resolvePulsePalette
+import com.pulsedrop.app.ui.theme.systemUiIsDark
 
 class MainActivity : ComponentActivity() {
 
@@ -19,26 +24,39 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // The app is light-only, so force dark icons regardless of system dark mode
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.light(
-                android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT
-            ),
-            navigationBarStyle = SystemBarStyle.light(
-                android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT
-            )
-        )
+        // Before the first frame: the window background behind Compose has to already be the
+        // colour the saved preference resolves to, or opening the app shows a flash of the other.
+        val dark = wantsDarkSurface()
+        applyWindowTheme(dark)
+        enableEdgeToEdge(statusBarStyle = barStyle(dark), navigationBarStyle = barStyle(dark))
 
         handleIncomingShareIntent(intent)
         handleCallActionIntent(intent)
 
         setContent {
             PulseDropTheme {
+                // The bars follow the palette rather than the system, so changing appearance in
+                // Settings moves the icons while the app is open.
+                val dark = isPulseDark()
+                LaunchedEffect(dark) {
+                    enableEdgeToEdge(statusBarStyle = barStyle(dark), navigationBarStyle = barStyle(dark))
+                }
                 MainScreen(viewModel = viewModel)
             }
         }
+    }
+
+    /** Dark icons on a light surface, light icons on a dark one. */
+    private fun barStyle(dark: Boolean): SystemBarStyle =
+        if (dark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+
+    /** The same resolution the Compose palette uses, so the window and the app never disagree. */
+    private fun wantsDarkSurface(): Boolean =
+        resolvePulsePalette(ThemePreference.mode.value, systemUiIsDark(this)).isDark
+
+    private fun applyWindowTheme(dark: Boolean) {
+        setTheme(if (dark) R.style.Theme_PulseDrop_Dark else R.style.Theme_PulseDrop_Light)
     }
 
     override fun onNewIntent(intent: Intent) {

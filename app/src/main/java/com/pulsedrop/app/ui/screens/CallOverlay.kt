@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.call.CallParticipant
 import com.pulsedrop.app.call.CallState
 import com.pulsedrop.app.call.formatCallLength
+import com.pulsedrop.app.ui.theme.PulseStageColors
 
 @Composable
 fun CallOverlay(
@@ -76,6 +77,7 @@ fun CallOverlay(
     modifier: Modifier = Modifier
 ) {
     // The clock the user asks for the moment a call ends, shown while it is still up.
+    val stage = PulseStageColors
     val anchor = state.connectedAt
     var seconds by remember(anchor) { mutableLongStateOf(0L) }
     LaunchedEffect(anchor) {
@@ -88,7 +90,7 @@ fun CallOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0B1220))
+            .background(stage.background)
             .systemBarsPadding()
             .testTag("call_overlay")
     ) {
@@ -121,7 +123,9 @@ fun CallOverlay(
                     .height(210.dp)
                     .background(
                         Brush.verticalGradient(
-                            0f to Color(0xE60B1220), 0.65f to Color(0x330B1220), 1f to Color.Transparent
+                            0f to stage.background.copy(alpha = 0.92f),
+                            0.65f to stage.background.copy(alpha = 0.2f),
+                            1f to Color.Transparent
                         )
                     )
             )
@@ -139,8 +143,8 @@ fun CallOverlay(
                 if (state.sharing) {
                     ShareBanner(
                         text = "You are sharing your screen",
-                        background = Color(0xFF065F46),
-                        foreground = Color(0xFF6EE7B7),
+                        background = stage.successTint,
+                        foreground = stage.onSuccessTint,
                         onClick = onToggleScreenShare,
                         action = "Stop",
                         tag = "share_stop_banner"
@@ -150,8 +154,8 @@ fun CallOverlay(
                 if (state.peerSharing) {
                     ShareBanner(
                         text = "${state.peerName.ifBlank { "They" }} is sharing their screen",
-                        background = Color(0xFF1E3A8A),
-                        foreground = Color(0xFF93C5FD),
+                        background = stage.accentTint,
+                        foreground = stage.onAccentTint,
                         onClick = null,
                         action = "",
                         tag = "peer_share_banner"
@@ -167,7 +171,7 @@ fun CallOverlay(
                 .padding(10.dp)
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(Color(0x33FFFFFF))
+                .background(stage.scrim)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -180,7 +184,7 @@ fun CallOverlay(
             Icon(
                 imageVector = Icons.Default.KeyboardArrowDown,
                 contentDescription = "Minimize call",
-                tint = Color.White,
+                tint = stage.textPrimary,
                 modifier = Modifier.size(24.dp)
             )
         }
@@ -194,7 +198,7 @@ fun CallOverlay(
                     .padding(end = 14.dp, bottom = 176.dp)
                     .size(width = 96.dp, height = 128.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(14.dp))
+                    .border(1.dp, stage.borderStrong, RoundedCornerShape(14.dp))
                     .testTag("call_self_preview")
             )
         }
@@ -212,13 +216,13 @@ fun CallOverlay(
                     modifier = Modifier
                         .size(112.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF1D2939)),
+                        .background(stage.surfaceElevated),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = state.peerName.take(1).uppercase(),
                         style = MaterialTheme.typography.displaySmall,
-                        color = Color(0xFF93C5FD)
+                        color = stage.onAccentTint
                     )
                 }
                 Spacer(modifier = Modifier.height(20.dp))
@@ -230,7 +234,7 @@ fun CallOverlay(
                     else -> state.peerName.ifBlank { "Paired device" }
                 },
                 style = MaterialTheme.typography.headlineSmall,
-                color = Color.White
+                color = stage.textPrimary
             )
             Spacer(modifier = Modifier.height(6.dp))
 
@@ -244,7 +248,7 @@ fun CallOverlay(
                         }
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF9CA3AF),
+                    color = stage.textSecondary,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -259,7 +263,7 @@ fun CallOverlay(
                     CircularProgressIndicator(
                         modifier = Modifier.size(14.dp),
                         strokeWidth = 2.dp,
-                        color = Color(0xFF60A5FA)
+                        color = stage.onAccentTint
                     )
                     Spacer(modifier = Modifier.size(8.dp))
                 }
@@ -275,7 +279,7 @@ fun CallOverlay(
                         else -> if (state.outgoing) "Ringing…" else "Connecting…"
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF9CA3AF),
+                    color = stage.textSecondary,
                     modifier = Modifier.testTag("call_status_line")
                 )
             }
@@ -346,6 +350,7 @@ private fun ConferenceGrid(
     showVideo: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val stage = PulseStageColors
     val rows = participants.chunked(if (participants.size > 2) 2 else 1)
     Column(
         modifier = modifier.padding(horizontal = 12.dp, vertical = 64.dp),
@@ -363,7 +368,7 @@ private fun ConferenceGrid(
                             .weight(1f)
                             .height(if (rows.size > 1) 170.dp else 240.dp)
                             .clip(RoundedCornerShape(16.dp))
-                            .background(Color(0xFF111C2E))
+                            .background(stage.surfaceElevated)
                             .testTag("conf_tile_${p.pid}"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -378,7 +383,7 @@ private fun ConferenceGrid(
                             Text(
                                 text = p.name.take(1).uppercase(),
                                 style = MaterialTheme.typography.headlineMedium,
-                                color = if (p.connected) Color(0xFF93C5FD) else Color(0xFF475569)
+                                color = if (p.connected) stage.onAccentTint else stage.textTertiary
                             )
                         }
                         Row(
@@ -390,7 +395,7 @@ private fun ConferenceGrid(
                             Text(
                                 text = p.name,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = Color.White,
+                                color = stage.textPrimary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -399,7 +404,7 @@ private fun ConferenceGrid(
                                 Icon(
                                     imageVector = Icons.Default.MicOff,
                                     contentDescription = "Muted",
-                                    tint = Color(0xFFFCA5A5),
+                                    tint = stage.danger,
                                     modifier = Modifier.size(13.dp)
                                 )
                             }
@@ -408,7 +413,7 @@ private fun ConferenceGrid(
                                 Icon(
                                     imageVector = Icons.Default.ScreenShare,
                                     contentDescription = "Sharing screen",
-                                    tint = Color(0xFF6EE7B7),
+                                    tint = stage.success,
                                     modifier = Modifier.size(13.dp)
                                 )
                             }
@@ -419,10 +424,10 @@ private fun ConferenceGrid(
                                     .align(Alignment.TopEnd)
                                     .padding(8.dp)
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(Color(0xFF7C2D12))
+                                    .background(stage.warningTint)
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
-                                Text("Ringing", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                                Text("Ringing", style = MaterialTheme.typography.labelSmall, color = stage.onWarningTint)
                             }
                         }
                     }
@@ -445,8 +450,9 @@ private fun SelfPreview(
     onAttach: (SurfaceHolder?) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val stage = PulseStageColors
     AndroidView(
-        modifier = modifier.background(Color(0xFF111C2E)),
+        modifier = modifier.background(stage.surfaceElevated),
         factory = { context ->
             SurfaceView(context).apply {
                 holder.addCallback(object : SurfaceHolder.Callback {
@@ -529,11 +535,12 @@ fun CompactCallBar(
     onHangUp: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val stage = PulseStageColors
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(999.dp))
-            .background(Color(0xFF111C2E))
-            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(999.dp))
+            .background(stage.surfaceOverlay)
+            .border(1.dp, stage.borderStrong, RoundedCornerShape(999.dp))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -548,13 +555,13 @@ fun CompactCallBar(
             modifier = Modifier
                 .size(30.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF1D2939)),
+                .background(stage.highlight),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = state.peerName.take(1).uppercase().ifBlank { "P" },
                 style = MaterialTheme.typography.titleMedium,
-                color = Color(0xFF93C5FD)
+                color = stage.onAccentTint
             )
         }
         Spacer(modifier = Modifier.size(9.dp))
@@ -562,7 +569,7 @@ fun CompactCallBar(
             Text(
                 text = state.peerName.ifBlank { if (state.conference) "Group call" else "Call" },
                 style = MaterialTheme.typography.labelLarge,
-                color = Color.White,
+                color = stage.textPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -573,7 +580,7 @@ fun CompactCallBar(
                     else -> state.status.ifBlank { "Ringing…" }
                 },
                 style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF9CA3AF),
+                color = stage.textSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -583,7 +590,7 @@ fun CompactCallBar(
             modifier = Modifier
                 .size(38.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFDC2626))
+                .background(stage.danger)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -596,7 +603,7 @@ fun CompactCallBar(
             Icon(
                 imageVector = Icons.Default.CallEnd,
                 contentDescription = "End call",
-                tint = Color.White,
+                tint = stage.onDanger,
                 modifier = Modifier.size(19.dp)
             )
         }
@@ -612,6 +619,7 @@ private fun CallControl(
     selected: Boolean = false,
     danger: Boolean = false
 ) {
+    val stage = PulseStageColors
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
@@ -619,9 +627,9 @@ private fun CallControl(
                 .clip(CircleShape)
                 .background(
                     when {
-                        danger -> Color(0xFFDC2626)
-                        selected -> Color(0xFF93C5FD)
-                        else -> Color(0xFF1D2939)
+                        danger -> stage.danger
+                        selected -> stage.accent
+                        else -> stage.surfaceElevated
                     }
                 )
                 .clickable(
@@ -636,7 +644,7 @@ private fun CallControl(
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (selected) Color(0xFF0B1220) else Color.White,
+                tint = if (selected) stage.onAccent else stage.textPrimary,
                 modifier = Modifier.size(26.dp)
             )
         }
@@ -644,7 +652,7 @@ private fun CallControl(
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF9CA3AF),
+            color = stage.textSecondary,
             textAlign = TextAlign.Center
         )
     }

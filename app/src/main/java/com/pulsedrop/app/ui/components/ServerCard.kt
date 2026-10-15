@@ -67,6 +67,8 @@ fun ServerCard(
     qrBitmap: Bitmap?,
     onToggleServer: () -> Unit,
     onOpenSecuritySettings: () -> Unit,
+    /** Name of the phone whose server this one is chatting through, when it is not the host. */
+    relayHostName: String? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -149,6 +151,40 @@ fun ServerCard(
                         color = if (serverState.isPinRequired) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant
                     )
                 }
+            }
+
+            // One line that answers "who is the server here?", which is the question this whole
+            // screen used to leave open. A room needs exactly one host, and saying which phone
+            // it is stops the habit of starting a server on every device.
+            val topology = when {
+                serverState.isRunning -> "This phone is the room's server — other devices chat through it"
+                relayHostName != null -> "Chatting through $relayHostName's server — no second one needed"
+                else -> "Not connected to a server yet — start this one, or pair with a phone that did"
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("server_topology_line"),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when {
+                                serverState.isRunning -> colorScheme.secondary
+                                relayHostName != null -> colorScheme.primary
+                                else -> colorScheme.outline
+                            }
+                        )
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = topology,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colorScheme.onSurfaceVariant
+                )
             }
 
             // Connection hero block
@@ -340,6 +376,7 @@ fun ServerCard(
                             modifier = Modifier
                                 .size(236.dp)
                                 .clip(RoundedCornerShape(20.dp)),
+                            // A QR quiet zone has to be the code's own light mat, not a theme surface.
                             color = Color.White,
                             shadowElevation = 2.dp
                         ) {
