@@ -63,6 +63,16 @@ data class CallParticipant(
     val sharing: Boolean = false
 )
 
+/** "3:07:04" only past the hour; a two-part clock is what a call screen always shows. */
+fun formatCallLength(seconds: Long): String {
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    val ss = if (s < 10) "0$s" else "$s"
+    val mm = if (m < 10) "0$m" else "$m"
+    return if (h > 0) "$h:$mm:$ss" else "$m:$ss"
+}
+
 data class CallState(
     val active: Boolean = false,
     val outgoing: Boolean = false,
@@ -75,6 +85,9 @@ data class CallState(
     val cameraFront: Boolean = false,
     val sharing: Boolean = false,
     val peerSharing: Boolean = false,
+    val peerMuted: Boolean = false,
+    /** Wall clock of the moment media came up; 0 until then, so a live call can show its length. */
+    val connectedAt: Long = 0L,
     val status: String = "",
     val conference: Boolean = false,
     val isHost: Boolean = false,
@@ -110,6 +123,23 @@ class CallEngine(
     @Volatile private var out: DataOutputStream? = null
     @Volatile private var running = false
     private var serverSocket: ServerSocket? = null
+
+    /** The most recent finished call, for the "Call ended - 3:12" card. */
+    private val _lastCall = MutableStateFlow<CallRecord?>(null)
+    val lastCall: StateFlow<CallRecord?> = _lastCall.asStateFlow()
+
+    /**
+     * Recorded the moment a leg stops: the UI needs both the length and why it stopped, and a
+     * "Call ended" notice with neither reads as though the call had never connected.
+     */
+    data class CallRecord(
+        val peerName: String,
+        val seconds: Long,
+        val video: Boolean,
+        val conference: Boolean,
+        val reason: String,
+        val endedAt: Long = System.currentTimeMillis()
+    )
 
     /** Address the peer can dial to reach our media listener. */
     @Volatile private var mediaHost: String = ""
@@ -477,6 +507,7 @@ class CallEngine(
             if (video) startCamera()
             _state.value = _state.value.copy(
                 outgoing = false, connected = true,
+                connectedAt = System.currentTimeMillis(),
                 status = "In call with $peerName"
             )
         }
@@ -548,7 +579,11 @@ class CallEngine(
             if (reached == 0) {
                 confInvitees.clear()
                 // Nobody could be dialled; the tab and this phone still have each other.
-                _state.value = _state.value.copy(connected = true, status = "In call with $webTabName")
+                _state.value = _state.value.copy(
+                    connected = true,
+                    connectedAt = System.currentTimeMillis(),
+                    status = "In call with $webTabName"
+                )
                 broadcastConfState()
                 return@launch
             }
@@ -572,6 +607,7 @@ class CallEngine(
             val live = legs.values.count { it.connected }
             _state.value = _state.value.copy(
                 connected = true,
+                connectedAt = System.currentTimeMillis(),
                 status = if (live > 0) "Group call · ${live + 2} devices" else "In call with $webTabName"
             )
             broadcastConfState()
@@ -639,6 +675,7 @@ class CallEngine(
         mediaStarted = true
         _state.value = _state.value.copy(
             outgoing = false, connected = true, video = video,
+            connectedAt = System.currentTimeMillis(),
             status = if (_state.value.conference) "Group call · ${peer.name}’s call"
             else "In call with ${peer.name}"
         )
@@ -832,10 +869,15 @@ class CallEngine(
                             if (it.pid == confHostPid) it.copy(sharing = on, muted = muted) else it
                         }
                     )
-                } else if (on != _state.value.peerSharing) {
-                    _state.value = _state.value.copy(peerSharing = on)
-                    toast.value = if (on) "${_state.value.peerName} is sharing their screen"
-                    else "${_state.value.peerName} stopped sharing"
+                } else {
+                    val wasSharing = _state.value.peerSharing
+                    if (on != wasSharing || muted != _state.value.peerMuted) {
+                        _state.value = _state.value.copy(peerSharing = on, peerMuted = muted)
+                        if (on != wasSharing) {
+                            toast.value = if (on) "${_state.value.peerName} is sharing their screen"
+                            else "${_state.value.peerName} stopped sharing"
+                        }
+                    }
                 }
             }
             TYPE_CONF_STATE -> {
@@ -991,6 +1033,7 @@ class CallEngine(
             }
             _state.value = _state.value.copy(
                 outgoing = false, connected = true,
+                connectedAt = System.currentTimeMillis(),
                 status = "Group call · ${live + 1} devices"
             )
             broadcastConfState()
@@ -1525,11 +1568,27 @@ class CallEngine(
         readerThread = null
         synchronized(responses) { responses.clear() }
         val wasActive = _state.value.active
+        val was = _state.value
+        val seconds = if (was.connectedAt > 0) (System.currentTimeMillis() - was.connectedAt) / 1000 else 0L
+        if (seconds > 0) {
+            _lastCall.value = CallRecord(
+                peerName = was.peerName.ifBlank { if (was.conference) "Group call" else "Peer" },
+                seconds = seconds,
+                video = was.video,
+                conference = was.conference,
+                reason = reason
+            )
+        }
         _state.value = CallState(status = if (wasActive) reason else "")
         remoteFrame.value = null
         remoteFrames.value = emptyMap()
-        if (reason.isNotBlank() && wasActive) toast.value = reason
+        if (reason.isNotBlank() && wasActive) {
+            toast.value = if (seconds > 0) "$reason · ${formatCallLength(seconds)}" else reason
+        }
     }
+
+    /** Consume the finished-call card once the UI has shown it. */
+    fun acknowledgeLastCall() { _lastCall.value = null }
 
     fun consumeToast() { toast.value = null }
     fun consumeIncoming() { incomingCall.value = null }

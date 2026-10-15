@@ -66,11 +66,20 @@ private const val WEB_RING_TIMEOUT_MS = 35_000L
 class PulseDropServer(
     val port: Int,
     private val context: Context,
-    private val deviceName: String,
+    initialDeviceName: String,
     initialPinCode: String?,
     initialIsPinRequired: Boolean,
     initialListener: ServerTransferListener
 ) : NanoHTTPD(port) {
+
+    /** Renaming the phone must not cost a live transfer, so the name is swapped in place. */
+    @Volatile
+    var deviceName: String = initialDeviceName
+        private set
+
+    fun rename(newName: String) {
+        if (newName.isNotBlank()) deviceName = newName
+    }
 
     /**
      * The server outlives a ViewModel (the foreground service keeps it serving), so the
@@ -143,6 +152,103 @@ class PulseDropServer(
     private fun isLoopback(ip: String): Boolean =
         ip == "127.0.0.1" || ip == "::1" || ip.startsWith("::ffff:127.")
 
+    /**
+     * A backgrounded tab clamps `setInterval` to roughly one tick a minute, so a call dialled
+     * from the phone could sit unseen for that long, which reads as "it never rang". These
+     * streams push a doorbell the moment state changes instead; the tab reacts to network data,
+     * which is not throttled the way its timers are.
+     */
+    private class EventStream(val clientIp: String) {
+        val queue = java.util.concurrent.LinkedBlockingQueue<String>(64)
+        @Volatile var closed = false
+    }
+
+    private val eventStreams = java.util.concurrent.CopyOnWriteArrayList<EventStream>()
+    private val maxEventStreams = 8
+    private val heartbeatMs = 20_000L
+
+    /**
+     * Doorbells only: the payload stays in the existing endpoints, so a tab that misses an
+     * event merely falls back to the poll it already does rather than diverging.
+     */
+    private fun pushWebEvent(
+        event: String,
+        targetIp: String? = null,
+        exceptIp: String? = null,
+        fields: JSONObject.() -> Unit = {}
+    ) {
+        if (eventStreams.isEmpty()) return
+        val o = JSONObject()
+        o.fields()
+        val frame = "event: $event\ndata: $o\n\n"
+        for (s in eventStreams) {
+            if (s.closed) continue
+            if (targetIp != null && !sameAddr(s.clientIp, targetIp)) continue
+            if (exceptIp != null && sameAddr(s.clientIp, exceptIp)) continue
+            // A tab that stopped draining must not block the producer, so drop rather than wait.
+            s.queue.offer(frame)
+        }
+    }
+
+    /** SSE body: blocks on the queue, heartbeats to keep intermediaries from cutting it. */
+    private inner class EventBody(private val stream: EventStream) : InputStream() {
+        private var carry: ByteArray? = null
+        private var at = 0
+
+        override fun read(): Int {
+            val one = ByteArray(1)
+            return if (read(one, 0, 1) <= 0) -1 else one[0].toInt() and 0xFF
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            while (true) {
+                val c = carry
+                if (c != null && at < c.size) {
+                    val n = minOf(len, c.size - at)
+                    System.arraycopy(c, at, b, off, n)
+                    at += n
+                    if (at >= c.size) { carry = null; at = 0 }
+                    return n
+                }
+                if (stream.closed) return -1
+                val frame = try {
+                    stream.queue.poll(heartbeatMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                } catch (e: InterruptedException) {
+                    null
+                }
+                if (frame == null) {
+                    if (!eventStreams.contains(stream)) return -1
+                    carry = ":hb\n\n".toByteArray()
+                } else {
+                    carry = frame.toByteArray()
+                }
+            }
+        }
+
+        override fun close() {
+            stream.closed = true
+            eventStreams.remove(stream)
+            super.close()
+        }
+    }
+
+    /**
+     * The address the phone dials was recorded from an earlier request, and NanoHTTPD reports
+     * whatever family the socket happened to negotiate. `::ffff:192.168.1.9` and `192.168.1.9`
+     * are the same tab, but a string compare says otherwise, and the call silently never rings.
+     */
+    private fun sameAddr(a: String?, b: String?): Boolean {
+        if (a.isNullOrEmpty() || b.isNullOrEmpty()) return false
+        return normalizeAddr(a) == normalizeAddr(b)
+    }
+
+    private fun normalizeAddr(ip: String): String {
+        var s = ip.trim()
+        if (s.startsWith("::ffff:") || s.startsWith("::FFFF:")) s = s.substring(7)
+        if (s.contains('.') && s.count { it == ':' } > 1) s = s.substringAfterLast(':')
+        return if (isLoopback(s)) "127.0.0.1" else s.lowercase()
+    }
+
     /** What the browser called itself, if it ever told us. */
     private fun webClientName(ip: String): String =
         synchronized(webClients) { webClients[ip]?.name }
@@ -199,6 +305,9 @@ class PulseDropServer(
         webCall = next
         syncWebCallMedia(next)
         listener.onWebCall(next)
+        pushWebEvent("callstate") {
+            put("cid", next.cid); put("state", next.state)
+        }
     }
 
     /**
@@ -260,10 +369,11 @@ class PulseDropServer(
 
     /** The phone dials a browser tab: same channel, opposite direction. */
     fun ringWebClient(ip: String, name: String, video: Boolean, groupPids: List<String> = emptyList()): WebCall {
+        val target = resolveWebClient(ip)
         val call = WebCall(
             cid = UUID.randomUUID().toString(),
             name = name,
-            ip = ip,
+            ip = target,
             video = video,
             state = "ringing",
             outgoing = true,
@@ -271,8 +381,24 @@ class PulseDropServer(
         )
         webCall = call
         listener.onWebCall(call)
+        pushWebEvent("call", targetIp = call.ip) {
+            put("cid", call.cid); put("video", call.video); put("name", call.name)
+        }
         armWebRingExpiry(call)
         return call
+    }
+
+    /**
+     * The address a thread remembered may no longer be the address the tab is connected on
+     * (renewed DHCP, an IPv4/IPv6 flip). If it is not live but exactly one browser is, ring that
+     * one - otherwise a stale record means a call the user can never see.
+     */
+    private fun resolveWebClient(ip: String): String {
+        val clients = webClientsSnapshot()
+        clients.firstOrNull { sameAddr(it.ip, ip) }?.let { return it.ip }
+        // Only re-point when there is one candidate; guessing among several tabs would ring a
+        // browser the user never dialled.
+        return if (clients.size == 1) clients.first().ip else ip
     }
 
     /**
@@ -479,6 +605,9 @@ class PulseDropServer(
             while (messages.size > SERVER_CHAT_RETENTION) messages.removeAt(0)
         }
         listener.onNewMessage(msg)
+        pushWebEvent("message", exceptIp = clientIp) {
+            put("id", msg.id); put("threadId", msg.threadId ?: "")
+        }
         return msg
     }
 
@@ -740,6 +869,33 @@ class PulseDropServer(
         }
 
         // Browser-initiated call: drives the ringing popup on the phone.
+        if (uri == "/api/events" && method == Method.GET) {
+            if (!isAuthorized(session)) return unauthorized()
+            markActivity()
+            val stream = EventStream(clientIp)
+            // Cap the fan-out: a page left open for days must not accumulate streams.
+            while (eventStreams.size >= maxEventStreams) {
+                val oldest = eventStreams.firstOrNull() ?: break
+                eventStreams.remove(oldest)
+                oldest.closed = true
+            }
+            eventStreams.add(stream)
+            // Anything that changed while the tab was reconnecting is delivered on subscribe.
+            val pending = webCall
+            if (pending != null && pending.state != "ended" && pending.state != "declined") {
+                stream.queue.offer(
+                    "event: call\ndata: " + JSONObject().apply {
+                        put("cid", pending.cid); put("video", pending.video); put("state", pending.state)
+                    } + "\n\n"
+                )
+            }
+            val res = newChunkedResponse(Response.Status.OK, "text/event-stream", EventBody(stream))
+            res.addHeader("Cache-Control", "no-store")
+            res.addHeader("X-Accel-Buffering", "no")
+            addCorsHeaders(res)
+            return res
+        }
+
         if (uri == "/api/call/web") {
             // Ringing the phone is not free: any LAN host could otherwise pop a fake
             // incoming-call screen over the visitor's own session.
@@ -761,7 +917,7 @@ class PulseDropServer(
                         put("cid", c.cid); put("state", c.state); put("video", c.video)
                         // One shared record, two ends: tell this tab whether it is the caller
                         // or the one being rung, so neither renders the other's screen.
-                        val mine = c.ip == clientIp
+                        val mine = sameAddr(c.ip, clientIp)
                         put("incoming", live && c.outgoing && mine)
                         put("self", live && !c.outgoing && mine)
                         put("media", live && c.state == "accepted")
@@ -810,7 +966,7 @@ class PulseDropServer(
                         "accept", "decline" -> {
                             val wanted = json.optString("action")
                             val c = webCall
-                            if (c == null || !c.outgoing || c.ip != clientIp || c.state != "ringing") {
+                            if (c == null || !c.outgoing || !sameAddr(c.ip, clientIp) || c.state != "ringing") {
                                 jsonResponse(false, "error" to "Nothing to answer")
                             } else {
                                 updateWebCall(c.cid, if (wanted == "accept") "accepted" else "declined")
@@ -984,6 +1140,7 @@ class PulseDropServer(
                 val result: JSONObject = when {
                     uri == "/api/pair/request" && pm != null -> {
                         pm.handleIncomingRequest(json, clientIp)
+                        pushWebEvent("pair", exceptIp = clientIp)
                         JSONObject().put("success", true).put("waiting", true)
                     }
                     uri == "/api/pair/response" && pm != null -> {
@@ -1123,6 +1280,7 @@ class PulseDropServer(
                 // book to let those replies back to the tab that is watching it.
                 val hostIp = NetworkUtils.getLocalIpAddress()
                 val hostBook = "ip:" + hostIp
+                val myAddr = normalizeAddr(clientIp)
                 synchronized(messages) {
                     for (m in messages) {
                         // A browser sees the public room, its own address book, the groups
@@ -1131,13 +1289,17 @@ class PulseDropServer(
                         // another host's direct thread, and never a pair conversation,
                         // which stays on the phones.
                         val thread = m.threadId
-                        val mine = m.clientIp == clientIp
+                        val mine = sameAddr(m.clientIp, clientIp)
                         // A reply the phone wrote into its own address book belongs to whichever
                         // tab is watching it - the phone is not a browser and so never matches
                         // `thread == "ip:<tab>"`, yet without this the tab sees a silent phone.
-                        val fromHost = thread == hostBook && m.clientIp == hostIp
-                        if (thread != null && !mine && !fromHost &&
-                            thread != "ip:$clientIp" && thread !in groupIds) continue
+                        val fromHost = thread == hostBook && sameAddr(m.clientIp, hostIp)
+                        // The thread key is the address as the writer saw it; compare normalised
+                        // forms or a tab loses its own conversation across an IPv4/IPv6 flip.
+                        val ownBook = thread != null && thread.startsWith("ip:") &&
+                                normalizeAddr(thread.substring(3)) == myAddr
+                        if (thread != null && !mine && !fromHost && !ownBook &&
+                            thread !in groupIds) continue
                         arr.put(JSONObject().apply {
                             put("id", m.id)
                             put("text", m.text)
@@ -1408,6 +1570,12 @@ class PulseDropServer(
                 listener.onTransferStarted(transferId, savedFileName, fileSize, TransferDirection.INCOMING, remoteDeviceLabel, clientIp)
                 listener.onTransferProgress(transferId, fileSize, fileSize, fileSize)
                 listener.onTransferCompleted(transferId, savedFileName, fileSize, finalFile.absolutePath, TransferDirection.INCOMING, remoteDeviceLabel, clientIp)
+                // Every other tab that can see this file hears about it now, not on its next poll.
+                pushWebEvent("file", exceptIp = clientIp) {
+                    put("name", savedFileName); put("size", fileSize)
+                    put("from", remoteDeviceLabel)
+                    sharedItem.targetClientIp?.let { put("to", it) }
+                }
                 // Owned by sharedFiles now: the catch below must not delete a delivered file.
                 finalFile = null
 

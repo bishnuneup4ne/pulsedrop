@@ -39,7 +39,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.call.CallParticipant
 import com.pulsedrop.app.call.CallState
+import com.pulsedrop.app.call.formatCallLength
 
 @Composable
 fun CallOverlay(
@@ -70,6 +75,16 @@ fun CallOverlay(
     onMinimize: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    // The clock the user asks for the moment a call ends, shown while it is still up.
+    val anchor = state.connectedAt
+    var seconds by remember(anchor) { mutableLongStateOf(0L) }
+    LaunchedEffect(anchor) {
+        if (anchor == 0L) return@LaunchedEffect
+        while (true) {
+            seconds = (System.currentTimeMillis() - anchor) / 1000L
+            kotlinx.coroutines.delay(1000L)
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -250,12 +265,18 @@ fun CallOverlay(
                 }
                 Text(
                     text = when {
+                        state.connected -> buildString {
+                            append(state.status.ifBlank { "Connected" })
+                            append(" · ")
+                            append(formatCallLength(seconds))
+                            if (state.peerMuted) append(" · they are muted")
+                        }
                         state.status.isNotBlank() -> state.status
-                        !state.connected -> if (state.outgoing) "Ringing…" else "Connecting…"
-                        else -> "Connected · encrypted"
+                        else -> if (state.outgoing) "Ringing…" else "Connecting…"
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF9CA3AF)
+                    color = Color(0xFF9CA3AF),
+                    modifier = Modifier.testTag("call_status_line")
                 )
             }
 

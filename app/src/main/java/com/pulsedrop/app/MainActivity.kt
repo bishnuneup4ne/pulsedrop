@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
         )
 
         handleIncomingShareIntent(intent)
+        handleCallActionIntent(intent)
 
         setContent {
             PulseDropTheme {
@@ -44,6 +45,14 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingShareIntent(intent)
+        handleCallActionIntent(intent)
+    }
+
+    /** Answer / decline / hang up pressed on the call notification itself. */
+    private fun handleCallActionIntent(intent: Intent?) {
+        val action = intent?.getStringExtra(MainViewModel.EXTRA_CALL_ACTION) ?: return
+        intent.removeExtra(MainViewModel.EXTRA_CALL_ACTION)
+        viewModel.runCallNotificationAction(action)
     }
 
     private fun handleIncomingShareIntent(intent: Intent?) {

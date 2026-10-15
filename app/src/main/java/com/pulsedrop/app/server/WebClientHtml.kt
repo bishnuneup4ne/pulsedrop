@@ -1620,6 +1620,14 @@ object WebClientHtml {
 
     /* ===== Tabs (mobile) ===== */
     var currentView = 'files';
+    /* Every section is addressable: #/files, #/chats… so a link, a reload or the Back
+       button lands on the same screen instead of always reopening Files. */
+    var VIEW_IDS = { files: 1, upload: 1, chats: 1, history: 1, details: 1 };
+    var syncingHash = false;
+    function viewFromHash() {
+      var v = String(location.hash || '').replace(/^#\/?/, '').split(/[?#]/)[0];
+      return VIEW_IDS[v] ? v : 'files';
+    }
     // null: follow the page (Chats folds the rail); true/false: the visitor pinned it by hand.
     var railPinned = null;
     try { var rp = localStorage.getItem('pulseRailPin'); if (rp === '1' || rp === '0') railPinned = rp === '1'; } catch (e) {}
@@ -1638,8 +1646,12 @@ object WebClientHtml {
       try { localStorage.setItem('pulseRailPin', railPinned ? '1' : '0'); } catch (e) {}
       applyRailMode(currentView);
     }
-    function setView(view) {
+    function setView(view, fromHash) {
+      if (!VIEW_IDS[view]) view = 'files';
       currentView = view;
+      if (!fromHash) {
+        try { history.replaceState(null, '', '#/' + view); } catch (e) { /* file: or blocked */ }
+      }
       applyRailMode(view);
       var map = { files: 'viewFiles', upload: 'viewUpload', chats: 'paneChat', history: 'viewHistory', details: 'viewDetails' };
       var tabs = { files: 'tabFiles', upload: 'tabUpload', chats: 'tabChat', history: 'tabHistory', details: 'tabDetails' };
@@ -1663,6 +1675,10 @@ object WebClientHtml {
       }
     }
     function setTab(tab) { setView(tab === 'files' ? 'files' : 'chats'); }
+    window.addEventListener('hashchange', function () {
+      var v = viewFromHash();
+      if (v !== currentView) setView(v, true);
+    });
 
     /* ===== Files ===== */
     async function fetchFiles() {
@@ -2450,6 +2466,8 @@ object WebClientHtml {
         if (ts > (lastSeenTs[t] || 0) && !isMine(m)) {
           if (t !== currentThread || !nearBottom()) {
             unread[t] = (unread[t] || 0) + 1;
+            // A tab in the background is a phone in a pocket: say so in the shade.
+            if (document.hidden) messageAlert(m, t);
           }
         }
         lastSeenTs[t] = Math.max(lastSeenTs[t] || 0, ts);
@@ -2458,7 +2476,18 @@ object WebClientHtml {
 
       updateStats();
       renderThreadRail();
+      paintTitleCount();
       renderChat(false);
+    }
+
+    /* Unread count in the tab title, where a backgrounded tab is actually seen. */
+    function paintTitleCount() {
+      var total = unreadTotal();
+      try {
+        var base = ring && ring.title ? ring.title : document.title.replace(/^\((\d+)\) /, '');
+        if (total > 0 && document.hidden) document.title = '(' + (total > 99 ? '99+' : total) + ') ' + base;
+        else if (document.title !== base && !(ring && ring.ticker)) document.title = base;
+      } catch (e) {}
     }
 
     function unreadTotal() {
@@ -3508,8 +3537,112 @@ object WebClientHtml {
       gotFrame: false, lastUrl: '', canvas: null, busy: false
     };
     var pdMuted = false;
+    var peerMuted = false;
     var pendingRestore = null;
     try { pendingRestore = JSON.parse(sessionStorage.getItem('pulseCall') || 'null'); } catch (e) {}
+
+    /* ---- ringing a tab a human can actually notice ----
+       A silent overlay in a buried tab is not a call. The tone is an oscillator gated by a slow
+       square-wave oscillator, so its cadence is kept by the audio thread: the browser may still
+       clamp this tab's timers to a tick a minute, but the ring keeps ringing. */
+    var ring = { ac: null, nodes: [], title: document.title, ticker: null };
+
+    function startRing() {
+      stopRingAudio();
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        var ac = new AC();
+        if (ac.state === 'suspended' && ac.resume) ac.resume().catch(function () {});
+        var master = ac.createGain(); master.gain.value = 0.16; master.connect(ac.destination);
+        var gate = ac.createGain(); gate.gain.value = 0.5; gate.connect(master);
+        var lfo = ac.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 1.05;
+        var depth = ac.createGain(); depth.gain.value = 0.5;
+        lfo.connect(depth); depth.connect(gate.gain); lfo.start();
+        var mk = function (hz, g) {
+          var o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = hz;
+          var g2 = ac.createGain(); g2.gain.value = g;
+          o.connect(g2); g2.connect(gate); o.start();
+          ring.nodes.push(o, g2);
+        };
+        mk(466, 1); mk(587, 0.5);
+        ring.ac = ac; ring.nodes.push(lfo, depth, gate, master);
+      } catch (e) {}
+      try { if (navigator.vibrate) navigator.vibrate([500, 300, 500, 300, 500]); } catch (e) {}
+      try {
+        if (!ring.ticker) ring.ticker = setInterval(function () {
+          document.title = (document.title.indexOf('Incoming') === 0 ? '' : 'Incoming call - ') + ring.title;
+        }, 900);
+      } catch (e) {}
+    }
+
+    function stopRingAudio() {
+      try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
+      if (ring.ticker) { clearInterval(ring.ticker); ring.ticker = null; }
+      try { document.title = ring.title; } catch (e) {}
+      var ac = ring.ac;
+      ring.nodes.forEach(function (n) { try { n.stop && n.stop(); } catch (e) {} try { n.disconnect(); } catch (e) {} });
+      ring.nodes = []; ring.ac = null;
+      try { if (ac && ac.close) ac.close(); } catch (e) {}
+    }
+
+    function stopRing() { stopRingAudio(); }
+
+    /* Notification permission only opens from a gesture, so take it on the first tap of the
+       session rather than at page load, where it is silently refused. */
+    (function armNotifications() {
+      if (!('Notification' in window) || Notification.permission !== 'default') return;
+      var once = function () {
+        try { Notification.requestPermission(); } catch (e) {}
+        document.removeEventListener('pointerdown', once);
+      };
+      document.addEventListener('pointerdown', once);
+    })();
+
+    function browserNotify(title, body, tag) {
+      try {
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+        // A hidden tab is where this matters, and where a toast is invisible.
+        if (!document.hidden && tag === 'pulse-call') return;
+        var n = new Notification(title, { body: body, tag: tag || 'pulse', requireInteraction: false });
+        n.onclick = function () { try { window.focus(); } catch (e) {} try { n.close(); } catch (e) {} };
+      } catch (e) {}
+    }
+
+    /* One heads-up per fetch batch, coalesced by tag, so a flood of messages is not a flood
+       of notifications. */
+    function messageAlert(m, threadId) {
+      try {
+        var who = String(m.sender || 'Someone');
+        var what = m.fileName ? ('sent a file: ' + m.fileName)
+          : String(m.text || 'sent a message').substring(0, 90);
+        var where = (threadMeta[threadId] && threadMeta[threadId].title) || 'Everyone';
+        browserNotify(who + ' in ' + where, what, 'pulse-msg-' + (threadId || ''));
+      } catch (e) {}
+    }
+
+    /* ---- server push ----
+       The 2 s poll is the fallback; this is the fast path. EventSource is not a timer, so a
+       background tab still gets the frame the moment the phone dials. */
+    (function connectEvents() {
+      if (!window.EventSource) return;
+      var url = '/api/events' + (authToken ? ('?auth=' + encodeURIComponent(authToken)) : '');
+      var es;
+      try { es = new EventSource(url); } catch (e) { return; }
+      var on = function (name, fn) { try { es.addEventListener(name, fn); } catch (e) {} };
+      on('call', function () { pollCall(); });
+      on('callstate', function () { if (call.cid) pollCall(); else pollCall(); });
+      on('message', function () { try { fetchMessages(); } catch (e) {} });
+      on('file', function (ev) {
+        var d = {}; try { d = JSON.parse(ev.data || '{}'); } catch (e) {}
+        try { fetchFiles(); } catch (e) {}
+        if (d.name) browserNotify('File received', d.name + ' from ' + (d.from || 'a device'), 'pulse-file');
+      });
+      on('pair', function () { try { fetchThreads(); fetchInfo(); } catch (e) {} });
+      es.onerror = function () { /* EventSource reconnects by itself; the poll covers the gap. */ };
+      // The stream dies on a PIN change or a server restart; the existing polls keep working.
+      window.addEventListener('beforeunload', function () { try { es.close(); } catch (e) {} });
+    })();
 
     function peerName() {
       var t = el('topbarDevice').textContent.trim();
@@ -3662,6 +3795,11 @@ object WebClientHtml {
     function showCall(cid, video, dir, state, startedAt) {
       call.cid = cid; call.video = !!video; call.dir = dir; call.state = state;
       call.startedAt = state === 'accepted' ? (startedAt || Date.now()) : 0;
+      if (dir === 'in' && state === 'ringing') {
+        startRing();
+        browserNotify((video ? 'Video call' : 'Call') + ' from ' + peerName(),
+          'Open this tab to answer', 'pulse-call');
+      } else stopRing();
       paintCall();
       if (call.tick) clearInterval(call.tick);
       call.tick = setInterval(function () {
@@ -3793,6 +3931,9 @@ object WebClientHtml {
         var out = ev.outputBuffer.getChannelData(0);
         for (var i = 0; i < out.length; i++) out[i] = 0;
         var d = ev.inputBuffer.getChannelData(0);
+        // A muted tab sends no audio at all: the other side has the state frame to tell it why,
+        // and shipping 16 kHz of silence is pure cost.
+        if (pdMuted) return;
         var target = live.inRate === 16000 ? d.length : Math.round(d.length * 16000 / live.inRate);
         var i16 = new Int16Array(target);
         for (var j = 0; j < target; j++) {
@@ -3880,6 +4021,9 @@ object WebClientHtml {
         try { j = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { return; }
         el('callShareTag').classList.toggle('show', !!(j && j.sharing));
         el('callShareTxt').textContent = peerName() + ' is sharing their screen';
+        // Without this the tab keeps saying "Connected" while the other side says nothing.
+        peerMuted = !!(j && j.muted);
+        el('callPeer').textContent = peerName() + (peerMuted ? ' - muted' : '');
         return;
       }
     }
@@ -3958,6 +4102,16 @@ object WebClientHtml {
 
     function toggleCallMute() {
       pdMuted = !pdMuted;
+      // Stopping the microphone track, not just zeroing samples: a muted tab that keeps
+      // encoding silence still spends the bandwidth, and track.enabled is what the browser
+      // shows as "mic off" in the tab hint and on the OS indicator.
+      if (live.cap) {
+        try {
+          (live.micStream ? live.micStream.getAudioTracks() : []).forEach(function (t) {
+            t.enabled = !pdMuted;
+          });
+        } catch (e) {}
+      }
       el('callMute').classList.toggle('active', pdMuted);
       el('callMute').setAttribute('title', pdMuted ? 'Unmute' : 'Mute');
       el('callMute').setAttribute('aria-label', pdMuted ? 'Unmute microphone' : 'Mute microphone');
@@ -4094,13 +4248,17 @@ object WebClientHtml {
 
     function closeCall(keepMessage) {
       var last = el('callStatus').textContent;
+      var secs = call.startedAt ? Math.floor((Date.now() - call.startedAt) / 1000) : 0;
       if (call.tick) { clearInterval(call.tick); call.tick = null; }
       if (call.watch) { clearInterval(call.watch); call.watch = null; }
+      stopRing();
       stopCallMedia();
       call.cid = ''; call.state = ''; call.startedAt = 0;
       el('callScreen').classList.remove('show');
       persistCall();
-      if (keepMessage) toast(last);
+      // "Call ended" with no length reads like the call never happened.
+      var line = secs ? ('Call ended - ' + fmtCallClock(secs)) : (last || 'Call ended');
+      if (keepMessage || secs) toast(line);
     }
 
     // Watch for the phone dialling this tab even while no call is open here.
@@ -4161,7 +4319,7 @@ object WebClientHtml {
     el('serverUrl').textContent = location.host;
     // Some browsers have no colour-emoji font, so the tray would post empty boxes.
     if (!browserHasColorEmoji()) el('emojiBtn').style.display = 'none';
-    setView('files');
+    setView(viewFromHash());
     setLayout('grid');
     setHistoryLayout('grid');
     renderEmpty(el('filesGrid'), 'Loading files…');

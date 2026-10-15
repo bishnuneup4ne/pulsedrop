@@ -17,6 +17,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
@@ -32,11 +34,15 @@ class ProjectionCaptureService : Service() {
         var engine: CallEngine? = null
 
         fun arm(context: Context) {
-            // Android 15+ hands the projection result back only after the app that will be
-            // captured is in front, which leaves PulseDrop cached and frozen - so the service
-            // never runs startForeground() and the system kills the whole process with
-            // ForegroundServiceDidNotStartInTimeException. Claiming the foreground slot while
-            // the user is still looking at PulseDrop avoids that entirely.
+            // Android 14+ refuses a mediaProjection foreground claim until the user has handed
+            // over a projection token, and answers with SecurityException. The claim therefore
+            // happens in onStartCommand for ACTION_START, by which time the app is foreground
+            // again. Below 14 there is no such restriction, and the slot must be taken before
+            // the picker runs: Android 15 hands the result back only once the captured app is in
+            // front, which leaves PulseDrop cached and frozen, and the service never reaches
+            // startForeground() before ForegroundServiceDidNotStartInTimeException kills the
+            // whole process.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
             startWith(context, Intent(context, ProjectionCaptureService::class.java)
                 .setAction(ACTION_ARM))
         }
@@ -78,6 +84,13 @@ class ProjectionCaptureService : Service() {
         private const val ARM_TIMEOUT_MS = 60_000L
         private const val CHANNEL_ID = "localdrop_screen_share"
         private const val NOTIF_ID = 4455
+
+        // JPEG over a LAN socket: 1920 on the long edge at q82 costs ~180-260 KB a frame, so at
+        // 8 fps the uplink stays near 15 Mbps - inside hotspot capacity, and far above the
+        // 1280/q78 budget that read as 480p once the call view was maximised.
+        private const val MAX_EDGE = 1920
+        private const val FRAME_QUALITY = 82
+        private const val FRAME_INTERVAL_MS = 125L
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -85,6 +98,8 @@ class ProjectionCaptureService : Service() {
     private var reader: ImageReader? = null
     private var display: VirtualDisplay? = null
     private var grabThread: Thread? = null
+    @Volatile private var capW = 0
+    @Volatile private var capH = 0
     @Volatile private var grabbing = false
 
     private val disarm = Runnable {
@@ -144,19 +159,10 @@ class ProjectionCaptureService : Service() {
                 }
             }, null)
 
-            val metrics = resources.displayMetrics
-            val maxEdge = 1280
-            val scale = (maxEdge.toFloat() / maxOf(metrics.widthPixels, metrics.heightPixels))
-                .coerceAtMost(1f)
-            val w = (metrics.widthPixels * scale).roundToInt().coerceAtLeast(16) and 0.inv() shr 2 shl 1  // even
-            val h = (metrics.heightPixels * scale).roundToInt().coerceAtLeast(16) and 0.inv() shr 2 shl 1
-
-            reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
-            display = proj.createVirtualDisplay(
-                "PulseDropShare", w, h, metrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                reader!!.surface, null, null
-            )
+            if (!buildCapture()) {
+                teardown()
+                return
+            }
 
             grabbing = true
             grabThread = Thread {
@@ -187,10 +193,10 @@ class ProjectionCaptureService : Service() {
                                 }
                             }
                             val full = Bitmap.createBitmap(colors, 0, pw, pw, ph, Bitmap.Config.ARGB_8888)
-                            val scaled = if (full.width == w && full.height == h) full
-                            else Bitmap.createScaledBitmap(full, w, h, true)
+                            val scaled = if (full.width == capW && full.height == capH) full
+                            else Bitmap.createScaledBitmap(full, capW, capH, true)
                             val bos = ByteArrayOutputStream()
-                            scaled.compress(Bitmap.CompressFormat.JPEG, 78, bos)
+                            scaled.compress(Bitmap.CompressFormat.JPEG, FRAME_QUALITY, bos)
                             engine?.pushScreenFrame(bos.toByteArray())
                             if (scaled !== full) scaled.recycle()
                             full.recycle()
@@ -199,11 +205,65 @@ class ProjectionCaptureService : Service() {
                         }
                         image.close()
                     }
-                    Thread.sleep(110) // ~9 fps, LAN-friendly
+                    Thread.sleep(FRAME_INTERVAL_MS)
                 }
             }.apply { isDaemon = true; start() }
         } catch (e: Exception) {
             teardown()
+        }
+    }
+
+    /**
+     * A Service's `resources.displayMetrics` is the last configuration the app saw, so sharing
+     * straight after a rotation (or from the maximised call view) built a display sized for the
+     * old orientation: the frames came out letterboxed and read as 480p. The real display size
+     * is asked for instead, and a config change rebuilds the capture at the new aspect.
+     */
+    private fun realDisplaySize(): IntArray {
+        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val b = wm.currentWindowMetrics.bounds
+            intArrayOf(b.width(), b.height())
+        } else {
+            @Suppress("DEPRECATION")
+            val dm = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealMetrics(dm)
+            intArrayOf(dm.widthPixels, dm.heightPixels)
+        }
+    }
+
+    /** (Re)creates the ImageReader + VirtualDisplay for the current orientation. */
+    private fun buildCapture(): Boolean {
+        val proj = projection ?: return false
+        val size = realDisplaySize()
+        val dpi = resources.displayMetrics.densityDpi
+        val scale = (MAX_EDGE.toFloat() / maxOf(size[0], size[1])).coerceAtMost(1f)
+        val w = even((size[0] * scale).roundToInt())
+        val h = even((size[1] * scale).roundToInt())
+        val nextReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+        val old = display
+        capW = w
+        capH = h
+        reader = nextReader
+        display = proj.createVirtualDisplay(
+            "PulseDropShare", w, h, dpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            nextReader.surface, null, null
+        )
+        old?.release()
+        return true
+    }
+
+    private fun even(v: Int): Int = (v.coerceAtLeast(16) / 2) * 2
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (projection == null) return
+        handler.post {
+            // Frames keep flowing from the old surface if the rebuild fails, which is better
+            // than tearing the share down over an orientation flip.
+            try { buildCapture() } catch (e: Exception) { }
         }
     }
 

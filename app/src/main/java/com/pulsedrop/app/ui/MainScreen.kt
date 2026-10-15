@@ -46,6 +46,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
@@ -64,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.pulsedrop.app.call.formatCallLength
 import com.pulsedrop.app.model.PeerDevice
 import com.pulsedrop.app.model.TransferDirection
 import com.pulsedrop.app.model.TransferStatus
@@ -91,6 +94,7 @@ enum class PulseNavTab(val title: String, val icon: ImageVector, val tag: String
     HOTSPOT("Hotspot", Icons.Default.WifiTethering, "tab_hotspot")
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
     val serverState by viewModel.serverState.collectAsState()
@@ -136,10 +140,10 @@ fun MainScreen(viewModel: MainViewModel) {
 
     var pendingChatAttachThread by remember { mutableStateOf<String?>(null) }
     val chatAttachLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
         val thread = pendingChatAttachThread
-        if (uri != null) viewModel.sendFileToThread(if (thread == "room") null else thread, uri)
+        if (!uris.isNullOrEmpty()) viewModel.sendFilesToThread(if (thread == "room") null else thread, uris)
         pendingChatAttachThread = null
     }
 
@@ -300,10 +304,25 @@ fun MainScreen(viewModel: MainViewModel) {
                 )
             }
         ) { paddingValues ->
-            Box(
+            // Every section pulls: the lists are live queries, and a swipe is how people ask
+            // "is that really up to date?" without hunting for a button.
+            val ptrState = rememberPullToRefreshState()
+            var pulling by remember { mutableStateOf(false) }
+            PullToRefreshBox(
+                isRefreshing = pulling,
+                onRefresh = {
+                    if (!pulling) {
+                        pulling = true
+                        viewModel.pullToRefresh(selectedTab == PulseNavTab.RADAR) { pulling = false }
+                    }
+                },
+                state = ptrState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
+            ) {
+            Box(
+                modifier = Modifier.fillMaxSize()
             ) {
             Crossfade(targetState = selectedTab, label = "tab_crossfade") { tab ->
                 when (tab) {
@@ -406,6 +425,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         serverState = serverState
                     )
                 }
+            }
             }
             }
         }
@@ -539,12 +559,23 @@ fun MainScreen(viewModel: MainViewModel) {
                     onTap = { callMinimized = false }
                 )
             } else if (key == null && prev != null) {
+                // The length is the one thing a finished call is asked for afterwards.
+                val rec = viewModel.callEngine.lastCall.value
                 pushBanner(
                     group = "call",
-                    title = "Call ended",
-                    text = "The call is finished.",
+                    title = if (rec != null) "Call ended · ${formatCallLength(rec.seconds)}"
+                    else "Call ended",
+                    text = rec?.let {
+                        buildString {
+                            append(it.peerName)
+                            if (it.video) append(" · video")
+                            if (it.conference) append(" · group")
+                            if (it.reason.isNotBlank()) append(" · ${it.reason}")
+                        }
+                    } ?: "The call is finished.",
                     icon = Icons.Default.Call
                 )
+                viewModel.callEngine.acknowledgeLastCall()
             }
         }
 

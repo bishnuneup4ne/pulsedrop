@@ -20,6 +20,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pulsedrop.app.MainActivity
 import com.pulsedrop.app.call.CallEngine
+import com.pulsedrop.app.call.formatCallLength
 import com.pulsedrop.app.data.AppDatabase
 import com.pulsedrop.app.data.TransferHistoryEntity
 import com.pulsedrop.app.discovery.LanScanner
@@ -50,6 +51,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -159,76 +161,190 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val callNotifications = context.getSystemService(NotificationManager::class.java)
 
-    private data class CallNotification(val title: String, val text: String, val ring: Boolean)
+    /** The button a call notification offers; the name rides back into the app as an intent extra. */
+    enum class CallNotifAction { ANSWER, DECLINE, HANG_UP }
+
+    private data class CallNotification(
+        val title: String,
+        val text: String,
+        val ring: Boolean,
+        val actions: List<CallNotifAction> = emptyList()
+    )
+
+    /** The note currently in the shade; a rebuild that says the same thing is not re-posted. */
+    private var lastCallNote: CallNotification? = null
 
     /**
      * A call used to exist only while the app was open; dialled during another
      * session it fell on deaf ears. Mirror every call leg into the system's top
      * bar as a high-importance notification - tapping opens MainActivity, which
-     * already paints the full call UI.
+     * already paints the full call UI. Answering and hanging up happen from the
+     * shade itself, so the ringing screen never has to be found.
      */
     private fun startCallNotifications() {
         viewModelScope.launch {
-            combine(callEngine.state, callEngine.incomingCall, _webCall) { state, incoming, web ->
+            // A connected call has to keep its running length in the shade, so the note is
+            // rebuilt on a slow clock too, not only when the call state changes.
+            val clock = flow {
+                while (true) {
+                    emit(System.currentTimeMillis())
+                    delay(10_000L)
+                }
+            }
+            combine(callEngine.state, callEngine.incomingCall, _webCall, clock) { state, incoming, web, now ->
                 when {
                     incoming != null -> CallNotification(
                         "Incoming ${if (incoming.video) "video" else "voice"} call",
                         incoming.name.ifBlank { "PulseDrop peer" },
-                        ring = true
+                        ring = true,
+                        actions = listOf(CallNotifAction.ANSWER, CallNotifAction.DECLINE)
                     )
                     state.active -> CallNotification(
                         if (state.connected) "In call with ${state.peerName}" else "Calling ${state.peerName}",
-                        state.status.ifBlank { if (state.video) "Video call" else "Voice call" },
-                        ring = false
+                        buildString {
+                            if (state.connected && state.connectedAt > 0) {
+                                append(formatCallLength((now - state.connectedAt) / 1000L))
+                                append(" · ")
+                            }
+                            if (state.muted) append("You are muted · ")
+                            append(state.status.ifBlank { if (state.video) "Video call" else "Voice call" })
+                        },
+                        ring = false,
+                        actions = listOf(CallNotifAction.HANG_UP)
                     )
                     web != null && !web.outgoing && web.state == "ringing" -> CallNotification(
                         "Incoming ${if (web.video) "video" else "voice"} call",
                         web.name.ifBlank { "Browser" },
-                        ring = true
+                        ring = true,
+                        actions = listOf(CallNotifAction.ANSWER, CallNotifAction.DECLINE)
                     )
                     web != null -> CallNotification(
                         if (web.state == "accepted") "In call with ${web.name.ifBlank { "the browser" }}"
                         else "Ringing ${web.name.ifBlank { "the browser" }}",
                         "Browser call on this phone's server",
-                        ring = false
+                        ring = false,
+                        actions = listOf(CallNotifAction.HANG_UP)
                     )
                     else -> null
                 }
             }.collect { note ->
+                if (note == lastCallNote) return@collect
+                lastCallNote = note
                 if (note == null) callNotifications.cancel(CALL_NOTIF_ID)
                 else postCallNotification(note)
             }
         }
+        // The one record a user actually goes back to read after a call: how long it lasted.
+        viewModelScope.launch {
+            callEngine.lastCall.collect { rec ->
+                if (rec != null) postEndedCallNotification(rec)
+            }
+        }
+    }
+
+    /**
+     * Answer or hang up straight from the shade. The incoming leg is decided by
+     * [CallEngine.respondIncoming]; a ringing browser leg is decided by the server.
+     */
+    fun runCallNotificationAction(name: String) {
+        val action = CallNotifAction.values().firstOrNull { it.name == name } ?: return
+        when (action) {
+            CallNotifAction.ANSWER -> when {
+                callEngine.incomingCall.value != null -> respondToCall(true)
+                _webCall.value != null -> answerWebCall(true)
+            }
+            CallNotifAction.DECLINE -> when {
+                callEngine.incomingCall.value != null -> respondToCall(false)
+                _webCall.value != null -> answerWebCall(false)
+            }
+            CallNotifAction.HANG_UP -> hangUpCall()
+        }
+    }
+
+    private fun ensureCallChannel(id: String, name: String, description: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        callNotifications.createNotificationChannel(
+            NotificationChannel(id, name, NotificationManager.IMPORTANCE_HIGH)
+                .apply { this.description = description }
+        )
+    }
+
+    private fun callOpenIntent(flags: Int = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP): PendingIntent =
+        PendingIntent.getActivity(
+            context, 0,
+            Intent(context, MainActivity::class.java).addFlags(flags),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+    private fun callActionIntent(action: CallNotifAction): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(EXTRA_CALL_ACTION, action.name)
+        return PendingIntent.getActivity(
+            context, action.ordinal + 1, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
     }
 
     private fun postCallNotification(note: CallNotification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            callNotifications.createNotificationChannel(
-                NotificationChannel(CALL_CHANNEL_ID, "Calls", NotificationManager.IMPORTANCE_HIGH)
-                    .apply { description = "Incoming and ongoing PulseDrop calls" }
-            )
-        }
-        val open = PendingIntent.getActivity(
-            context, 0,
-            Intent(context, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val notification = NotificationCompat.Builder(context, CALL_CHANNEL_ID)
+        ensureCallChannel(CALL_CHANNEL_ID, "Calls", "Incoming and ongoing PulseDrop calls")
+        callNotifications.cancel(CALL_ENDED_NOTIF_ID)
+        val builder = NotificationCompat.Builder(context, CALL_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.presence_video_online)
             .setContentTitle(note.title)
             .setContentText(note.text)
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setContentIntent(open)
+            .setContentIntent(callOpenIntent())
             .setOngoing(true)
-            .apply {
-                if (note.ring) {
-                    priority = NotificationCompat.PRIORITY_MAX
-                    setFullScreenIntent(open, true)
-                }
-            }
-            .build()
-        callNotifications.notify(CALL_NOTIF_ID, notification)
+            // The clock re-posts this note while a call runs; only the first one may sound.
+            .setOnlyAlertOnce(true)
+            .setSilent(!note.ring)
+        if (note.ring) {
+            builder.priority = NotificationCompat.PRIORITY_MAX
+            builder.setFullScreenIntent(callOpenIntent(), true)
+        }
+        note.actions.forEach { action ->
+            builder.addAction(
+                0,
+                when (action) {
+                    CallNotifAction.ANSWER -> "Answer"
+                    CallNotifAction.DECLINE -> "Decline"
+                    CallNotifAction.HANG_UP -> "Hang up"
+                },
+                callActionIntent(action)
+            )
+        }
+        callNotifications.notify(CALL_NOTIF_ID, builder.build())
+    }
+
+    private fun postEndedCallNotification(rec: CallEngine.CallRecord) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            callNotifications.createNotificationChannel(
+                NotificationChannel(CALL_ENDED_CHANNEL_ID, "Ended calls", NotificationManager.IMPORTANCE_DEFAULT)
+                    .apply {
+                        description = "How long each PulseDrop call lasted"
+                        setSound(null, null)
+                        enableVibration(false)
+                    }
+            )
+        }
+        val detail = buildString {
+            append(rec.peerName)
+            if (rec.video) append(" · video")
+            if (rec.conference) append(" · group")
+            if (rec.reason.isNotBlank()) append(" · ").append(rec.reason)
+        }
+        callNotifications.notify(
+            CALL_ENDED_NOTIF_ID,
+            NotificationCompat.Builder(context, CALL_ENDED_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.presence_offline)
+                .setContentTitle("Call ended · ${formatCallLength(rec.seconds)}")
+                .setContentText(detail)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setContentIntent(callOpenIntent())
+                .setAutoCancel(true)
+                .build()
+        )
     }
 
     private val _scannedPeers = MutableStateFlow<List<PeerDevice>>(emptyList())
@@ -424,9 +540,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .build()
 
     private fun startIdleWatchdog() {
+        var awakeRequested = false
         viewModelScope.launch {
             while (isActive) {
                 delay(60_000L)
+                // The network only answers while the CPU does: hold the lock for the work in
+                // flight, and nothing at all once the phone is just sitting there serving.
+                val busy = _serverState.value.isRunning &&
+                    (activeTransfers.value.isNotEmpty() || callEngine.state.value.active)
+                if (busy != awakeRequested) {
+                    awakeRequested = busy
+                    ServerService.keepAwake(context, busy)
+                }
                 val server = serverInstance ?: continue
                 if (!_serverState.value.isRunning) continue
                 // The service (or the system) may have stopped the server underneath us;
@@ -444,17 +569,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     continue
                 }
-                // Anything live keeps the server awake: an in-flight transfer or a call.
-                if (activeTransfers.value.isNotEmpty()) {
-                    server.markActivity()
-                    continue
-                }
+                // Anything live keeps the server busy: an in-flight transfer or a call.
+                if (activeTransfers.value.isNotEmpty()) continue
                 if (callEngine.state.value.active) continue
-                val idleMs = System.currentTimeMillis() - server.lastActivityAt
-                if (idleMs >= AUTO_OFF_AFTER_MS) {
-                    stopServer()
-                    _uiMessage.value = "Server turned off after ${AUTO_OFF_AFTER_MS / 60000} minutes of no traffic"
-                }
             }
         }
     }
@@ -704,8 +821,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _serverState.update { it.copy(deviceName = name) }
             persistSettings()
             if (_serverState.value.isRunning) {
-                restartServer()
+                // Renaming used to bounce the server off its port, cutting whatever was
+                // mid-flight. The name is served from a live field now, so only the
+                // announcement has to go out again.
+                serverInstance?.rename(name)
+                val state = _serverState.value
+                discoveryManager.startDiscovery(
+                    deviceName = state.deviceName,
+                    currentIp = state.ipAddress,
+                    serverPort = state.port,
+                    requiresPin = state.isPinRequired,
+                    scope = viewModelScope
+                )
             }
+        }
+    }
+
+    /**
+     * Pull-to-refresh. The lists here are live queries and LAN announcements, so the gesture
+     * re-reads the network and re-sweeps the radar instead of re-downloading anything.
+     */
+    fun pullToRefresh(scanRadar: Boolean, onDone: () -> Unit) {
+        viewModelScope.launch {
+            refreshNetwork()
+            serverInstance?.let { _webClients.value = it.webClientsSnapshot() }
+            if (scanRadar) {
+                stopRadarScan()
+                startRadarScan()
+            }
+            // A local read finishes in a blink; hold the spinner long enough to be seen.
+            delay(500)
+            onDone()
         }
     }
 
@@ -803,7 +949,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 PulseDropServer(
                     port = state.port,
                     context = context,
-                    deviceName = state.deviceName,
+                    initialDeviceName = state.deviceName,
                     initialPinCode = if (state.isPinRequired) state.pin else null,
                     initialIsPinRequired = state.isPinRequired,
                     initialListener = listener
@@ -888,12 +1034,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     throw e
                 }
             }
-        }
-    }
-
-    private fun restartServer() {
-        if (_serverState.value.isRunning) {
-            startServer()
         }
     }
 
@@ -1079,8 +1219,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * recipient's own key; room and direct-IP threads keep the file in the chat store,
      * so it stays inside the conversation instead of the hosted file list.
      */
-    fun sendFileToThread(threadId: String?, uri: Uri) {
-        viewModelScope.launch(Dispatchers.IO) {
+    fun sendFileToThread(threadId: String?, uri: Uri) {        viewModelScope.launch(Dispatchers.IO) {
             val (name, size, _) = resolveFileMetadata(uri)
             when {
                 threadId == null || threadId.startsWith("ip:") -> {
@@ -1120,6 +1259,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    /** One tap, many files: each one takes the same path a lone attachment would. */
+    fun sendFilesToThread(threadId: String?, uris: List<Uri>) {
+        uris.forEach { sendFileToThread(threadId, it) }
     }
 
     private suspend fun sendEncryptedFileTo(pairing: PairedDevice, uri: Uri, name: String, size: Long) {
@@ -1330,12 +1474,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
-        private const val AUTO_OFF_AFTER_MS = 30 * 60 * 1000L
-
         /** Chat lives for the session — kept until the app is restarted, not written to disk. */
         private const val CHAT_RETENTION = 2000
 
         private const val CALL_CHANNEL_ID = "pulsedrop_call"
         private const val CALL_NOTIF_ID = 4141
+        private const val CALL_ENDED_CHANNEL_ID = "pulsedrop_call_ended"
+        private const val CALL_ENDED_NOTIF_ID = 4142
+
+        /** Which shade button was pressed; MainActivity hands the name back to the ViewModel. */
+        const val EXTRA_CALL_ACTION = "com.pulsedrop.app.extra.CALL_ACTION"
     }
 }
