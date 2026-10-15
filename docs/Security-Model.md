@@ -27,6 +27,17 @@ not a hostile one. Everything below is defense-in-depth for that assumption.
 - Both devices display a **safety code** from the first four hash bytes — compare it out
   of band to detect interception (number-matching, same idea as Signal safety numbers).
 
+## Relay: a postbox, not a server
+
+A phone that pairs with a hub but runs no server sends its mail through the host. Every
+envelope is sealed with the *recipient's* pairwise AES-GCM key before it leaves, and the
+host stores only the ciphertext plus a destination device id — being the postbox does not
+make it a party to the conversation. Pulling and posting are authorized by a signed proof
+token bound to one pairing **and one role** (`pulsedrop-relay-v1|pid|role|deviceId|issuedAt|nonce`),
+so a "post" capability can never empty somebody else's mailbox. Mail is held until the
+addressee acknowledges it (a crashed poll simply re-fetches), and a device that never
+returns is forgotten after a day.
+
 ## Upload proof
 
 A paired browser upload carries an AES-GCM blob over

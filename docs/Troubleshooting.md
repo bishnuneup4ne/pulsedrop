@@ -38,8 +38,10 @@ in, and typing the **https** address (port + 1) by hand always works as a last r
 
 1. Both devices must be on the **same** Wi-Fi/hotspot (client isolation on some guest
    networks blocks LAN traffic — use the phone's own hotspot instead).
-2. Servers must be running on **both** phones - calls signal peer to peer and are never relayed.
-   Dialling from a phone whose server is off says *"Turn your server on first - calls signal over it"*.
+2. Calls signal peer to peer, so a call needs a server on the phones taking it - chat
+   and pairing do not: a phone with its server off reaches the whole room through its
+   host's relay mailbox. Dialling from a phone whose server is off says
+   *"Turn your server on first - calls signal over it"*.
 3. Browser legs need the https port for media; signalling alone can look "connected but
    silent".
 4. If a stale "ringing" bubble never clears, the phone ends it after 35 s automatically.
