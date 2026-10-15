@@ -39,6 +39,9 @@ android {
         storePassword = lookup("STORE_PASSWORD")
         keyAlias = lookup("KEY_ALIAS") ?: "upload"
         keyPassword = lookup("KEY_PASSWORD")
+        enableV1Signing = true
+        enableV2Signing = true
+        enableV3Signing = true
       }
     }
   }
