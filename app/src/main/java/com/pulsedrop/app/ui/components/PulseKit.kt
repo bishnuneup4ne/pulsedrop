@@ -199,19 +199,19 @@ fun PulseCard(
 ) {
     val c = LocalPulseColors.current
     val shape = RoundedCornerShape(PulseRadius.lg.dp)
-    val card = @Composable {
-        Surface(
-            modifier = modifier,
-            shape = shape,
-            color = c.surfaceElevated,
-            contentColor = c.textPrimary,
-            border = BorderStroke(PulseHairline, if (selected) c.accent else c.borderSubtle)
-        ) {
-            Box(Modifier.padding(contentPadding)) { content() }
-        }
+    // The click lives on the card's own modifier chain, not around it: a testTag or size set by
+    // the caller must land on the same node that carries the click, or the card cannot be found
+    // by what it is tagged with.
+    val click = if (onClick != null) Modifier.clip(shape).clickable(onClick = onClick) else Modifier
+    Surface(
+        modifier = modifier.then(click),
+        shape = shape,
+        color = c.surfaceElevated,
+        contentColor = c.textPrimary,
+        border = BorderStroke(PulseHairline, if (selected) c.accent else c.borderSubtle)
+    ) {
+        Box(Modifier.padding(contentPadding)) { content() }
     }
-    if (onClick == null) card()
-    else Box(Modifier.clip(shape).clickable(onClick = onClick)) { card() }
 }
 
 @Composable
@@ -309,6 +309,98 @@ fun PulseChip(
                     )
                 }
             }
+        }
+    }
+}
+
+// ── Page scaffolding ───────────────────────────────────────────────────────
+
+/**
+ * What a page is, in the page's own words.
+ *
+ * The top bar already names the section; this answers the two questions a dashboard has to
+ * answer before anything else: who am I, and am I live right now.
+ */
+@Composable
+fun PulsePageHeader(
+    title: String,
+    subtitle: String? = null,
+    modifier: Modifier = Modifier,
+    status: @Composable (() -> Unit)? = null
+) {
+    val c = LocalPulseColors.current
+    Row(
+        modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                color = c.textPrimary,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        status?.invoke()
+    }
+}
+
+/**
+ * A number you can tap.
+ *
+ * Digits carry tabular figures so a live count does not shuffle the layout under it, and the tile
+ * only looks pressed-able when it actually goes somewhere.
+ */
+@Composable
+fun PulseStatTile(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null
+) {
+    val c = LocalPulseColors.current
+    Surface(
+        onClick = { onClick?.invoke() },
+        modifier = modifier.defaultMinSize(minHeight = PulseSizes.touchTarget.dp),
+        enabled = onClick != null,
+        shape = RoundedCornerShape(PulseRadius.lg.dp),
+        color = c.surfaceElevated,
+        contentColor = c.textPrimary,
+        border = BorderStroke(PulseHairline, c.borderSubtle)
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PulseSpacing.md.dp, vertical = PulseSpacing.sm.dp)
+        ) {
+            Text(
+                value,
+                style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"),
+                color = c.textPrimary,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = c.textSecondary,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

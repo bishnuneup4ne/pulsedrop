@@ -99,7 +99,7 @@ import com.pulsedrop.app.ui.screens.IncomingCallStage
 import com.pulsedrop.app.ui.screens.RadarScreen
 import com.pulsedrop.app.ui.screens.SettingsSheet
 import com.pulsedrop.app.ui.screens.AboutScreen
-import com.pulsedrop.app.ui.screens.ShareScreen
+import com.pulsedrop.app.ui.screens.HomeScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -391,27 +391,39 @@ fun MainScreen(viewModel: MainViewModel) {
                 ) {
             Crossfade(targetState = selectedSection, label = "tab_crossfade") { section ->
                 when (section) {
-                    PulseSection.HOME -> ShareScreen(
+                    PulseSection.HOME -> HomeScreen(
                         serverState = serverState,
                         qrBitmap = qrBitmap,
                         sharedFiles = sharedFiles,
                         activeTransfers = activeTransfersMap.values.toList(),
-                        clipMessages = clipMessages,
-                        pairedCount = pairedDevices.size,
+                        history = historyList,
+                        messagesCount = clipMessages.count { !it.deleted },
+                        pairedDevices = pairedDevices,
                         peersCount = displayPeers.size,
+                        webClientsCount = webClients.size,
+                        pendingUploads = pendingUploads,
+                        incomingPairCount = incomingPairRequests.size,
+                        relayHostName = relayHostName,
+                        callInProgress = callState.active && callState.connected,
+                        isSharingScreen = callState.sharing,
+                        updateInfo = updateInfo,
+                        updateProgress = updateProgress,
+                        updateStatus = updateStatus,
+                        appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                        installs = downloadCount,
                         onToggleServer = { viewModel.toggleServer() },
                         onOpenSecuritySettings = { showSecurityDialog = true },
                         onAddFiles = { uris -> viewModel.addFiles(uris) },
                         onRemoveFile = { id -> viewModel.removeSharedFile(id) },
                         onClearFiles = { viewModel.clearSharedFiles() },
-                        onSendClip = { text -> viewModel.sendClipMessage(text) },
-                        appVersion = BuildConfig.VERSION_NAME,
-                        downloads = downloadCount,
+                        onAcceptUpload = { viewModel.acceptPendingUpload(it) },
+                        onDeclineUpload = { viewModel.declinePendingUpload(it) },
+                        onToggleScreenShare = { requestScreenShare() },
                         onUpdateCheck = {
                             dismissedUpdateVersion = null
                             viewModel.updateManager.check(auto = false)
                         },
-                        relayHostName = relayHostName
+                        onNavigate = { selectSection(it) }
                     )
 
                     PulseSection.DEVICES -> RadarScreen(
