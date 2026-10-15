@@ -105,6 +105,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _pendingUploads = MutableStateFlow<List<com.pulsedrop.app.model.PendingUploadInfo>>(emptyList())
     val pendingUploads: StateFlow<List<com.pulsedrop.app.model.PendingUploadInfo>> = _pendingUploads.asStateFlow()
 
+    /** Where accepted uploads land. One folder, owned by the app; the Receive page shows it as text. */
+    val receiveDir: String
+        get() = java.io.File(
+            context.getExternalFilesDir(null) ?: context.filesDir,
+            PulseDropServer.RECEIVED_DIR_NAME
+        ).absolutePath
+
     private val _sharedFiles = MutableStateFlow<List<SharedFile>>(emptyList())
     val sharedFiles: StateFlow<List<SharedFile>> = _sharedFiles.asStateFlow()
 

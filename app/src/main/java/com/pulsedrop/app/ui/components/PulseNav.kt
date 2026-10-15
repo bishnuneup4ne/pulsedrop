@@ -92,10 +92,7 @@ enum class PulseSection(
     HOME("Home", Icons.Filled.Home, "section_home"),
     DEVICES("Devices", Icons.Filled.Radar, "section_devices"),
     SEND_FILES("Send files", Icons.AutoMirrored.Filled.Send, "section_send"),
-    RECEIVE_FILES("Receive files", Icons.Filled.Download, "section_receive",
-        comingSoonNote = "Receiving works today: start the server on Home and any device on your " +
-                "network can send to this phone.",
-        shortcutLabel = "Open home", shortcut = HOME),
+    RECEIVE_FILES("Receive files", Icons.Filled.Download, "section_receive"),
     TRANSFERS("Transfers", Icons.Filled.SwapHoriz, "section_transfers"),
     MY_FILES("My files", Icons.Filled.Folder, "section_myfiles",
         comingSoonNote = "A browser over everything this phone shares is on the way. " +

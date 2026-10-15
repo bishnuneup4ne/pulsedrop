@@ -180,7 +180,17 @@ class PulseDropServer(
         val receivedDir = File(context.getExternalFilesDir(null) ?: context.filesDir, "WebDrop_Received").apply {
             if (!exists()) mkdirs()
         }
-        val target = File(receivedDir, staged.name)
+        // The name was free when the upload parked; re-check at accept, because anything could
+        // have taken it in between. Accepting must never overwrite what is already on disk.
+        var acceptedName = staged.name
+        var target = File(receivedDir, acceptedName)
+        if (target.exists()) {
+            val nameWithoutExt = acceptedName.substringBeforeLast(".")
+            val ext = acceptedName.substringAfterLast(".", "")
+            val extSuffix = if (ext.isNotEmpty()) ".$ext" else ""
+            acceptedName = "${nameWithoutExt}_${System.currentTimeMillis()}$extSuffix"
+            target = File(receivedDir, acceptedName)
+        }
         target.parentFile?.mkdirs()
         val moved = staged.file.renameTo(target) || run {
             staged.file.copyTo(target, overwrite = true)
@@ -199,13 +209,13 @@ class PulseDropServer(
             targetClientIp = staged.toIp
         )
         synchronized(sharedFiles) { sharedFiles.add(sharedItem) }
-        listener.onTransferStarted(staged.transferId, staged.name, staged.size, TransferDirection.INCOMING, staged.fromLabel, staged.fromIp)
-        listener.onTransferCompleted(staged.transferId, staged.name, staged.size, target.absolutePath, TransferDirection.INCOMING, staged.fromLabel, staged.fromIp)
+        listener.onTransferStarted(staged.transferId, acceptedName, staged.size, TransferDirection.INCOMING, staged.fromLabel, staged.fromIp)
+        listener.onTransferCompleted(staged.transferId, acceptedName, staged.size, target.absolutePath, TransferDirection.INCOMING, staged.fromLabel, staged.fromIp)
         pushWebEvent("file") {
-            put("name", staged.name); put("size", staged.size); put("from", staged.fromLabel)
+            put("name", acceptedName); put("size", staged.size); put("from", staged.fromLabel)
             staged.toIp?.let { put("to", it) }
         }
-        return staged.name
+        return acceptedName
     }
 
     /** Throws the file away; the sender is not told it arrived at all. */
@@ -2192,6 +2202,9 @@ class PulseDropServer(
     }
 
     companion object {
+        /** Where accepted uploads live; the Receive page shows this folder and nothing else. */
+        const val RECEIVED_DIR_NAME = "WebDrop_Received"
+
         /** The instance holding our port right now, so a restart can kill a stray listener. */
         @Volatile
         var current: PulseDropServer? = null

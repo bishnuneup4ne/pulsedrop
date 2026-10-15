@@ -98,6 +98,7 @@ import com.pulsedrop.app.ui.screens.IncomingCallCard
 import com.pulsedrop.app.ui.screens.IncomingCallStage
 import android.net.Uri
 import com.pulsedrop.app.ui.screens.DevicesScreen
+import com.pulsedrop.app.ui.screens.ReceiveScreen
 import com.pulsedrop.app.ui.screens.SendScreen
 import com.pulsedrop.app.ui.screens.SettingsSheet
 import com.pulsedrop.app.ui.screens.AboutScreen
@@ -475,6 +476,33 @@ fun MainScreen(viewModel: MainViewModel) {
                         onOpenDevices = { selectSection(PulseSection.DEVICES) },
                         onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
                     )
+
+                    PulseSection.RECEIVE_FILES -> {
+                        val receiveDir = viewModel.receiveDir
+                        val freeSpace = remember(receiveDir) {
+                            val root = java.io.File(receiveDir).parentFile ?: java.io.File("/")
+                            try {
+                                android.os.StatFs(root.absolutePath).availableBytes
+                            } catch (_: Exception) { -1L }
+                        }
+                        ReceiveScreen(
+                            serverRunning = serverState.isRunning,
+                            autoAccept = serverState.autoAcceptTransfers,
+                            pendingUploads = pendingUploads,
+                            incomingActive = activeTransfersMap.values
+                                .filter { it.direction == com.pulsedrop.app.model.TransferDirection.INCOMING },
+                            receivedHistory = historyList,
+                            receiveDir = receiveDir,
+                            freeSpaceBytes = freeSpace,
+                            onAccept = { viewModel.acceptPendingUpload(it) },
+                            onDecline = { viewModel.declinePendingUpload(it) },
+                            onSetAutoAccept = { viewModel.setAutoAcceptTransfers(it) },
+                            onOpenFile = { viewModel.openFile(it) },
+                            onRemoveHistory = { viewModel.deleteHistoryItem(it) },
+                            onToggleServer = { viewModel.toggleServer() },
+                            onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
+                        )
+                    }
 
                     PulseSection.MESSAGES -> ChatScreen(
                         messages = clipMessages,
