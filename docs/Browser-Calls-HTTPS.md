@@ -20,16 +20,17 @@ The HTTPS listener uses a **self-signed certificate generated at runtime** (Boun
 RSA-2048) with the phone's LAN IP baked into the SAN list. It lives only for the process —
 nothing to renew, nothing to leak.
 
+Since v1.2 the phone also **bounces plain http visits to the https port automatically**:
+open `http://…:8080` in a browser and you land on `https://…:8081`. If the secure listener
+is not up yet, the page tells you and calls keep working in receive-only mode.
+
 ## First visit
 
 1. Start the server on the phone.
-2. Scan the QR or type the **https** address it shows.
+2. Scan the QR or type the address it shows (http works too — you will be redirected).
 3. The browser warns the certificate isn't trusted (self-signed, expected on a LAN).
    Choose "Advanced → Continue". Accept once per address.
 4. Grant camera/microphone when the call starts.
-
-If you see the toast "This page is not a secure origin", you opened the http port by
-mistake — switch to the https address.
 
 ## How media flows
 
@@ -42,7 +43,8 @@ mistake — switch to the https address.
 
 ## Limitations
 
-- Bandwidth is whatever the hotspot gives you; video is capped at ~5 fps 480p JPEG to
-  stay smooth on 2.4 GHz Wi-Fi.
+- Bandwidth is whatever the hotspot gives you. Camera rides ~5 fps at up to 960 px wide,
+  screen share ~7 fps at up to 1600 px, JPEG quality-tuned for LAN links; the phone's own
+  share captures at 1080p.
 - Screen share from the browser is `getDisplayMedia` (tab/window/screen, browser's choice).
 - From the phone, screen share uses the Android media projection capture service.
