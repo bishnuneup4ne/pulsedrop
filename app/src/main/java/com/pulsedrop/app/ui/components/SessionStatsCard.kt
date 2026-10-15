@@ -39,6 +39,7 @@ import com.pulsedrop.app.model.ClipMessage
 import com.pulsedrop.app.model.SharedFile
 import com.pulsedrop.app.model.TransferItem
 import com.pulsedrop.app.ui.UiServerState
+import com.pulsedrop.app.ui.theme.LocalReducedMotion
 import com.pulsedrop.app.util.NetworkUtils
 
 @Composable
@@ -165,16 +166,20 @@ private fun plural(count: Int, word: String) = if (count == 1) word else "${word
 
 @Composable
 private fun LiveDot(color: Color) {
-    val transition = rememberInfiniteTransition(label = "live_dot")
-    val pulse by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "live_dot_alpha"
-    )
+    val pulse = if (LocalReducedMotion.current) {
+        0.8f
+    } else {
+        val transition = rememberInfiniteTransition(label = "live_dot")
+        transition.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1100, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "live_dot_alpha"
+        ).value
+    }
     Box(
         modifier = Modifier
             .size(9.dp)

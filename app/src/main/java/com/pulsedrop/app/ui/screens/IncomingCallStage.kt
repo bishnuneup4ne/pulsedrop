@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.pulsedrop.app.ui.theme.LocalReducedMotion
 import com.pulsedrop.app.ui.theme.PulseStageColors
 
 /**
@@ -63,21 +64,29 @@ data class IncomingCallCard(
 @Composable
 fun IncomingCallStage(card: IncomingCallCard, onAccept: () -> Unit, onDecline: () -> Unit) {
     val stage = PulseStageColors
-    val transition = rememberInfiniteTransition(label = "ring")
+    val reduced = LocalReducedMotion.current
     // The breathe is the only movement here; the buttons must stay exactly where a thumb already
     // expects them, so they never move with it.
-    val pulse by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "pulse"
-    )
-    val ringGlow by transition.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "ringGlow"
-    )
+    val pulse: Float
+    val ringGlow: Float
+    if (reduced) {
+        pulse = 1f
+        ringGlow = 0.8f
+    } else {
+        val transition = rememberInfiniteTransition(label = "ring")
+        pulse = transition.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.08f,
+            animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+            label = "pulse"
+        ).value
+        ringGlow = transition.animateFloat(
+            initialValue = 0.55f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+            label = "ringGlow"
+        ).value
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()

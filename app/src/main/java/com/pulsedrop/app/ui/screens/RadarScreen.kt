@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.pulsedrop.app.model.PairedDevice
+import com.pulsedrop.app.ui.theme.LocalReducedMotion
 import com.pulsedrop.app.model.PeerDevice
 import com.pulsedrop.app.model.PendingPairRequest
 import com.pulsedrop.app.ui.UiPeerConnection
@@ -165,7 +166,7 @@ fun RadarScreen(
     }
 
     // Sweeping rings only cost frames while a scan is actually running.
-    val sweep = if (scanning) {
+    val sweep = if (scanning && !LocalReducedMotion.current) {
         val infiniteTransition = rememberInfiniteTransition(label = "radar")
         val radius1 by infiniteTransition.animateFloat(
             initialValue = 0.25f,

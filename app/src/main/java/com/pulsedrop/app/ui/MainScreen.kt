@@ -71,6 +71,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -323,7 +326,13 @@ fun MainScreen(viewModel: MainViewModel) {
         val useRail = maxWidth >= 720.dp
         Scaffold(
             containerColor = colorScheme.background,
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = {
+                // Announce every transient message: transfers and connections change while you work.
+                SnackbarHost(
+                    snackbarHostState,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }
+                )
+            },
             topBar = {
                 PulseHeader(
                     isRunning = serverState.isRunning,
