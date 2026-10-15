@@ -37,7 +37,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.NavigationBar
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import com.pulsedrop.app.ui.components.PulseBadgeBox
+import com.pulsedrop.app.ui.components.PulseSideRail
+import com.pulsedrop.app.ui.components.PulseNavItem
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -52,6 +60,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -134,9 +143,9 @@ fun MainScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var selectedTab by remember { mutableStateOf(PulseNavTab.SERVE) }
+    var selectedTab by rememberSaveable { mutableStateOf(PulseNavTab.SERVE) }
     var showSecurityDialog by remember { mutableStateOf(false) }
-    var selectedThreadId by remember { mutableStateOf<String?>(null) }
+    var selectedThreadId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showShareConsent by remember { mutableStateOf(false) }
     var dismissedUpdateVersion by remember { mutableStateOf<String?>(null) }
@@ -287,7 +296,25 @@ fun MainScreen(viewModel: MainViewModel) {
         selectedThreadId = null
     }
 
+    // Badges carry real counts only: pending requests, unread threads, live transfers.
+    val unreadThreads = remember(clipMessages, lastReadAt, serverState.deviceName) {
+        clipMessages
+            .filter { !it.deleted && !it.sender.equals(serverState.deviceName, ignoreCase = true) }
+            .groupBy { it.threadId ?: "room" }
+            .count { (thread, msgs) ->
+                (msgs.maxOfOrNull { it.timestamp } ?: 0L) > (lastReadAt[thread] ?: 0L)
+            }
+    }
+    val navBadges = mapOf(
+        PulseNavTab.RADAR to incomingPairRequests.size,
+        PulseNavTab.CHAT to unreadThreads,
+        PulseNavTab.HISTORY to activeTransfersMap.size
+    )
+    val transfersLive = activeTransfersMap.isNotEmpty()
+
     Box(modifier = Modifier.fillMaxSize()) {
+      BoxWithConstraints(Modifier.fillMaxSize()) {
+        val useRail = maxWidth >= 720.dp
         Scaffold(
             containerColor = colorScheme.background,
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -301,32 +328,61 @@ fun MainScreen(viewModel: MainViewModel) {
                 )
             },
             bottomBar = {
-                PulseBottomBar(
-                    selectedTab = selectedTab,
-                    onSelect = { selectedTab = it }
-                )
+                if (useRail) {
+                    Spacer(Modifier.height(0.dp))
+                } else {
+                    PulseBottomBar(
+                        selectedTab = selectedTab,
+                        badges = navBadges,
+                        transfersLive = transfersLive,
+                        onSelect = { selectedTab = it }
+                    )
+                }
             }
         ) { paddingValues ->
-            // Every section pulls: the lists are live queries, and a swipe is how people ask
-            // "is that really up to date?" without hunting for a button.
-            val ptrState = rememberPullToRefreshState()
-            var pulling by remember { mutableStateOf(false) }
-            PullToRefreshBox(
-                isRefreshing = pulling,
-                onRefresh = {
-                    if (!pulling) {
-                        pulling = true
-                        viewModel.pullToRefresh(selectedTab == PulseNavTab.RADAR) { pulling = false }
-                    }
-                },
-                state = ptrState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-            ) {
-            Box(
-                modifier = Modifier.fillMaxSize()
-            ) {
+            Row(Modifier.fillMaxSize().padding(paddingValues)) {
+                if (useRail) {
+                    PulseSideRail(
+                        selectedId = selectedTab.name,
+                        onSelect = { id -> selectedTab = PulseNavTab.valueOf(id) },
+                        items = PulseNavTab.values().map { tab ->
+                            PulseNavItem(
+                                id = tab.name,
+                                title = tab.title,
+                                icon = tab.icon,
+                                badge = navBadges[tab] ?: 0,
+                                live = tab == PulseNavTab.HISTORY && transfersLive,
+                                tag = tab.tag
+                            )
+                        }
+                    )
+                }
+                // Every section pulls: the lists are live queries, and a swipe is how people ask
+                // "is that really up to date?" without hunting for a button.
+                val ptrState = rememberPullToRefreshState()
+                var pulling by remember { mutableStateOf(false) }
+                PullToRefreshBox(
+                    isRefreshing = pulling,
+                    onRefresh = {
+                        if (!pulling) {
+                            pulling = true
+                            viewModel.pullToRefresh(selectedTab == PulseNavTab.RADAR) { pulling = false }
+                        }
+                    },
+                    state = ptrState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 880.dp)
+                ) {
             Crossfade(targetState = selectedTab, label = "tab_crossfade") { tab ->
                 when (tab) {
                     PulseNavTab.SERVE -> ShareScreen(
@@ -433,6 +489,9 @@ fun MainScreen(viewModel: MainViewModel) {
                     PulseNavTab.HOTSPOT -> HotspotGuideScreen(
                         serverState = serverState
                     )
+                }
+                }
+                }
                 }
             }
             }
@@ -897,6 +956,8 @@ fun MainScreen(viewModel: MainViewModel) {
 @Composable
 private fun PulseBottomBar(
     selectedTab: PulseNavTab,
+    badges: Map<PulseNavTab, Int>,
+    transfersLive: Boolean,
     onSelect: (PulseNavTab) -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -913,9 +974,10 @@ private fun PulseBottomBar(
                 onClick = { onSelect(tab) },
                 modifier = Modifier.testTag(tab.tag),
                 icon = {
-                    Icon(
-                        imageVector = tab.icon,
-                        contentDescription = tab.title
+                    PulseBadgeBox(
+                        count = badges[tab] ?: 0,
+                        live = tab == PulseNavTab.HISTORY && transfersLive,
+                        icon = tab.icon
                     )
                 },
                 label = {
