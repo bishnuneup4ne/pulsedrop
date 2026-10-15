@@ -3797,6 +3797,13 @@ object WebClientHtml {
       call.startedAt = state === 'accepted' ? (startedAt || Date.now()) : 0;
       if (dir === 'in' && state === 'ringing') {
         startRing();
+        /* Answering from an http tab is a one-way call: the phone is seen and heard, the tab
+           is not, and the browser refuses the mic without saying why. Say so before the tap. */
+        if (!window.isSecureContext) {
+          var sb = el('secureBtn');
+          if (sb) sb.style.display = 'inline-flex';
+          callHint('This tab is on http. Answering lets them see and hear the phone, but the browser will not release your mic or camera. Tap "Secure mode" above, then answer.');
+        }
         browserNotify((video ? 'Video call' : 'Call') + ' from ' + peerName(),
           'Open this tab to answer', 'pulse-call');
       } else stopRing();
