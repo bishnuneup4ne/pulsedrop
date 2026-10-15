@@ -1,12 +1,12 @@
 package com.pulsedrop.app.ui.components
 
+import com.pulsedrop.app.ui.PulseEvents
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
-import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -241,7 +241,7 @@ fun ServerCard(
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     clipboard.setPrimaryClip(ClipData.newPlainText("PulseDrop URL", serverState.serverUrl))
-                                    Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                                    PulseEvents.post("Link copied")
                                 },
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.filledTonalButtonColors(
@@ -297,7 +297,7 @@ fun ServerCard(
                         try {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(serverState.serverUrl)))
                         } catch (e: Exception) {
-                            Toast.makeText(context, "Cannot open browser", Toast.LENGTH_SHORT).show()
+                            PulseEvents.post("Cannot open browser")
                         }
                     },
                     modifier = Modifier

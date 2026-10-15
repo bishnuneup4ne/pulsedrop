@@ -120,8 +120,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _peerConnecting = MutableStateFlow(false)
     val peerConnecting: StateFlow<Boolean> = _peerConnecting.asStateFlow()
 
-    private val _uiMessage = MutableStateFlow<String?>(null)
-    val uiMessage: StateFlow<String?> = _uiMessage.asStateFlow()
+    /** One-shot messages for the snackbar all go through the app's single feedback channel. */
+    private fun postEvent(message: String) {
+        PulseEvents.post(message)
+    }
 
     private val _typingUsers = MutableStateFlow<List<String>>(emptyList())
     val typingUsers: StateFlow<List<String>> = _typingUsers.asStateFlow()
@@ -426,7 +428,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             callEngine.toast.collect { t ->
-                if (t != null) _uiMessage.value = t
+                t?.let(::postEvent)
             }
         }
         startCallNotifications()
@@ -438,9 +440,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             updateWatch.start()
         }
         viewModelScope.launch {
-            updateManager.statusMessage.collect { msg ->
-                if (msg != null) _uiMessage.value = msg
-            }
+            updateManager.statusMessage.collect { it?.let(::postEvent) }
         }
     }
 
@@ -504,7 +504,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setPairVerified(pid: String, verified: Boolean) {
         pairManager.setVerified(pid, verified)
-        _uiMessage.value = if (verified) "Pairing marked verified" else "Pairing marked unverified"
+        postEvent(if (verified) "Pairing marked verified" else "Pairing marked unverified")
     }
 
     fun consumePairEvent() {
@@ -517,7 +517,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Call signaling answers come back to our HTTP server; with it off the peer's reply
         // has nowhere to land and the caller just rings until it times out.
         if (!_serverState.value.isRunning) {
-            _uiMessage.value = "Turn your server on first - calls signal over it"
+            postEvent("Turn your server on first - calls signal over it")
             return
         }
         callEngine.invite(pid, video)
@@ -525,11 +525,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startGroupCall(pids: List<String>, video: Boolean) {
         if (!_serverState.value.isRunning) {
-            _uiMessage.value = "Turn your server on first - calls signal over it"
+            postEvent("Turn your server on first - calls signal over it")
             return
         }
         if (pids.isEmpty()) {
-            _uiMessage.value = "Pair a device first - browsers can only be rung from their chat"
+            postEvent("Pair a device first - browsers can only be rung from their chat")
             return
         }
         // Calling "everyone" with a single device behind is just a one-to-one call.
@@ -560,7 +560,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopScreenShare() = callEngine.stopScreenShare()
 
     fun toastCallMessage(message: String) {
-        _uiMessage.value = message
+        postEvent(message)
     }
 
     fun armScreenShare() {
@@ -604,9 +604,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ServerService.hostedServer = null
                     _serverState.update { it.copy(isRunning = false, startedAt = 0L) }
                     if (ServerService.userStopped) {
-                        _uiMessage.value = "Server stopped from the notification"
+                        postEvent("Server stopped from the notification")
                     } else {
-                        _uiMessage.value = "Server dropped — bringing it back up"
+                        postEvent("Server dropped — bringing it back up")
                         startServer()
                     }
                     continue
@@ -616,10 +616,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (callEngine.state.value.active) continue
             }
         }
-    }
-
-    fun consumeUiMessage() {
-        _uiMessage.value = null
     }
 
     fun connectToPeer(rawAddress: String) {
@@ -669,14 +665,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             label = peer.name,
                             requiresPin = peer.requiresPin
                         )
-                        _uiMessage.value = "Connected to ${peer.name}"
+                        postEvent("Connected to ${peer.name}")
                     } else {
-                        _uiMessage.value = "No PulseDrop server found at $host:$port"
+                        postEvent("No PulseDrop server found at $host:$port")
                         _connectedPeer.value = null
                     }
                 }
             } catch (e: Exception) {
-                _uiMessage.value = "Could not reach $host:$port"
+                postEvent("Could not reach $host:$port")
                 _connectedPeer.value = null
             } finally {
                 _peerConnecting.value = false
@@ -762,7 +758,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (filePath.isNullOrBlank()) return
         val file = File(filePath)
         if (!file.exists()) {
-            _uiMessage.value = "File is no longer on this device"
+            postEvent("File is no longer on this device")
             return
         }
 
@@ -786,18 +782,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         resolver.openOutputStream(target)?.use { out ->
                             file.inputStream().use { it.copyTo(out) }
                         }
-                        _uiMessage.value = "Saved ${file.name} to Downloads"
+                        postEvent("Saved ${file.name} to Downloads")
                     } else {
-                        _uiMessage.value = "Could not save to Downloads"
+                        postEvent("Could not save to Downloads")
                     }
                 } else {
                     val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                     val dest = File(downloadsDir, file.name)
                     file.copyTo(dest, overwrite = true)
-                    _uiMessage.value = "Saved ${dest.name} to Downloads"
+                    postEvent("Saved ${dest.name} to Downloads")
                 }
             } catch (e: Exception) {
-                _uiMessage.value = "Save failed: ${e.message}"
+                postEvent("Save failed: ${e.message}")
             }
         }
     }
@@ -1046,7 +1042,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             serverInstance = null
             ServerService.hostedServer = null
             _serverState.update { it.copy(isRunning = false, startedAt = 0L) }
-            _uiMessage.value = "Could not start the server on port ${state.port}: ${e.message}"
+            postEvent("Could not start the server on port ${state.port}: ${e.message}")
             // The port is taken or the radio is odd — being somebody else's client still works.
             ensureRelayAttached()
         }
@@ -1122,7 +1118,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 serverInstance?.setSharedFiles(updated)
                 updated
             }
-            _uiMessage.value = "Sent ${meta.first} to $ip — it is in their download list"
+            postEvent("Sent ${meta.first} to $ip — it is in their download list")
         }
     }
 
@@ -1170,7 +1166,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val meta = resolveFileMetadata(uri)
                     val cipher = pairManager.prepareEncryptedUpload(pairing, uri)
                     if (cipher == null) {
-                        _uiMessage.value = "Could not encrypt ${meta.first}"
+                        postEvent("Could not encrypt ${meta.first}")
                     } else {
                         transferManager.sendPairEncryptedFile(
                             peer, pairing.pid, cipher, meta.first, meta.second,
@@ -1194,11 +1190,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Dial the browser tab of a LAN visitor; the phone owns the ringing UI on both ends. */
     fun callWebClient(ip: String, name: String, video: Boolean) {
         val server = serverInstance ?: run {
-            _uiMessage.value = "Turn your server on first - calls signal over it"
+            postEvent("Turn your server on first - calls signal over it")
             return
         }
         if (_webCall.value != null || callEngine.state.value.active || callEngine.incomingCall.value != null) {
-            _uiMessage.value = "Another call is already up"
+            postEvent("Another call is already up")
             return
         }
         server.ringWebClient(ip, name, video)
@@ -1211,11 +1207,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun callEveryone(memberPids: List<String>, browserIp: String?, browserName: String?, video: Boolean) {
         if (!_serverState.value.isRunning) {
-            _uiMessage.value = "Turn your server on first - calls signal over it"
+            postEvent("Turn your server on first - calls signal over it")
             return
         }
         if (_webCall.value != null || callEngine.state.value.active || callEngine.incomingCall.value != null) {
-            _uiMessage.value = "Another call is already up"
+            postEvent("Another call is already up")
             return
         }
         if (browserIp == null) {
@@ -1256,7 +1252,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createGroup(name: String, memberPids: List<String>) {
         if (pairManager.createGroup(name, memberPids) == null) {
-            _uiMessage.value = "A group needs a name and at least two paired devices"
+            postEvent("A group needs a name and at least two paired devices")
         }
         syncWebThreads()
     }
@@ -1294,15 +1290,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         // Attached to somebody else's room: chat rides the relay, but a file is
                         // bytes, not a message. Say which of the two the user is out of.
                         val host = relayClient.attached.value
-                        _uiMessage.value = if (host != null)
+                        postEvent(if (host != null)
                             "Text goes through ${host.name}'s server, but files need a server of your own — start yours to send $name"
                         else
-                            "Start the server to attach files to chat"
+                            "Start the server to attach files to chat")
                         return@launch
                     }
                     val attachment = server.storeChatAttachment(uri, name)
                     if (attachment == null) {
-                        _uiMessage.value = "Could not attach $name"
+                        postEvent("Could not attach $name")
                         return@launch
                     }
                     val sender = _serverState.value.deviceName
@@ -1326,7 +1322,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val group = pairManager.findGroup(threadId.removePrefix("group:")) ?: return@launch
                     val members = group.memberPids.mapNotNull { pairManager.findPairing(it) }
                     if (members.isEmpty()) return@launch
-                    _uiMessage.value = "Sending $name to ${members.size} devices"
+                    postEvent("Sending $name to ${members.size} devices")
                     members.forEach { sendEncryptedFileTo(it, uri, name, size) }
                 }
             }
@@ -1341,12 +1337,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun sendEncryptedFileTo(pairing: PairedDevice, uri: Uri, name: String, size: Long) {
         val cipher = pairManager.prepareEncryptedUpload(pairing, uri)
         if (cipher == null) {
-            _uiMessage.value = "Could not encrypt $name"
+            postEvent("Could not encrypt $name")
             return
         }
         if (pairing.originIp.isBlank()) {
             cipher.delete()
-            _uiMessage.value = "${pairing.name} has no known address yet — re-pair from the radar"
+            postEvent("${pairing.name} has no known address yet — re-pair from the radar")
             return
         }
         val peer = PeerDevice(
@@ -1361,10 +1357,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             proofFor = { length -> pairManager.uploadProof(pairing.pid, length) }
         ) { ok, err ->
             cipher.delete()
-            _uiMessage.value = when {
+            postEvent(when {
                 ok -> "Sent $name to ${pairing.name}, end-to-end sealed"
                 else -> "$name to ${pairing.name} failed: ${err ?: "unknown error"}"
-            }
+            })
         }
     }
 
@@ -1408,10 +1404,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     } else {
                         val host = relayClient.attached.value
-                        _uiMessage.value = if (host != null)
+                        postEvent(if (host != null)
                             "${pairing.name} is offline, and ${host.name}'s relay did not take the message"
                         else
-                            "${pairing.name} is offline — pair with a phone that is hosting, or start your own server"
+                            "${pairing.name} is offline — pair with a phone that is hosting, or start your own server")
                     }
                 }
             }
@@ -1429,10 +1425,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         )
                         if (delivered < group.memberPids.size) {
-                            _uiMessage.value = "Reached $delivered of ${group.memberPids.size} members of ${group.name}"
+                            postEvent("Reached $delivered of ${group.memberPids.size} members of ${group.name}")
                         }
                     } else {
-                        _uiMessage.value = "No member of ${group.name} was reachable"
+                        postEvent("No member of ${group.name} was reachable")
                     }
                 }
             }
@@ -1486,15 +1482,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (!forEveryone) return@launch
             if (target.encrypted && !target.sender.equals(_serverState.value.deviceName, ignoreCase = true)) {
-                _uiMessage.value = "Only ${target.sender} can retract their own message"
+                postEvent("Only ${target.sender} can retract their own message")
                 return@launch
             }
             val reached = pairManager.deleteEverywhere(id, target.threadId)
-            _uiMessage.value = when {
+            postEvent(when {
                 reached > 0 -> "Retracted on $reached other device${if (reached > 1) "s" else ""}"
                 target.threadId == null || target.threadId.startsWith("ip:") -> "Deleted here and on the room"
                 else -> "Deleted here — the other side is offline, so it still shows their copy"
-            }
+            })
         }
     }
 

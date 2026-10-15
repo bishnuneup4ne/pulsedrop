@@ -1,11 +1,11 @@
 package com.pulsedrop.app.ui.screens
 
+import com.pulsedrop.app.ui.PulseEvents
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -427,7 +427,7 @@ private fun TextBeamCard(
                                 val clipboard =
                                     context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                 clipboard?.setPrimaryClip(ClipData.newPlainText("PulseDrop", beam.text))
-                                Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                                PulseEvents.post("Copied")
                             },
                             modifier = Modifier.size(34.dp)
                         ) {

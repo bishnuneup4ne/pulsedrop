@@ -109,7 +109,6 @@ fun MainScreen(viewModel: MainViewModel) {
     val connectedPeer by viewModel.connectedPeer.collectAsState()
     val peerConnecting by viewModel.peerConnecting.collectAsState()
     val typingUsers by viewModel.typingUsers.collectAsState()
-    val uiMessage by viewModel.uiMessage.collectAsState()
     val historyList by viewModel.transferHistory.collectAsState()
     val scannedPeers by viewModel.scannedPeers.collectAsState()
     val pairedDevices by viewModel.pairedDevices.collectAsState()
@@ -212,11 +211,11 @@ fun MainScreen(viewModel: MainViewModel) {
         }
     }
 
-    LaunchedEffect(uiMessage) {
-        val msg = uiMessage
-        if (msg != null) {
+    // One collector per event; showSnackbar suspends until a message is dismissed, so events
+    // arriving in a burst queue up in order instead of overwriting each other.
+    LaunchedEffect(Unit) {
+        PulseEvents.flow.collect { msg ->
             snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
-            viewModel.consumeUiMessage()
         }
     }
 

@@ -1,5 +1,6 @@
 package com.pulsedrop.app.ui.screens
 
+import com.pulsedrop.app.ui.PulseEvents
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -7,7 +8,6 @@ import android.net.ConnectivityManager
 import android.net.NetworkInfo
 import android.os.Build
 import android.provider.Settings
-import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -177,7 +177,7 @@ fun HotspotGuideScreen(
                                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     )
                                 } catch (ex: Exception) {
-                                    Toast.makeText(context, "Open Tethering in Settings", Toast.LENGTH_SHORT).show()
+                                    PulseEvents.post("Open Tethering in Settings")
                                 }
                             }
                         },
@@ -319,7 +319,7 @@ fun HotspotGuideScreen(
                                 visible = true,
                                 onCopy = {
                                     clipboardManager.setText(AnnotatedString(ssid))
-                                    Toast.makeText(context, "Name copied", Toast.LENGTH_SHORT).show()
+                                    PulseEvents.post("Name copied")
                                 }
                             )
                             CredentialRow(
@@ -329,7 +329,7 @@ fun HotspotGuideScreen(
                                 onToggleVisibility = { revealPass = !revealPass },
                                 onCopy = {
                                     clipboardManager.setText(AnnotatedString(pass))
-                                    Toast.makeText(context, "Password copied", Toast.LENGTH_SHORT).show()
+                                    PulseEvents.post("Password copied")
                                 }
                             )
 

@@ -1,9 +1,9 @@
 package com.pulsedrop.app.ui.screens
 
+import com.pulsedrop.app.ui.PulseEvents
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -138,7 +138,7 @@ fun RadarScreen(
         if (granted) {
             scannerLauncher.launch(scanOptions)
         } else {
-            Toast.makeText(context, "Camera permission is needed to scan a QR code", Toast.LENGTH_SHORT).show()
+            PulseEvents.post("Camera permission is needed to scan a QR code")
         }
     }
 
@@ -159,7 +159,7 @@ fun RadarScreen(
                 peerRequiringPin = peer
             } else {
                 onSendFilesToPeer(peer, uris, null)
-                Toast.makeText(context, "Sending ${uris.size} file(s) to ${peer.name}…", Toast.LENGTH_SHORT).show()
+                PulseEvents.post("Sending ${uris.size} file(s) to ${peer.name}…")
             }
         }
     }
@@ -672,7 +672,7 @@ fun RadarScreen(
                             onGo = {
                                 val clean = manualIp.trim()
                                 if (clean.isNotBlank()) onConnectToAddress(clean)
-                                else Toast.makeText(context, "Enter an address or scan a QR", Toast.LENGTH_SHORT).show()
+                                else PulseEvents.post("Enter an address or scan a QR")
                             }
                         ),
                         leadingIcon = { Icon(Icons.Default.Link, null, tint = colorScheme.onSurfaceVariant) },
@@ -704,7 +704,7 @@ fun RadarScreen(
                                 if (clean.isNotBlank()) {
                                     onConnectToAddress(clean)
                                 } else {
-                                    Toast.makeText(context, "Enter an address or scan a QR", Toast.LENGTH_SHORT).show()
+                                    PulseEvents.post("Enter an address or scan a QR")
                                 }
                             },
                             enabled = !peerConnecting,
@@ -744,7 +744,7 @@ fun RadarScreen(
                 val uris = pendingUrisForPeer
                 if (peer != null && uris.isNotEmpty()) {
                     onSendFilesToPeer(peer, uris, enteredPin)
-                    Toast.makeText(context, "Sending ${uris.size} file(s) to ${peer.name}…", Toast.LENGTH_SHORT).show()
+                    PulseEvents.post("Sending ${uris.size} file(s) to ${peer.name}…")
                 }
                 peerRequiringPin = null
                 pendingUrisForPeer = emptyList()
