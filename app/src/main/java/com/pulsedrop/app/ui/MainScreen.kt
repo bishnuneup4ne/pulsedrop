@@ -110,6 +110,7 @@ import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.ActivityScreen
 import com.pulsedrop.app.ui.screens.HelpScreen
 import com.pulsedrop.app.ui.screens.MediaScreen
+import com.pulsedrop.app.ui.screens.DiagnosticsScreen
 import com.pulsedrop.app.ui.screens.NetworkScreen
 import com.pulsedrop.app.ui.screens.NotificationScreen
 import com.pulsedrop.app.ui.screens.SecurityScreen
@@ -872,6 +873,23 @@ fun MainScreen(viewModel: MainViewModel) {
                                 com.pulsedrop.app.ui.PulseEvents.post("This phone does not expose hotspot settings")
                             }
                         }
+                    )
+
+                    PulseSection.DIAGNOSTICS -> DiagnosticsScreen(
+                        crashDir = java.io.File(context.filesDir, "crashes"),
+                        serverStartedAt = serverState.startedAt,
+                        serverRunning = serverState.isRunning,
+                        activeTransferCount = activeTransfersMap.size,
+                        liveSpeedBytesPerSec = activeTransfersMap.values.sumOf { it.speedBytesPerSec },
+                        historyCompleted = historyList.count { it.status == "COMPLETED" },
+                        historyFailed = historyList.count { it.status == "FAILED" },
+                        updateStatusMessage = updateStatus,
+                        updateLastSuccessElapsed = viewModel.updateManager.lastSuccessAt,
+                        relayHost = relayHost,
+                        relayLastSync = relayLastSync,
+                        nowElapsedRealtime = { android.os.SystemClock.elapsedRealtime() },
+                        onOpenReport = { path, result -> viewModel.openFile(path, result) },
+                        onOpenNetwork = { selectSection(PulseSection.NETWORK) }
                     )
 
                     PulseSection.SECURITY -> SecurityScreen(

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -113,6 +114,7 @@ enum class PulseSection(
     ACTIVITY("Activity", Icons.Filled.Notifications, "section_activity"),
     NOTIFICATIONS("Notifications", Icons.Filled.NotificationsActive, "section_notifications"),
     NETWORK("Network status", Icons.Filled.Language, "section_network"),
+    DIAGNOSTICS("Diagnostics", Icons.Filled.MonitorHeart, "section_diagnostics"),
     SECURITY("Security center", Icons.Filled.Security, "section_security"),
     SETTINGS("Settings", Icons.Filled.Settings, "section_settings"),
     HELP("Help & support", Icons.Filled.HelpOutline, "section_help"),
