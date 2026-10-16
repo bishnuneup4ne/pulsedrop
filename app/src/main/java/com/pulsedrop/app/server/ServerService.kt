@@ -75,6 +75,10 @@ class ServerService : Service() {
                 owner = this
                 return START_STICKY
             }
+            // This redelivery counts as a foreground-service start, so backing out still has
+            // to answer with startForeground() first — stopSelf() alone makes the system kill
+            // the process ten seconds later with ForegroundServiceDidNotStartInTimeException.
+            startForeground(NOTIFICATION_ID, buildIdleNotification(currentServerUrl))
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
