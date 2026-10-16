@@ -175,13 +175,13 @@ class DevicesScreenTest {
     }
 
     @Test
-    fun trustedTileLeavesDiscoveryBehind() {
+    fun trustedFilterLeavesDiscoveryBehind() {
         show(
             nearbyPeers = listOf(peer("a1", "Alpha", "192.168.1.11")),
             pairedDevices = listOf(paired("pid1", "Laptop", "192.168.1.20"))
         )
-        scrollTo("devices_tile_trusted")
-        compose.onNodeWithTag("devices_tile_trusted").performClick()
+        scrollTo("devices_filter_TRUSTED")
+        compose.onNodeWithTag("devices_filter_TRUSTED").performClick()
         compose.onNodeWithTag("peer_row_a1").assertDoesNotExist()
         scrollTo("paired_device_pid1")
         compose.onNodeWithTag("paired_device_pid1").assertIsDisplayed()

@@ -3,6 +3,7 @@ package com.pulsedrop.app.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.hasScrollToNodeAction
@@ -94,7 +95,6 @@ class ReceiveScreenTest {
                     onRemoveHistory = { hooks.removed.add(it) },
                     onToggleServer = { hooks.serverToggles++ },
                     onOpenTransfers = {},
-                    onOpenMyFiles = {}
                 )
             }
         }
@@ -178,7 +178,12 @@ class ReceiveScreenTest {
     fun destinationCardStatesTheRealFolderAndNeverPromisesAChooser() {
         show()
         scrollTo("receive_dest_card")
-        compose.onNodeWithText("WebDrop_Received", substring = true).assertIsDisplayed()
+        // The card leads with the folder's own name; the full path sits under it.
+        compose.onNodeWithTag("receive_dir_value").assertTextEquals("WebDrop_Received")
+        compose.onNodeWithText(
+            "/sdcard/Android/data/com.pulsedrop.app/files/WebDrop_Received",
+            substring = true
+        ).assertExists()
         compose.onNodeWithTag("receive_free_space").assertIsDisplayed()
         compose.onNodeWithText("not supported by the current engine", substring = true).assertExists()
         // No silent overwrite is a promise the accept path now keeps.

@@ -335,44 +335,6 @@ fun DevicesScreen(
             }
         }
 
-        // ── Overview: counts derived from the live flows, never invented ───
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                PulseStatTile(
-                    label = "Nearby",
-                    value = nearbyPeers.size.toString(),
-                    onClick = { filter = DeviceFilter.NEARBY },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("devices_tile_nearby")
-                )
-                PulseStatTile(
-                    label = "Trusted",
-                    value = pairedDevices.size.toString(),
-                    onClick = { filter = DeviceFilter.TRUSTED },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("devices_tile_trusted")
-                )
-                PulseStatTile(
-                    label = "Connected",
-                    value = if (connectedPeer != null) "1" else "0",
-                    onClick = { filter = DeviceFilter.CONNECTED },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("devices_tile_connected")
-                )
-                PulseStatTile(
-                    label = "Pending",
-                    value = (incomingPairCount + (if (pendingOutgoing != null) 1 else 0)).toString(),
-                    onClick = { filter = DeviceFilter.PENDING },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("devices_tile_pending")
-                )
-            }
-        }
-
         // ── Search, filters, sorting ───────────────────────────────────────
         item {
             Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
@@ -397,6 +359,14 @@ fun DevicesScreen(
                             label = f.label,
                             selected = filter == f,
                             onClick = { filter = f },
+                            badge = when (f) {
+                                DeviceFilter.NEARBY -> nearbyPeers.size
+                                DeviceFilter.TRUSTED -> pairedDevices.size
+                                DeviceFilter.CONNECTED -> if (connectedPeer != null) 1 else 0
+                                DeviceFilter.PENDING ->
+                                    incomingPairCount + (if (pendingOutgoing != null) 1 else 0)
+                                else -> 0
+                            },
                             modifier = Modifier.testTag("devices_filter_${f.name}")
                         )
                     }

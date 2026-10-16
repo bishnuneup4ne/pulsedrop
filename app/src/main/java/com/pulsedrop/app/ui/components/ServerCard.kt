@@ -1,17 +1,14 @@
 package com.pulsedrop.app.ui.components
 
 import com.pulsedrop.app.ui.PulseEvents
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,24 +23,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.NetworkWifi
-import androidx.compose.material.icons.filled.OpenInBrowser
-import androidx.compose.material.icons.filled.QrCode2
-import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,302 +51,223 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.pulsedrop.app.ui.UiServerState
+import kotlinx.coroutines.delay
 
+/**
+ * The one card a first-time visitor actually needs: is the server up, what is the address,
+ * and the three ways to get that address onto another device. Everything here reflects the
+ * real runtime state — no "Live" badge appears unless the socket is actually listening.
+ */
 @Composable
 fun ServerCard(
     serverState: UiServerState,
     qrBitmap: Bitmap?,
     onToggleServer: () -> Unit,
-    onOpenSecuritySettings: () -> Unit,
     /** Name of the phone whose server this one is chatting through, when it is not the host. */
     relayHostName: String? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val c = com.pulsedrop.app.ui.theme.LocalPulseColors.current
     var showQrDialog by remember { mutableStateOf(false) }
-    val colorScheme = MaterialTheme.colorScheme
+    var copiedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(copiedAt) {
+        if (copiedAt != 0L) {
+            delay(2_500)
+            copiedAt = 0L
+        }
+    }
 
-    val borderColor by animateColorAsState(
-        targetValue = if (serverState.isRunning) colorScheme.primary.copy(alpha = 0.45f) else colorScheme.outlineVariant,
-        label = "serverCardBorder"
-    )
+    val running = serverState.isRunning
+    val url = serverState.serverUrl
+
+    fun copyUrl() {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (clipboard != null) {
+            clipboard.setPrimaryClip(ClipData.newPlainText("PulseDrop address", url))
+            copiedAt = System.currentTimeMillis()
+            PulseEvents.post("Address copied")
+        } else {
+            PulseEvents.post("Could not reach the clipboard — select the address and copy it manually")
+        }
+    }
+
+    fun shareUrl() {
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, url)
+        try {
+            context.startActivity(Intent.createChooser(send, "Share server address"))
+        } catch (e: ActivityNotFoundException) {
+            copyUrl()
+            PulseEvents.post("No share app here — the address is on your clipboard")
+        }
+    }
 
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .border(width = 1.dp, color = borderColor, shape = RoundedCornerShape(24.dp)),
-        colors = CardDefaults.cardColors(containerColor = colorScheme.surface),
-        shape = RoundedCornerShape(24.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .testTag("server_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = c.surfaceElevated,
+            contentColor = c.textPrimary
+        ),
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (running) c.accent.copy(alpha = 0.35f) else c.borderSubtle),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Status + security chips
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(
-                            if (serverState.isRunning) colorScheme.secondaryContainer
-                            else colorScheme.surfaceVariant
-                        )
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (serverState.isRunning) colorScheme.secondary else colorScheme.outline
-                            )
-                    )
-                    Spacer(modifier = Modifier.width(7.dp))
-                    Text(
-                        text = if (serverState.isRunning) "Live" else "Offline",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (serverState.isRunning) colorScheme.onSecondaryContainer
-                        else colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(
-                            if (serverState.isPinRequired) colorScheme.primaryContainer else colorScheme.surfaceVariant
-                        )
-                        .clickable { onOpenSecuritySettings() }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                        .testTag("security_pill_btn"),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = if (serverState.isPinRequired) Icons.Default.Lock else Icons.Default.LockOpen,
-                        contentDescription = "Security",
-                        tint = if (serverState.isPinRequired) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (serverState.isPinRequired) "PIN ••${serverState.pin.takeLast(2)}" else "Open access",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (serverState.isPinRequired) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            // One line that answers "who is the server here?", which is the question this whole
-            // screen used to leave open. A room needs exactly one host, and saying which phone
-            // it is stops the habit of starting a server on every device.
-            val topology = when {
-                serverState.isRunning -> "This phone is the room's server — other devices chat through it"
-                relayHostName != null -> "Chatting through $relayHostName's server — no second one needed"
-                else -> "Not connected to a server yet — start this one, or pair with a phone that did"
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("server_topology_line"),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            // Status line — the honest one.
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    modifier = Modifier
-                        .size(6.dp)
+                    Modifier
+                        .size(8.dp)
                         .clip(CircleShape)
-                        .background(
-                            when {
-                                serverState.isRunning -> colorScheme.secondary
-                                relayHostName != null -> colorScheme.primary
-                                else -> colorScheme.outline
-                            }
-                        )
+                        .background(if (running) c.success else c.textTertiary)
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    text = topology,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colorScheme.onSurfaceVariant
-                )
-            }
-
-            // Connection hero block
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (serverState.isRunning) colorScheme.primary
-                            else colorScheme.surfaceVariant
-                        )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.NetworkWifi,
-                                contentDescription = null,
-                                tint = if (serverState.isRunning) colorScheme.onPrimary else colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "CONNECT VIA BROWSER",
-                                style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.2.sp),
-                                color = if (serverState.isRunning) colorScheme.onPrimary.copy(alpha = 0.85f)
-                                else colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = serverState.serverUrl,
-                                style = MaterialTheme.typography.headlineSmall.copy(
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = if (serverState.isRunning) colorScheme.onPrimary else colorScheme.onSurface,
-                                modifier = Modifier.weight(1f)
-                            )
-
-                            FilledTonalButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("PulseDrop URL", serverState.serverUrl))
-                                    PulseEvents.post("Link copied")
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.filledTonalButtonColors(
-                                    containerColor = if (serverState.isRunning) colorScheme.onPrimary.copy(alpha = 0.2f) else colorScheme.secondaryContainer,
-                                    contentColor = if (serverState.isRunning) colorScheme.onPrimary else colorScheme.onSecondaryContainer
-                                ),
-                                modifier = Modifier.testTag("copy_url_btn")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy",
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Copy", style = MaterialTheme.typography.labelLarge)
-                            }
-                        }
-
-                        Text(
-                            text = "Open this address on any PC, Mac, iPhone or tablet on the same network.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (serverState.isRunning) colorScheme.onPrimary.copy(alpha = 0.85f)
-                            else colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            // Secondary actions
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { showQrDialog = true },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("open_qr_btn"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colorScheme.onSurface)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.QrCode2,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("QR Code", style = MaterialTheme.typography.labelLarge)
-                }
-
-                OutlinedButton(
-                    onClick = {
-                        try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(serverState.serverUrl)))
-                        } catch (e: Exception) {
-                            PulseEvents.post("Cannot open browser")
-                        }
+                    text = when {
+                        running -> "Running · port ${serverState.port}"
+                        relayHostName != null -> "Stopped · chatting through $relayHostName"
+                        else -> "Stopped"
                     },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("open_browser_btn"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colorScheme.onSurface)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.OpenInBrowser,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                    style = MaterialTheme.typography.labelLarge,
+                    color = c.textPrimary,
+                    modifier = Modifier.testTag("server_status_line")
+                )
+                if (running && !serverState.networkName.isNullOrBlank()) {
+                    Text(
+                        text = " · ${serverState.networkName}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = c.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Test Local", style = MaterialTheme.typography.labelLarge)
                 }
             }
 
-            // Power toggle
-            Button(
-                onClick = onToggleServer,
+            // The address, big enough to read across a room.
+            Text(
+                text = url,
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontFeatureSettings = "tnum"
+                ),
+                color = if (running) c.textPrimary else c.textTertiary,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("toggle_server_action_btn"),
-                shape = RoundedCornerShape(16.dp),
+                    .testTag("server_url_text")
+            )
+            Text(
+                text = if (running)
+                    "Open this address in a browser on any device on the same Wi-Fi."
+                else
+                    "Start the server, then open its address on the other device.",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.textSecondary
+            )
+
+            // Primary action: get the address onto the other device.
+            Button(
+                onClick = { if (running) copyUrl() else onToggleServer() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag(if (running) "copy_url_btn" else "toggle_server_action_btn"),
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (serverState.isRunning) colorScheme.errorContainer else colorScheme.primary,
-                    contentColor = if (serverState.isRunning) colorScheme.onErrorContainer else colorScheme.onPrimary
+                    containerColor = c.accent,
+                    contentColor = c.onAccent
                 )
             ) {
                 Icon(
-                    imageVector = if (serverState.isRunning) Icons.Default.StopCircle else Icons.Default.PlayArrow,
+                    imageVector = if (running) Icons.Default.ContentCopy else Icons.Default.PlayArrow,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    text = if (serverState.isRunning) "Stop server" else "Start server",
+                    if (running) {
+                        if (copiedAt != 0L) "Copied!" else "Copy address"
+                    } else "Start server",
                     style = MaterialTheme.typography.titleMedium
                 )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { showQrDialog = true },
+                    enabled = running,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("open_qr_btn"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.QrCode2, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("QR code", style = MaterialTheme.typography.labelLarge)
+                }
+                OutlinedButton(
+                    onClick = { shareUrl() },
+                    enabled = running,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("share_url_btn"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Share", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+
+            if (running) {
+                TextButton(
+                    onClick = onToggleServer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("stop_server_btn"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Stop,
+                        contentDescription = null,
+                        tint = c.danger,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Stop server", color = c.danger, style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
     }
 
-    // QR dialog
     if (showQrDialog) {
         Dialog(onDismissRequest = { showQrDialog = false }) {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(28.dp)),
-                color = colorScheme.surface,
-                tonalElevation = 6.dp
+                    .clip(RoundedCornerShape(16.dp)),
+                color = c.surfaceElevated,
+                contentColor = c.textPrimary
             ) {
                 Column(
                     modifier = Modifier
@@ -360,53 +276,67 @@ fun ServerCard(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Text(
-                        text = "Scan to connect",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = colorScheme.onSurface
-                    )
-                    Text(
-                        text = "Point a phone or tablet camera here to open PulseDrop in the browser.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorScheme.onSurfaceVariant
-                    )
-
+                    Text("Scan to connect", style = MaterialTheme.typography.titleLarge)
                     if (qrBitmap != null) {
                         Surface(
                             modifier = Modifier
-                                .size(236.dp)
-                                .clip(RoundedCornerShape(20.dp)),
+                                .size(220.dp)
+                                .clip(RoundedCornerShape(12.dp)),
                             // A QR quiet zone has to be the code's own light mat, not a theme surface.
-                            color = Color.White,
-                            shadowElevation = 2.dp
+                            color = Color.White
                         ) {
                             Box(
-                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Image(
                                     bitmap = qrBitmap.asImageBitmap(),
-                                    contentDescription = "QR Code for ${serverState.serverUrl}",
-                                    modifier = Modifier.size(212.dp)
+                                    contentDescription = "QR code for $url",
+                                    modifier = Modifier.size(200.dp)
                                 )
                             }
                         }
+                    } else {
+                        PulseSkeleton(height = 200.dp, fixedWidth = 200.dp)
+                        Text("Generating the code…", style = MaterialTheme.typography.bodySmall, color = c.textTertiary)
                     }
-
                     Text(
-                        text = serverState.serverUrl,
+                        text = url,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = colorScheme.primary
+                        color = c.accent
                     )
-
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { copyUrl() },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (copiedAt != 0L) "Copied!" else "Copy")
+                        }
+                        OutlinedButton(
+                            onClick = { shareUrl() },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Share")
+                        }
+                    }
                     Button(
                         onClick = { showQrDialog = false },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Text("Close", style = MaterialTheme.typography.titleMedium)
-                    }
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = c.onAccent)
+                    ) { Text("Close") }
                 }
             }
         }

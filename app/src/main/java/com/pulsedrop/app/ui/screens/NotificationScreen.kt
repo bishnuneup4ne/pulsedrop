@@ -106,8 +106,7 @@ internal fun channelStateLine(fact: NotificationFact, channel: NotificationChann
 fun NotificationScreen(
     permissionGranted: Boolean,
     onRequestPermission: () -> Unit,
-    onOpenSystemSettings: () -> Unit,
-    onOpenActivity: () -> Unit
+    onOpenSystemSettings: () -> Unit
 ) {
     val c = LocalPulseColors.current
     val context = LocalContext.current
@@ -265,15 +264,9 @@ fun NotificationScreen(
                     Text(
                         "PulseDrop keeps no log of the notifications it posted — they belong " +
                             "to Android, and Android does not hand that history back to apps. " +
-                            "The events this app does record are on the Activity page.",
+                            "The events this app does record are on the Transfers page.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = c.textSecondary
-                    )
-                    PulseButton(
-                        label = "Open activity",
-                        onClick = onOpenActivity,
-                        tone = PulseButtonTone.Neutral,
-                        modifier = Modifier.testTag("notif_open_activity")
                     )
                 }
             }

@@ -32,8 +32,6 @@ class HelpScreenTest {
 
     private class Hooks {
         var hotspot = 0
-        var network = 0
-        var security = 0
         var notifications = 0
         var issues = 0
         var update = 0
@@ -45,8 +43,6 @@ class HelpScreenTest {
                 HelpScreen(
                     receiveDir = "/sdcard/Android/data/com.pulsedrop.app/files/WebDrop_Received",
                     onOpenHotspotGuide = { hooks.hotspot++ },
-                    onOpenNetwork = { hooks.network++ },
-                    onOpenSecurity = { hooks.security++ },
                     onOpenNotifications = { hooks.notifications++ },
                     onOpenGithubIssues = { hooks.issues++ },
                     onCheckUpdate = { hooks.update++ }
@@ -115,12 +111,8 @@ class HelpScreenTest {
         screen(hooks)
         scrollTo("help_link_hotspot")
         compose.onNodeWithTag("help_link_hotspot").performClick()
-        compose.onNodeWithTag("help_link_network").performClick()
-        compose.onNodeWithTag("help_link_security").performClick()
         compose.onNodeWithTag("help_link_notifications").performClick()
         assertEquals(1, hooks.hotspot)
-        assertEquals(1, hooks.network)
-        assertEquals(1, hooks.security)
         assertEquals(1, hooks.notifications)
     }
 

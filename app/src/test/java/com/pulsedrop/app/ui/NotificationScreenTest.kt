@@ -39,7 +39,6 @@ class NotificationScreenTest {
     private class Hooks {
         var ask = 0
         var settings = 0
-        var activity = 0
     }
 
     private fun screen(
@@ -52,7 +51,6 @@ class NotificationScreenTest {
                     permissionGranted = permissionGranted,
                     onRequestPermission = { hooks.ask++ },
                     onOpenSystemSettings = { hooks.settings++ },
-                    onOpenActivity = { hooks.activity++ }
                 )
             }
         }
@@ -171,7 +169,5 @@ class NotificationScreenTest {
         scrollTo("notif_history_card")
         compose.onNodeWithText("keeps no log of the notifications it posted", substring = true)
             .assertExists()
-        compose.onNodeWithTag("notif_open_activity").performClick()
-        assertEquals(1, hooks.activity)
     }
 }

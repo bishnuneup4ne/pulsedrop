@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
 
         handleIncomingShareIntent(intent)
         handleCallActionIntent(intent)
+        handleUploadActionIntent(intent)
 
         setContent {
             PulseDropTheme {
@@ -64,6 +65,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handleIncomingShareIntent(intent)
         handleCallActionIntent(intent)
+        handleUploadActionIntent(intent)
     }
 
     /** Answer / decline / hang up pressed on the call notification itself. */
@@ -71,6 +73,13 @@ class MainActivity : ComponentActivity() {
         val action = intent?.getStringExtra(MainViewModel.EXTRA_CALL_ACTION) ?: return
         intent.removeExtra(MainViewModel.EXTRA_CALL_ACTION)
         viewModel.runCallNotificationAction(action)
+    }
+
+    /** Accept / decline pressed on the "a file is waiting" notification. */
+    private fun handleUploadActionIntent(intent: Intent?) {
+        val action = intent?.getStringExtra(MainViewModel.EXTRA_UPLOAD_ACTION) ?: return
+        intent.removeExtra(MainViewModel.EXTRA_UPLOAD_ACTION)
+        viewModel.runUploadNotificationAction(action)
     }
 
     private fun handleIncomingShareIntent(intent: Intent?) {

@@ -1,13 +1,14 @@
 package com.pulsedrop.app.ui
 
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import com.pulsedrop.app.data.TransferHistoryEntity
@@ -28,8 +29,8 @@ import org.robolectric.annotation.Config
 
 /**
  * The dashboard promises that what it shows is real: alerts only when something needs an answer,
- * badges only for actual counts, and every control reaching an actual callback. These tests hold
- * it to that, one interaction at a time.
+ * counts that match their sources, and every control reaching an actual callback. These tests
+ * hold it to that, one interaction at a time.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -44,26 +45,24 @@ class HomeScreenTest {
 
     private fun show(
         nav: Navigator = Navigator(),
+        serverState: UiServerState = UiServerState(deviceName = "Test Phone"),
         activeTransfers: List<TransferItem> = emptyList(),
         pendingUploads: List<PendingUploadInfo> = emptyList(),
         incomingPairCount: Int = 0,
         callInProgress: Boolean = false,
         pairedDevices: List<PairedDevice> = emptyList(),
         peersCount: Int = 0,
-        messagesCount: Int = 0,
-        installs: Int? = null,
         accepted: MutableList<String>? = null,
         history: List<TransferHistoryEntity> = emptyList()
     ) {
         compose.setContent {
             PulseDropTheme {
                 HomeScreen(
-                    serverState = UiServerState(deviceName = "Test Phone"),
+                    serverState = serverState,
                     qrBitmap = null,
                     sharedFiles = emptyList(),
                     activeTransfers = activeTransfers,
                     history = history,
-                    messagesCount = messagesCount,
                     pairedDevices = pairedDevices,
                     peersCount = peersCount,
                     webClientsCount = 0,
@@ -73,12 +72,7 @@ class HomeScreenTest {
                     callInProgress = callInProgress,
                     isSharingScreen = false,
                     updateInfo = null,
-                    updateProgress = null,
-                    updateStatus = null,
-                    appVersion = "1.7 (9)",
-                    installs = installs,
                     onToggleServer = {},
-                    onOpenSecuritySettings = {},
                     onAddFiles = {},
                     onRemoveFile = {},
                     onClearFiles = {},
@@ -116,10 +110,34 @@ class HomeScreenTest {
     }
 
     @Test
-    fun statsTilesShowRealCounts() {
-        show(peersCount = 3, messagesCount = 5)
-        compose.onNodeWithText("3").assertIsDisplayed()
-        compose.onNodeWithText("5").assertIsDisplayed()
+    fun connectionCardLeadsThePageAndTellsTheTruth() {
+        show()
+        compose.onNodeWithTag("server_card").assertIsDisplayed()
+        compose.onNodeWithText("Stopped").assertIsDisplayed()
+        // Not serving: the card asks to start, it never offers to copy a dead address.
+        compose.onNodeWithTag("toggle_server_action_btn").assertIsDisplayed()
+        compose.onNodeWithTag("copy_url_btn").assertDoesNotExist()
+    }
+
+    @Test
+    fun runningServerMakesTheAddressCopyable() {
+        show(serverState = UiServerState(deviceName = "Test Phone", isRunning = true))
+        compose.onNodeWithText("Running · port 8080", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("copy_url_btn").assertIsDisplayed()
+        compose.onNodeWithText("http://127.0.0.1:8080").assertIsDisplayed()
+    }
+
+    @Test
+    fun devicesSummaryShowsRealCounts() {
+        show(
+            peersCount = 3,
+            pairedDevices = listOf(
+                PairedDevice(pid = "p1", name = "Laptop", pubB64 = "a", originIp = "10.0.0.2", originPort = 8080, verified = true),
+                PairedDevice(pid = "p2", name = "Tablet", pubB64 = "b", originIp = "10.0.0.3", originPort = 8080, verified = false)
+            )
+        )
+        compose.onNodeWithText("3 nearby • 2 paired").assertExists()
+        compose.onNodeWithText("Not verified").assertExists()
     }
 
     @Test
@@ -164,32 +182,18 @@ class HomeScreenTest {
     }
 
     @Test
-    fun quickActionsNavigateToRealSections() {
+    fun sectionLinksNavigateToRealScreens() {
         val nav = Navigator()
         show(nav = nav)
-        compose.onNodeWithText("Send files").performClick()
-        compose.onNodeWithText("Transfers").performClick()
-        assertEquals(listOf(PulseSection.SEND_FILES, PulseSection.TRANSFERS), nav.visited)
+        compose.onNodeWithTag("home_manage_devices_btn").performClick()
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("home_all_transfers_btn"))
+        compose.onNodeWithTag("home_all_transfers_btn").performClick()
+        assertEquals(listOf(PulseSection.DEVICES, PulseSection.TRANSFERS), nav.visited)
     }
 
     @Test
-    fun installCountIsHiddenUntilItArrives() {
-        show(installs = null)
-        compose.onNodeWithText("installs", substring = true).assertDoesNotExist()
-    }
-
-    @Test
-    fun installCountShowsTheRealNumberOnceKnown() {
-        show(installs = 4213)
-        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("home_app_health"))
-        compose.onNodeWithText("installs of this release", substring = true).assertIsDisplayed()
-    }
-
-    @Test
-    fun recentActivityListsFinishedTransfers() {
-        val nav = Navigator()
+    fun transfersSectionListsFinishedTransfers() {
         show(
-            nav = nav,
             history = listOf(
                 TransferHistoryEntity(
                     id = "h1",
@@ -205,18 +209,16 @@ class HomeScreenTest {
                 )
             )
         )
-        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("home_recent_activity"))
-        compose.onNodeWithText("report.pdf").assertIsDisplayed()
-        compose.onNodeWithText("Received · Laptop", substring = true).assertIsDisplayed()
-        compose.onNodeWithTag("home_recent_activity").performClick()
-        assertEquals(listOf(PulseSection.ACTIVITY), nav.visited)
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("report.pdf"))
+        compose.onNodeWithText("report.pdf").assertExists()
+        compose.onNodeWithText("Received · Laptop", substring = true).assertExists()
     }
 
     @Test
     fun inFlightTransfersReplaceTheEmptyState() {
         show(activeTransfers = listOf(transfer("t9", TransferStatus.IN_PROGRESS)))
-        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("In transit • 1", substring = true))
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("t9.bin"))
         compose.onNodeWithText("Nothing in transit", substring = true).assertDoesNotExist()
-        compose.onNodeWithText("In transit • 1", substring = true).assertIsDisplayed()
+        compose.onAllNodesWithText("In transit • 1", substring = true).onFirst().assertExists()
     }
 }

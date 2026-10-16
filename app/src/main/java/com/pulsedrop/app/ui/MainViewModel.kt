@@ -494,6 +494,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun acceptPendingUpload(id: String) {
         val server = serverInstance ?: return
+        callNotifications.cancel(id.hashCode())
         viewModelScope.launch(Dispatchers.IO) {
             val name = server.acceptPendingUpload(id)
             _pendingUploads.value = server.pendingUploadsSnapshot()
@@ -503,11 +504,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun declinePendingUpload(id: String) {
         val server = serverInstance ?: return
+        callNotifications.cancel(id.hashCode())
         viewModelScope.launch(Dispatchers.IO) {
             server.declinePendingUpload(id)
             _pendingUploads.value = server.pendingUploadsSnapshot()
             postEvent("Declined - the file was deleted")
         }
+    }
+
+    /** Accept / decline pressed on the "waiting for a decision" notification itself. */
+    fun runUploadNotificationAction(spec: String) {
+        val sep = spec.indexOf(':')
+        if (sep <= 0) return
+        when (spec.substring(0, sep)) {
+            "accept" -> acceptPendingUpload(spec.substring(sep + 1))
+            "decline" -> declinePendingUpload(spec.substring(sep + 1))
+        }
+    }
+
+    private fun uploadActionIntent(action: String, id: String): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(EXTRA_UPLOAD_ACTION, "$action:$id")
+        return PendingIntent.getActivity(
+            context, "$action$id".hashCode(), intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
+    /**
+     * A parked upload is a decision, and a decision behind a Settings page nobody opens is
+     * not a decision. It goes to the shade with both buttons on it.
+     */
+    private fun postPendingUploadNotification(id: String, fileName: String, size: Long, from: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            callNotifications.createNotificationChannel(
+                NotificationChannel(
+                    PENDING_CHANNEL_ID, "Waiting for a decision",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply { description = "Uploads held until you accept or decline them on the phone" }
+            )
+        }
+        val open = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra("com.pulsedrop.app.SECTION", "receive")
+        callNotifications.notify(
+            id.hashCode(),
+            NotificationCompat.Builder(context, PENDING_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("A file is waiting")
+                .setContentText("$fileName (${NetworkUtils.formatBytes(size)}) from $from")
+                .setContentIntent(
+                    PendingIntent.getActivity(
+                        context, "open$id".hashCode(), open,
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                    )
+                )
+                .addAction(android.R.drawable.ic_input_add, "Accept", uploadActionIntent("accept", id))
+                .addAction(android.R.drawable.ic_delete, "Decline", uploadActionIntent("decline", id))
+                .setAutoCancel(true)
+                .build()
+        )
     }
 
     private fun refreshPendingUploads() {
@@ -1056,7 +1113,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             override fun onPendingUpload(id: String, fileName: String, fileSize: Long, fromDevice: String) {
                 refreshPendingUploads()
-                postEvent("$fileName from $fromDevice is waiting on the phone - accept or decline it in Settings")
+                postPendingUploadNotification(id, fileName, fileSize, fromDevice)
+                postEvent("$fileName from $fromDevice is waiting on the phone - accept or decline it from the Receive page")
             }
 
             override fun onRoomMessageFromWeb(message: ClipMessage) {
@@ -1809,5 +1867,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         /** Which shade button was pressed; MainActivity hands the name back to the ViewModel. */
         const val EXTRA_CALL_ACTION = "com.pulsedrop.app.extra.CALL_ACTION"
+        private const val PENDING_CHANNEL_ID = "pulsedrop_pending_upload"
+        const val EXTRA_UPLOAD_ACTION = "com.pulsedrop.app.extra.UPLOAD_ACTION"
     }
 }

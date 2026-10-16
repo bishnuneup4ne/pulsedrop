@@ -94,7 +94,6 @@ fun ReceiveScreen(
     onRemoveHistory: (String) -> Unit,
     onToggleServer: () -> Unit,
     onOpenTransfers: () -> Unit,
-    onOpenMyFiles: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val c = LocalPulseColors.current
@@ -114,13 +113,6 @@ fun ReceiveScreen(
                 subtitle = "The queue, the folder and the policy — all of it is the real server state",
                 status = {
                     Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                        PulseButton(
-                            label = "My files",
-                            icon = Icons.Default.Folder,
-                            tone = PulseButtonTone.Quiet,
-                            onClick = onOpenMyFiles,
-                            modifier = Modifier.testTag("receive_open_myfiles")
-                        )
                         PulseButton(
                             label = "History",
                             icon = Icons.Default.History,
@@ -267,15 +259,23 @@ fun ReceiveScreen(
                             modifier = Modifier.size(PulseSizes.icon.dp)
                         )
                         Spacer(Modifier.width(PulseSpacing.sm.dp))
-                        Text(
-                            receiveDir,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = c.textPrimary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).testTag("receive_dir_value")
-                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                receiveDir.substringAfterLast('/'),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = c.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.testTag("receive_dir_value")
+                            )
+                            Text(
+                                receiveDir,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = c.textTertiary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                         PulseIconButton(
                             icon = Icons.Default.ContentCopy,
                             label = "Copy folder location",

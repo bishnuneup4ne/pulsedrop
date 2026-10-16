@@ -57,8 +57,6 @@ fun SettingsSheet(
     pairedCount: Int,
     updateInfo: UpdateInfo?,
     updateStatus: String?,
-    themeChoice: String,
-    onThemeChoice: (String) -> Unit,
     onAutoAcceptChange: (Boolean) -> Unit,
     onAcceptUpload: (String) -> Unit,
     onDeclineUpload: (String) -> Unit,
@@ -85,22 +83,6 @@ fun SettingsSheet(
             modifier = Modifier.padding(bottom = PulseSpacing.xs.dp)
         )
 
-        PulseSectionHeader(title = "Appearance")
-        listOf("System default", "Light", "Dark").forEach { choice ->
-            PulseListItem(
-                title = choice,
-                selected = choice == themeChoice,
-                onClick = { onThemeChoice(choice) },
-                trailing = {
-                    if (choice == themeChoice) {
-                        Icon(Icons.Default.Check, contentDescription = null, tint = c.accent)
-                    }
-                },
-                modifier = Modifier.testTag("settings_theme_${choice.lowercase().replace(' ', '_')}")
-            )
-        }
-
-        PulseDivider()
         PulseSectionHeader(
             title = "Files",
             detail = if (serverState.autoAcceptTransfers)
@@ -223,33 +205,6 @@ fun SettingsSheet(
                 .testTag("settings_check_update")
         )
 
-        PulseDivider()
-        PulseSectionHeader(title = "About")
-        Text(
-            text = "PulseDrop is free for noncommercial use (PolyForm Noncommercial 1.0.0). " +
-                "Everything stays on your network; pairing is end-to-end encrypted.",
-            style = MaterialTheme.typography.bodySmall,
-            color = c.textSecondary,
-            textAlign = TextAlign.Start,
-            modifier = Modifier.padding(top = 2.dp)
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp),
-            modifier = Modifier.padding(top = PulseSpacing.xs.dp)
-        ) {
-            Icon(
-                Icons.Default.PhoneAndroid,
-                contentDescription = null,
-                tint = c.textSecondary,
-                modifier = Modifier.size(16.dp)
-            )
-            Text(
-                text = "github.com/bishnuneup4ne/pulsedrop",
-                style = MaterialTheme.typography.bodySmall,
-                color = c.textSecondary
-            )
-        }
         Spacer(Modifier.height(8.dp))
     }
 }

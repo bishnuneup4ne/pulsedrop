@@ -103,25 +103,10 @@ import com.pulsedrop.app.ui.screens.ReceiveScreen
 import com.pulsedrop.app.ui.screens.SendScreen
 import com.pulsedrop.app.ui.screens.SettingsSheet
 import com.pulsedrop.app.ui.screens.TransfersScreen
-import com.pulsedrop.app.ui.screens.FileManagerScreen
-import com.pulsedrop.app.ui.screens.MyFilesScreen
 import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
-import com.pulsedrop.app.ui.screens.OnboardingScreen
-import com.pulsedrop.app.ui.screens.ProfileScreen
-import com.pulsedrop.app.ui.screens.WhatsNewScreen
-import com.pulsedrop.app.ui.screens.UpdateCenterScreen
-import com.pulsedrop.app.ui.screens.SearchScreen
-import com.pulsedrop.app.ui.screens.StorageScreen
-import com.pulsedrop.app.ui.screens.StorageSnapshot
-import com.pulsedrop.app.ui.screens.measureStorage
-import com.pulsedrop.app.ui.screens.ActivityScreen
 import com.pulsedrop.app.ui.screens.HelpScreen
-import com.pulsedrop.app.ui.screens.MediaScreen
-import com.pulsedrop.app.ui.screens.DiagnosticsScreen
-import com.pulsedrop.app.ui.screens.NetworkScreen
 import com.pulsedrop.app.ui.screens.NotificationScreen
-import com.pulsedrop.app.ui.screens.SecurityScreen
 import com.pulsedrop.app.ui.screens.HomeScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
 import kotlinx.coroutines.delay
@@ -156,20 +141,13 @@ fun MainScreen(viewModel: MainViewModel) {
     val webClients by viewModel.webClients.collectAsState()
     val lastReadAt by viewModel.lastReadAt.collectAsState()
     val updateInfo by viewModel.updateManager.update.collectAsState()
-    val updateLastKnown by viewModel.updateManager.lastKnown.collectAsState()
     val updateProgress by viewModel.updateManager.progress.collectAsState()
     val updateApk by viewModel.updateManager.downloadedApk.collectAsState()
     val downloadCount by viewModel.updateManager.downloads.collectAsState()
     val relayHostName by viewModel.relayHostName.collectAsState()
     val relayHost by viewModel.relayHost.collectAsState()
-    val relayLastSync by viewModel.relayClient.lastSync.collectAsState()
     val pendingUploads by viewModel.pendingUploads.collectAsState()
     val updateStatus by viewModel.updateManager.statusMessage.collectAsState()
-    val whatsNewReleases by viewModel.updateManager.releases.collectAsState()
-    val whatsNewError by viewModel.updateManager.releasesError.collectAsState()
-    val updateChecking by viewModel.updateManager.checking.collectAsState()
-    val updateSnoozed by viewModel.updateManager.snoozed.collectAsState()
-    val themeMode = com.pulsedrop.app.ui.theme.ThemePreference.mode.value
     val colorScheme = MaterialTheme.colorScheme
 
     val context = LocalContext.current
@@ -187,6 +165,11 @@ fun MainScreen(viewModel: MainViewModel) {
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showShareConsent by remember { mutableStateOf(false) }
     var dismissedUpdateVersion by remember { mutableStateOf<String?>(null) }
+    // Stopping the server kicks every connected device, so the press asks first.
+    var confirmStopServer by remember { mutableStateOf(false) }
+    val requestToggleServer: () -> Unit = {
+        if (serverState.isRunning) confirmStopServer = true else viewModel.toggleServer()
+    }
 
     var pendingChatAttachThread by remember { mutableStateOf<String?>(null) }
     val chatAttachLauncher = rememberLauncherForActivityResult(
@@ -226,14 +209,6 @@ fun MainScreen(viewModel: MainViewModel) {
         }
     }
 
-    // First launch lands on the setup page exactly once; the flag is written immediately, so
-    // a returning user is never intercepted again and the page stays reachable from the drawer.
-    LaunchedEffect(Unit) {
-        if (!com.pulsedrop.app.ui.screens.OnboardingPrefs.isSeen(context)) {
-            com.pulsedrop.app.ui.screens.OnboardingPrefs.markSeen(context)
-            selectedSection = PulseSection.ONBOARDING
-        }
-    }
 
     val projectionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -297,11 +272,12 @@ fun MainScreen(viewModel: MainViewModel) {
         viewModel.setChatVisible(selectedSection == PulseSection.MESSAGES)
     }
 
-    // A completed-receipt notification carries "my_files"; tapping it lands on that page.
+    // Notification taps carry a section name; both file receipts and pending decisions land
+    // on the Receive page, where the files and the waiting queue actually live.
     LaunchedEffect(Unit) {
         val target = (context as? android.app.Activity)?.intent
             ?.getStringExtra("com.pulsedrop.app.SECTION")
-        if (target == "my_files") selectedSection = PulseSection.MY_FILES
+        if (target == "my_files" || target == "receive") selectedSection = PulseSection.RECEIVE_FILES
     }
 
     // Merge broadcast + scanned peers, dedupe by ip:port, prefer the PulseDrop app entry.
@@ -375,6 +351,8 @@ fun MainScreen(viewModel: MainViewModel) {
     val navBadges = mapOf(
         PulseSection.DEVICES to incomingPairRequests.size,
         PulseSection.MESSAGES to unreadThreads,
+        // Files parked for a decision wait on the phone — the badge is where they hide.
+        PulseSection.RECEIVE_FILES to pendingUploads.size,
         // Finished rows linger in the map for the session; the badge counts only real work.
         PulseSection.TRANSFERS to transfersInFlight
     )
@@ -425,10 +403,8 @@ fun MainScreen(viewModel: MainViewModel) {
                 PulseHeader(
                     title = selectedSection.title,
                     isRunning = serverState.isRunning,
-                    deviceName = serverState.deviceName,
                     onOpenDrawer = { toggleNav() },
-                    onToggleServer = { viewModel.toggleServer() },
-                    onRefresh = { viewModel.refreshNetwork() },
+                    onToggleServer = requestToggleServer,
                     modifier = Modifier.statusBarsPadding()
                 )
             }
@@ -461,39 +437,12 @@ fun MainScreen(viewModel: MainViewModel) {
                 ) {
             Crossfade(targetState = selectedSection, label = "tab_crossfade") { section ->
                 when (section) {
-                    PulseSection.SEARCH -> SearchScreen(
-                        activeTransfers = activeTransfersMap.values.toList(),
-                        history = historyList,
-                        nearbyPeers = nearbyPeers,
-                        pairedDevices = pairedDevices,
-                        messages = clipMessages,
-                        onOpenSection = { selectSection(it) }
-                    )
-
-                    PulseSection.ONBOARDING -> OnboardingScreen(
-                        serverRunning = serverState.isRunning,
-                        serverUrl = serverState.serverUrl,
-                        pinRequired = serverState.isPinRequired,
-                        notificationsGranted = notifPermissionGranted,
-                        osAsksAboutNotifications =
-                            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU,
-                        pairedCount = pairedDevices.size,
-                        onToggleServer = { viewModel.toggleServer() },
-                        onSetPinRequired = { viewModel.setPinRequired(true) },
-                        onAskNotifications = {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        },
-                        onOpenDevices = { selectSection(PulseSection.DEVICES) },
-                        onOpenSettings = { selectSection(PulseSection.SETTINGS) }
-                    )
-
                     PulseSection.HOME -> HomeScreen(
                         serverState = serverState,
                         qrBitmap = qrBitmap,
                         sharedFiles = sharedFiles,
                         activeTransfers = activeTransfersMap.values.toList(),
                         history = historyList,
-                        messagesCount = clipMessages.count { !it.deleted },
                         pairedDevices = pairedDevices,
                         peersCount = displayPeers.size,
                         webClientsCount = webClients.size,
@@ -503,12 +452,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         callInProgress = callState.active && callState.connected,
                         isSharingScreen = callState.sharing,
                         updateInfo = updateInfo,
-                        updateProgress = updateProgress,
-                        updateStatus = updateStatus,
-                        appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                        installs = downloadCount,
-                        onToggleServer = { viewModel.toggleServer() },
-                        onOpenSecuritySettings = { showSecurityDialog = true },
+                        onToggleServer = requestToggleServer,
                         onAddFiles = { uris -> viewModel.addFiles(uris) },
                         onRemoveFile = { id -> viewModel.removeSharedFile(id) },
                         onClearFiles = { viewModel.clearSharedFiles() },
@@ -592,9 +536,8 @@ fun MainScreen(viewModel: MainViewModel) {
                             onSetAutoAccept = { viewModel.setAutoAcceptTransfers(it) },
                             onOpenFile = { viewModel.openFile(it) },
                             onRemoveHistory = { viewModel.deleteHistoryItem(it) },
-                            onToggleServer = { viewModel.toggleServer() },
-                            onOpenTransfers = { selectSection(PulseSection.TRANSFERS) },
-                            onOpenMyFiles = { selectSection(PulseSection.MY_FILES) }
+                            onToggleServer = requestToggleServer,
+                            onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
                         )
                     }
 
@@ -694,8 +637,6 @@ fun MainScreen(viewModel: MainViewModel) {
                             HelpScreen(
                                 receiveDir = viewModel.receiveDir,
                                 onOpenHotspotGuide = { guideOpen = true },
-                                onOpenNetwork = { selectSection(PulseSection.NETWORK) },
-                                onOpenSecurity = { selectSection(PulseSection.SECURITY) },
                                 onOpenNotifications = { selectSection(PulseSection.NOTIFICATIONS) },
                                 onOpenGithubIssues = {
                                     try {
@@ -714,73 +655,12 @@ fun MainScreen(viewModel: MainViewModel) {
                         }
                     }
 
-                    PulseSection.PROFILE -> ProfileScreen(
-                        deviceName = serverState.deviceName,
-                        deviceId = remember { viewModel.pairManager.myDeviceId() },
-                        modelLabel = "${android.os.Build.BRAND} ${android.os.Build.MODEL}",
-                        androidLabel = "${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
-                        serverRunning = serverState.isRunning,
-                        pairedCount = pairedDevices.size,
-                        groupCount = chatGroups.size,
-                        historyCount = historyList.size,
-                        onRename = { newName -> viewModel.setDeviceName(newName) },
-                        onOpenDevices = { selectSection(PulseSection.DEVICES) },
-                        onOpenSecurity = { selectSection(PulseSection.SECURITY) },
-                        onOpenChats = { selectSection(PulseSection.MESSAGES) },
-                        onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
-                    )
-
-                    PulseSection.WHATS_NEW -> WhatsNewScreen(
-                        installedVersion = BuildConfig.VERSION_NAME,
-                        releases = whatsNewReleases,
-                        error = whatsNewError,
-                        onFetch = { viewModel.updateManager.fetchReleases(force = false) }
-                    )
-
-                    PulseSection.UPDATE_CENTER -> UpdateCenterScreen(
-                        installedVersion = BuildConfig.VERSION_NAME,
-                        buildCode = BuildConfig.VERSION_CODE,
-                        isDebugBuild = BuildConfig.DEBUG,
-                        info = updateLastKnown,
-                        statusMessage = updateStatus,
-                        progress = updateProgress,
-                        apkReady = updateApk != null,
-                        checking = updateChecking,
-                        canInstallPermission = viewModel.updateManager.canInstall(),
-                        snoozedVersion = updateSnoozed,
-                        lastCheckLine = com.pulsedrop.app.ui.screens.lastCheckLine(
-                            viewModel.updateManager.lastSuccessAt,
-                            android.os.SystemClock.elapsedRealtime()
-                        ),
-                        lastAnswered = viewModel.updateManager.lastSuccessAt > 0L,
-                        onCheck = { viewModel.updateManager.check(auto = false) },
-                        onDownload = { viewModel.updateManager.download() },
-                        onInstall = { viewModel.updateManager.install() },
-                        onAskInstallPermission = {
-                            try {
-                                context.startActivity(viewModel.updateManager.installPermissionIntent())
-                            } catch (_: Exception) {
-                                com.pulsedrop.app.ui.PulseEvents.post(
-                                    "Android's install-permission screen is not available on this device"
-                                )
-                            }
-                        },
-                        onSnooze = { viewModel.updateManager.dismiss() },
-                        onOpenWhatsNew = { selectSection(PulseSection.WHATS_NEW) }
-                    )
-
                     PulseSection.SETTINGS -> SettingsSheet(
                         serverState = serverState,
                         pendingUploads = pendingUploads,
                         pairedCount = pairedDevices.size,
                         updateInfo = updateInfo,
                         updateStatus = updateStatus,
-                        themeChoice = themeMode.label,
-                        onThemeChoice = { label ->
-                            com.pulsedrop.app.ui.theme.PulseTheme.entries
-                                .firstOrNull { it.label == label }
-                                ?.let { com.pulsedrop.app.ui.theme.ThemePreference.save(context, it) }
-                        },
                         onAutoAcceptChange = { viewModel.setAutoAcceptTransfers(it) },
                         onAcceptUpload = { viewModel.acceptPendingUpload(it) },
                         onDeclineUpload = { viewModel.declinePendingUpload(it) },
@@ -809,133 +689,6 @@ fun MainScreen(viewModel: MainViewModel) {
                         }
                     )
 
-                    PulseSection.MY_FILES -> {
-                        val receiveDir = viewModel.receiveDir
-                        val stats = remember(receiveDir) {
-                            val root = java.io.File(receiveDir).parentFile ?: java.io.File("/")
-                            try {
-                                val fs = android.os.StatFs(root.absolutePath)
-                                Pair(fs.availableBytes, fs.totalBytes)
-                            } catch (_: Exception) {
-                                Pair(-1L, -1L)
-                            }
-                        }
-                        MyFilesScreen(
-                            history = historyList,
-                            receiveDir = receiveDir,
-                            volumeFreeBytes = stats.first,
-                            volumeTotalBytes = stats.second,
-                            onOpenFile = { path, result -> viewModel.openFile(path, result) },
-                            onSaveToDownloads = { path -> viewModel.saveToDownloads(path) },
-                            onShareFile = { path -> viewModel.shareFile(path) },
-                            onRename = { id, name, result -> viewModel.renameReceivedFile(id, name, result) },
-                            onDeleteFile = { id, result -> viewModel.deleteReceivedFile(id, result) },
-                            onRemoveRecord = { id -> viewModel.deleteHistoryItem(id) },
-                            onOpenTransferDetails = { id ->
-                                selectSection(PulseSection.TRANSFERS)
-                                transferDetailsId = id
-                            },
-                            onCopyText = { text ->
-                                context.getSystemService(ClipboardManager::class.java)
-                                    ?.setPrimaryClip(ClipData.newPlainText("PulseDrop", text))
-                            },
-                            onMessage = { msg -> com.pulsedrop.app.ui.PulseEvents.post(msg) },
-                            onOpenReceive = { selectSection(PulseSection.RECEIVE_FILES) },
-                            onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
-                        )
-                    }
-
-                    PulseSection.FILE_MANAGER -> {
-                        val extRoot = context.getExternalFilesDir(null) ?: context.filesDir
-                        val ioScope = rememberCoroutineScope()
-                        val roots = remember(extRoot) {
-                            listOf(
-                                com.pulsedrop.app.ui.screens.ManagedRoot(
-                                    "received", "Received files",
-                                    "Everything accepted from browsers or peers lands here.",
-                                    java.io.File(extRoot, "WebDrop_Received"), false
-                                ),
-                                com.pulsedrop.app.ui.screens.ManagedRoot(
-                                    "pending", "Waiting for a decision",
-                                    "Uploads held here while auto-accept is off.",
-                                    java.io.File(extRoot, "WebDrop_Pending"), false
-                                ),
-                                com.pulsedrop.app.ui.screens.ManagedRoot(
-                                    "chat", "Chat attachments",
-                                    "Files pulled in through conversations.",
-                                    java.io.File(extRoot, "WebDrop_Chat"), false
-                                ),
-                                com.pulsedrop.app.ui.screens.ManagedRoot(
-                                    "updates", "Update downloads",
-                                    "APKs the updater fetched before an install.",
-                                    java.io.File(extRoot, "updates"), true
-                                ),
-                                com.pulsedrop.app.ui.screens.ManagedRoot(
-                                    "crashes", "Crash logs",
-                                    "Reports kept until the next launch shares them.",
-                                    java.io.File(context.filesDir, "crashes"), false
-                                ),
-                                com.pulsedrop.app.ui.screens.ManagedRoot(
-                                    "cache", "Cache",
-                                    "Working files — the server writes through here mid-transfer.",
-                                    context.cacheDir, true
-                                )
-                            )
-                        }
-                        val recordIdsByPath = remember(historyList) {
-                            historyList.mapNotNull { r ->
-                                r.localFilePath?.let { it to r.id }
-                            }.toMap()
-                        }
-                        val volumeStats = remember(extRoot) {
-                            try {
-                                val fs = android.os.StatFs(extRoot.absolutePath)
-                                Pair(fs.availableBytes, fs.totalBytes)
-                            } catch (_: Exception) {
-                                Pair(-1L, -1L)
-                            }
-                        }
-                        FileManagerScreen(
-                            roots = roots,
-                            recordIdsByPath = recordIdsByPath,
-                            volumeFreeBytes = volumeStats.first,
-                            volumeTotalBytes = volumeStats.second,
-                            onOpen = { path, result -> viewModel.openFile(path, result) },
-                            onShare = { path -> viewModel.shareFile(path) },
-                            onSaveToDownloads = { path -> viewModel.saveToDownloads(path) },
-                            onRename = { id, name, result -> viewModel.renameReceivedFile(id, name, result) },
-                            onDelete = { path, recordId, result ->
-                                if (recordId != null) {
-                                    viewModel.deleteReceivedFile(recordId, result)
-                                } else {
-                                    ioScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                        val f = java.io.File(path)
-                                        val ok = f.exists() && f.delete()
-                                        withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                            result(
-                                                ok,
-                                                if (ok) "Deleted ${f.name} — no copy is kept."
-                                                else "The file was already gone — nothing was deleted."
-                                            )
-                                        }
-                                    }
-                                }
-                            },
-                            onMessage = { msg -> com.pulsedrop.app.ui.PulseEvents.post(msg) }
-                        )
-                    }
-
-                    PulseSection.ACTIVITY -> ActivityScreen(
-                        history = historyList,
-                        activeTransfers = activeTransfersMap.values.toList(),
-                        pairedDevices = pairedDevices,
-                        groups = chatGroups,
-                        onOpenTransferDetails = { id ->
-                            selectSection(PulseSection.TRANSFERS)
-                            transferDetailsId = id
-                        },
-                        onOpenDevices = { selectSection(PulseSection.DEVICES) }
-                    )
 
                     PulseSection.NOTIFICATIONS -> NotificationScreen(
                         permissionGranted = notifPermissionGranted,
@@ -954,113 +707,8 @@ fun MainScreen(viewModel: MainViewModel) {
                             } catch (_: Exception) {
                                 com.pulsedrop.app.ui.PulseEvents.post("This phone does not expose notification settings")
                             }
-                        },
-                        onOpenActivity = { selectSection(PulseSection.ACTIVITY) }
-                    )
-
-                    PulseSection.MEDIA -> MediaScreen(
-                        history = historyList,
-                        onOpenFile = { path -> viewModel.openFile(path) },
-                        onOpenTransferDetails = { id ->
-                            selectSection(PulseSection.TRANSFERS)
-                            transferDetailsId = id
                         }
                     )
-
-                    PulseSection.STORAGE -> {
-                        val extRoot = context.getExternalFilesDir(null) ?: context.filesDir
-                        var storageSnapshot by remember { mutableStateOf<StorageSnapshot?>(null) }
-                        var storageMeasuring by remember { mutableStateOf(false) }
-                        var storageTick by remember { mutableStateOf(0) }
-                        LaunchedEffect(storageTick) {
-                            storageMeasuring = true
-                            // Real disk walk — keep it off the composition thread.
-                            val snap = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                measureStorage(extRoot, context.filesDir, context.cacheDir, "webdrop_database")
-                            }
-                            storageSnapshot = snap
-                            storageMeasuring = false
-                        }
-                        StorageScreen(
-                            snapshot = storageSnapshot,
-                            measuring = storageMeasuring,
-                            history = historyList,
-                            onClearLog = { viewModel.clearHistory() },
-                            onRefresh = { storageTick++ },
-                            onOpenFileManager = { selectSection(PulseSection.FILE_MANAGER) },
-                            onOpenMyFiles = { selectSection(PulseSection.MY_FILES) },
-                            onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
-                        )
-                    }
-
-                    PulseSection.NETWORK -> NetworkScreen(
-                        serverRunning = serverState.isRunning,
-                        serverUrl = serverState.serverUrl,
-                        startedAt = serverState.startedAt,
-                        pinRequired = serverState.isPinRequired,
-                        autoAccept = serverState.autoAcceptTransfers,
-                        webClients = webClients,
-                        nearbyPeers = nearbyPeers,
-                        scannedPeers = scannedPeers,
-                        radarScanning = radarScanning,
-                        relayHost = relayHost,
-                        relayLastSync = relayLastSync,
-                        onToggleServer = { viewModel.toggleServer() },
-                        onRefresh = { viewModel.refreshNetwork() },
-                        onScanRadar = { viewModel.startRadarScan() },
-                        onStopRadar = { viewModel.stopRadarScan() },
-                        onOpenHotspotSettings = {
-                            try {
-                                context.startActivity(
-                                    android.content.Intent("android.settings.TETHER_SETTINGS")
-                                )
-                            } catch (_: Exception) {
-                                com.pulsedrop.app.ui.PulseEvents.post("This phone does not expose hotspot settings")
-                            }
-                        }
-                    )
-
-                    PulseSection.DIAGNOSTICS -> DiagnosticsScreen(
-                        crashDir = java.io.File(context.filesDir, "crashes"),
-                        serverStartedAt = serverState.startedAt,
-                        serverRunning = serverState.isRunning,
-                        activeTransferCount = activeTransfersMap.size,
-                        liveSpeedBytesPerSec = activeTransfersMap.values.sumOf { it.speedBytesPerSec },
-                        historyCompleted = historyList.count { it.status == "COMPLETED" },
-                        historyFailed = historyList.count { it.status == "FAILED" },
-                        updateStatusMessage = updateStatus,
-                        updateLastSuccessElapsed = viewModel.updateManager.lastSuccessAt,
-                        relayHost = relayHost,
-                        relayLastSync = relayLastSync,
-                        nowElapsedRealtime = { android.os.SystemClock.elapsedRealtime() },
-                        onOpenReport = { path, result -> viewModel.openFile(path, result) },
-                        onOpenNetwork = { selectSection(PulseSection.NETWORK) }
-                    )
-
-                    PulseSection.SECURITY -> SecurityScreen(
-                        serverRunning = serverState.isRunning,
-                        pinRequired = serverState.isPinRequired,
-                        autoAccept = serverState.autoAcceptTransfers,
-                        pairedDevices = pairedDevices,
-                        webClients = webClients,
-                        onSetPinRequired = { viewModel.setPinRequired(it) },
-                        onRegeneratePin = { viewModel.regeneratePin() },
-                        onSetAutoAccept = { viewModel.setAutoAcceptTransfers(it) },
-                        onUnpair = { pid -> viewModel.unpair(pid) },
-                        safetyCode = { pid -> viewModel.pairSafetyCode(pid) },
-                        onOpenDevices = { selectSection(PulseSection.DEVICES) }
-                    )
-
-                    else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        PulseStatePanel(
-                            icon = section.icon,
-                            title = "${section.title} is not here yet",
-                            message = section.comingSoonNote
-                                ?: "This part of the app has not been built. Nothing here pretends.",
-                            actionLabel = section.shortcutLabel,
-                            onAction = { section.shortcut?.let { selectSection(it) } }
-                        )
-                    }
                 }
                 }
                 }
@@ -1521,6 +1169,31 @@ fun MainScreen(viewModel: MainViewModel) {
                 viewModel.setCustomPin(pin)
             },
             onRegeneratePin = { viewModel.regeneratePin() }
+        )
+    }
+
+    if (confirmStopServer) {
+        AlertDialog(
+            onDismissRequest = { confirmStopServer = false },
+            title = { Text("Stop the server?") },
+            text = {
+                Text(
+                    "Devices using ${serverState.serverUrl} lose access right away. " +
+                        "Files already waiting on this phone stay put."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmStopServer = false
+                        viewModel.toggleServer()
+                    },
+                    modifier = Modifier.testTag("confirm_stop_server")
+                ) { Text("Stop server", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmStopServer = false }) { Text("Keep running") }
+            }
         )
     }
 }

@@ -25,28 +25,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Checklist
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.MonitorHeart
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Radar
-import androidx.compose.material.icons.filled.ScreenShare
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DrawerState
@@ -86,53 +71,25 @@ import com.pulsedrop.app.ui.theme.PulseSizes
 import com.pulsedrop.app.ui.theme.PulseSpacing
 
 /**
- * Every place the app can take you.
- *
- * A section without a screen yet is honest about it — a note saying what it will be, and a jump to
- * the place where that capability already lives today. Nothing in this app pretends to work.
+ * Every place the app can take you — ten destinations, each with a screen that works today.
+ * Calls and screen sharing live inside Messages and Devices; there is no page here that pretends
+ * to be something the app cannot do.
  */
 enum class PulseSection(
     val title: String,
     val icon: ImageVector,
-    val tag: String,
-    /** null means the section has a real screen; otherwise this says what is going on. */
-    val comingSoonNote: String? = null,
-    val shortcutLabel: String? = null,
-    val shortcut: PulseSection? = null
+    val tag: String
 ) {
     HOME("Home", Icons.Filled.Home, "section_home"),
-    SEARCH("Search", Icons.Filled.Search, "section_search"),
-    ONBOARDING("Get started", Icons.Filled.Checklist, "section_onboarding"),
     DEVICES("Devices", Icons.Filled.Radar, "section_devices"),
     SEND_FILES("Send files", Icons.AutoMirrored.Filled.Send, "section_send"),
     RECEIVE_FILES("Receive files", Icons.Filled.Download, "section_receive"),
     TRANSFERS("Transfers", Icons.Filled.SwapHoriz, "section_transfers"),
-    MY_FILES("My files", Icons.Filled.Folder, "section_myfiles"),
-    FILE_MANAGER("File manager", Icons.Filled.FolderOpen, "section_filemanager"),
-    MEDIA("Media library", Icons.Filled.PhotoLibrary, "section_media"),
-    STORAGE("Storage & data", Icons.Filled.Storage, "section_storage"),
     MESSAGES("Messages", Icons.AutoMirrored.Filled.Chat, "section_messages"),
-    CALLS("Calls", Icons.Filled.Call, "section_calls",
-        comingSoonNote = "Voice and video calls work today from Messages and Devices. " +
-                "A call history and dialer will live here.",
-        shortcutLabel = "Open messages", shortcut = MESSAGES),
-    SCREEN_SHARING("Screen sharing", Icons.Filled.ScreenShare, "section_screenshare",
-        comingSoonNote = "Screen sharing works today inside a call — start one from Messages " +
-                "and tap Share screen.",
-        shortcutLabel = "Open messages", shortcut = MESSAGES),
-    ACTIVITY("Activity", Icons.Filled.Notifications, "section_activity"),
     NOTIFICATIONS("Notifications", Icons.Filled.NotificationsActive, "section_notifications"),
-    NETWORK("Network status", Icons.Filled.Language, "section_network"),
-    DIAGNOSTICS("Diagnostics", Icons.Filled.MonitorHeart, "section_diagnostics"),
-    SECURITY("Security center", Icons.Filled.Security, "section_security"),
-    PROFILE("Profile", Icons.Filled.Person, "section_profile"),
-    WHATS_NEW("What's new", Icons.Filled.Update, "section_whatsnew"),
-    UPDATE_CENTER("Update center", Icons.Filled.SystemUpdate, "section_updatecenter"),
     SETTINGS("Settings", Icons.Filled.Settings, "section_settings"),
     HELP("Help & support", Icons.Filled.HelpOutline, "section_help"),
     ABOUT("About PulseDrop", Icons.Filled.Info, "section_about");
-
-    val available: Boolean get() = comingSoonNote == null
 }
 
 /**
@@ -315,12 +272,6 @@ private fun PulseDrawerItem(
                     .clip(CircleShape)
                     .background(c.success)
                     .semantics { contentDescription = "Transfers in progress" }
-            )
-            !section.available -> Text(
-                text = "Soon",
-                style = MaterialTheme.typography.labelSmall,
-                color = c.textTertiary,
-                modifier = Modifier.alpha(0.9f)
             )
         }
     }

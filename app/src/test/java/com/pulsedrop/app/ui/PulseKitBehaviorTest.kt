@@ -113,9 +113,9 @@ class SettingsPersistenceTest {
     }
 
     @Test
-    fun anUnsetThemeDefaultsToDark() {
+    fun anUnsetThemeDefaultsToLight() {
         ThemePreference.load(context)
-        assertEquals(PulseTheme.DARK, ThemePreference.mode.value)
+        assertEquals(PulseTheme.LIGHT, ThemePreference.mode.value)
     }
 
     @Test

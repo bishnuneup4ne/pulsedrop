@@ -41,7 +41,7 @@ object ThemePreference {
     private const val PREFS = "localdrop_settings"
     private const val KEY = "themeMode"
 
-    private val _mode = mutableStateOf(PulseTheme.DARK)
+    private val _mode = mutableStateOf(PulseTheme.LIGHT)
     val mode: State<PulseTheme> = _mode
 
     /** Called once from Application creation, before any Activity composes. */
@@ -49,7 +49,7 @@ object ThemePreference {
         val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY, null)
         _mode.value = stored?.let { name -> PulseTheme.entries.firstOrNull { it.name == name } }
-            ?: PulseTheme.DARK
+            ?: PulseTheme.LIGHT
     }
 
     fun save(context: Context, theme: PulseTheme) {

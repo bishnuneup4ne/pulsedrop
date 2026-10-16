@@ -116,8 +116,6 @@ internal fun helpFaqs(receiveDir: String): List<HelpFaq> = listOf(
 fun HelpScreen(
     receiveDir: String,
     onOpenHotspotGuide: () -> Unit,
-    onOpenNetwork: () -> Unit,
-    onOpenSecurity: () -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenGithubIssues: () -> Unit,
     onCheckUpdate: () -> Unit
@@ -207,10 +205,6 @@ fun HelpScreen(
             PulseCard(modifier = Modifier.fillMaxWidth().testTag("help_links_card")) {
                 Column {
                     HelpLinkRow("Hotspot guide", "When the network itself blocks local traffic", onOpenHotspotGuide, "help_link_hotspot")
-                    PulseDivider()
-                    HelpLinkRow("Network status", "What this phone can actually observe", onOpenNetwork, "help_link_network")
-                    PulseDivider()
-                    HelpLinkRow("Security center", "What is protected, what is not", onOpenSecurity, "help_link_security")
                     PulseDivider()
                     HelpLinkRow("Notifications", "What this app can and cannot announce", onOpenNotifications, "help_link_notifications")
                 }
