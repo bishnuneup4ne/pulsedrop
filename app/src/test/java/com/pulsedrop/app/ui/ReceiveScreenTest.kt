@@ -148,8 +148,6 @@ class ReceiveScreenTest {
         scrollTo("receive_pending_st1")
         compose.onNodeWithText("photo.jpg").assertIsDisplayed()
         compose.onNodeWithText("2.0 KB · from Laptop").assertIsDisplayed()
-        // The name is the sender's own claim, and the page says so.
-        compose.onNodeWithText("treat that name as unverified", substring = true).assertExists()
         compose.onNodeWithTag("receive_accept_st1").performClick()
         compose.onNodeWithTag("receive_decline_st1").performClick()
         assertEquals(listOf("st1"), hooks.accepted)
@@ -157,12 +155,11 @@ class ReceiveScreenTest {
     }
 
     @Test
-    fun thePolicySwitchCarriesTheRealPreferenceAndItsSecuritySentence() {
+    fun thePolicySwitchCarriesTheRealPreference() {
         val hooks = Hooks()
         show(autoAccept = false, hooks = hooks)
         scrollTo("receive_auto_accept")
         compose.onNodeWithText("Accept files automatically").assertIsDisplayed()
-        compose.onNodeWithText("it never pairs or trusts the sender", substring = true).assertExists()
         compose.onNodeWithTag("receive_auto_accept").performClick()
         assertEquals(listOf(true), hooks.policy)
     }
@@ -185,9 +182,9 @@ class ReceiveScreenTest {
             substring = true
         ).assertExists()
         compose.onNodeWithTag("receive_free_space").assertIsDisplayed()
-        compose.onNodeWithText("not supported by the current engine", substring = true).assertExists()
-        // No silent overwrite is a promise the accept path now keeps.
-        compose.onNodeWithText("timestamp appended", substring = true).assertExists()
+        // The honesty footnotes are gone; the folder row and free space are the facts.
+        compose.onNodeWithText("not supported by the current engine", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("timestamp appended", substring = true).assertDoesNotExist()
     }
 
     @Test

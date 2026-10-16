@@ -457,25 +457,7 @@ fun SendScreen(
             }
         }
 
-        // ── 4. What this engine actually does ──────────────────────────────
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("send_options_card")
-            ) {
-                PulseRowLabel("How this send behaves")
-                OptionLine("Integrity", "Paired sends are encrypted; unpaired sends are plain HTTP.")
-                PulseRowDivider()
-                OptionLine("Destination", "The recipient chooses where files land.")
-                PulseRowDivider()
-                OptionLine("Name conflicts", "A taken name gets a timestamp appended — no overwriting.")
-                PulseRowDivider()
-                OptionLine("Resume and priority", "No resume, priority or compression — the protocol has none.")
-            }
-        }
-
-        // ── 5. Warnings and blockers ───────────────────────────────────────
+        // ── 4. Warnings and blockers ───────────────────────────────────────
         if (issues.isNotEmpty()) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
@@ -513,7 +495,11 @@ fun SendScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
                     val (channelText, channelTone) = channelLine(recipient.channel)
-                    PulseStatus(text = channelText, tone = channelTone)
+                    PulseStatus(
+                        text = channelText,
+                        tone = channelTone,
+                        modifier = Modifier.testTag("send_review_channel")
+                    )
                     Text(
                         "Address ${recipient.address}" +
                             if (total > 0) " · ${NetworkUtils.formatBytes(total)}" else "",
@@ -719,13 +705,4 @@ private fun IssueBanner(issue: SendIssue, tag: String) {
             modifier = Modifier.weight(1f)
         )
     }
-}
-
-@Composable
-private fun OptionLine(label: String, detail: String) {
-    PulseRow(
-        title = label,
-        subtitle = detail,
-        showChevron = false
-    )
 }

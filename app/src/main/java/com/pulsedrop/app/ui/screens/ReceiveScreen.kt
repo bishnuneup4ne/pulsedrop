@@ -166,15 +166,6 @@ fun ReceiveScreen(
                         "Off — files wait below for you to accept or decline, one at a time.",
                     modifier = Modifier.testTag("receive_auto_accept")
                 )
-                Text(
-                    text = if (autoAccept)
-                        "Anyone with the PIN can write files to this phone."
-                    else
-                        "Accept stores it — it never pairs or trusts the sender.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.textTertiary,
-                    modifier = Modifier.padding(start = 16.dp)
-                )
             }
         }
 
@@ -295,24 +286,12 @@ fun ReceiveScreen(
                             .testTag("receive_free_space")
                     )
                 }
-                PulseRowDivider()
-                HonestLine("A taken name gets a timestamp appended — never overwritten.")
-                HonestLine("Sender paths are sanitized; escapes are rejected.")
-                HonestLine("Another folder is not supported by the current engine.")
             }
         }
 
         // ── 6. Recently received ───────────────────────────────────────────
         item {
-            Column {
-                PulseRowLabel("Recently received")
-                Text(
-                    "Removing a row never deletes the file",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.textTertiary,
-                    modifier = Modifier.padding(start = 16.dp)
-                )
-            }
+            PulseRowLabel("Recently received")
         }
         val received = receivedRows(receivedHistory)
         if (received.isEmpty()) {
@@ -361,17 +340,6 @@ fun ReceiveScreen(
                             }
                         }
                     )
-                    row.localFilePath?.let { path ->
-                        Text(
-                            path,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = c.textTertiary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(start = 54.dp)
-                        )
-                    }
                 }
             }
         }
@@ -437,21 +405,5 @@ private fun PendingUploadRow(
                 }
             }
         )
-        Text(
-            "Sender-named — treat that name as unverified. Decline deletes the file.",
-            style = MaterialTheme.typography.bodySmall,
-            color = c.textTertiary,
-            modifier = Modifier.padding(start = 54.dp, bottom = 8.dp)
-        )
     }
-}
-
-@Composable
-private fun HonestLine(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodySmall,
-        color = LocalPulseColors.current.textTertiary,
-        modifier = Modifier.padding(start = 16.dp)
-    )
 }

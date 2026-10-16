@@ -4,6 +4,9 @@ import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.onChildren
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -188,7 +191,9 @@ class SendScreenTest {
         compose.onNodeWithTag("send_review_btn").assertIsEnabled().performClick()
         compose.onNodeWithText("Send 1 file(s) to Alpha?").assertIsDisplayed()
         // The unpaired truth is in the review, not hidden behind the button.
-        compose.onNodeWithText("Not paired — unencrypted", substring = true).assertExists()
+        compose.onNodeWithTag("send_review_channel")
+            .onChildren().onFirst()
+            .assert(hasText("Not paired — unencrypted", substring = true))
         compose.onNodeWithTag("send_confirm_btn").performClick()
         assertEquals(listOf("Alpha" to listOf(file)), hooks.peerSends)
         assertEquals(1, hooks.transfersOpens)
