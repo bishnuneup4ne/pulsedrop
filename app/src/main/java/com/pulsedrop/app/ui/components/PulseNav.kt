@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.Security
@@ -95,6 +96,7 @@ enum class PulseSection(
     RECEIVE_FILES("Receive files", Icons.Filled.Download, "section_receive"),
     TRANSFERS("Transfers", Icons.Filled.SwapHoriz, "section_transfers"),
     MY_FILES("My files", Icons.Filled.Folder, "section_myfiles"),
+    MEDIA("Media library", Icons.Filled.PhotoLibrary, "section_media"),
     MESSAGES("Messages", Icons.AutoMirrored.Filled.Chat, "section_messages"),
     CALLS("Calls", Icons.Filled.Call, "section_calls",
         comingSoonNote = "Voice and video calls work today from Messages and Devices. " +

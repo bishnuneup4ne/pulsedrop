@@ -107,6 +107,7 @@ import com.pulsedrop.app.ui.screens.MyFilesScreen
 import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.ActivityScreen
+import com.pulsedrop.app.ui.screens.MediaScreen
 import com.pulsedrop.app.ui.screens.SecurityScreen
 import com.pulsedrop.app.ui.screens.HomeScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
@@ -697,6 +698,15 @@ fun MainScreen(viewModel: MainViewModel) {
                             transferDetailsId = id
                         },
                         onOpenDevices = { selectSection(PulseSection.DEVICES) }
+                    )
+
+                    PulseSection.MEDIA -> MediaScreen(
+                        history = historyList,
+                        onOpenFile = { path -> viewModel.openFile(path) },
+                        onOpenTransferDetails = { id ->
+                            selectSection(PulseSection.TRANSFERS)
+                            transferDetailsId = id
+                        }
                     )
 
                     PulseSection.SECURITY -> SecurityScreen(
