@@ -132,7 +132,6 @@ class DevicesScreenTest {
     @Test
     fun quietPageMakesNoClaims() {
         show()
-        compose.onNodeWithText("Devices").assertIsDisplayed()
         compose.onNodeWithText("Idle").assertIsDisplayed()
         scrollToText("No devices found yet")
         compose.onNodeWithText("No devices found yet").assertIsDisplayed()

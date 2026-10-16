@@ -65,7 +65,6 @@ class HomeScreenTest {
                     history = history,
                     pairedDevices = pairedDevices,
                     peersCount = peersCount,
-                    webClientsCount = 0,
                     pendingUploads = pendingUploads,
                     incomingPairCount = incomingPairCount,
                     relayHostName = null,

@@ -168,7 +168,7 @@ fun PulseDrawerContent(
                 contentAlignment = Alignment.Center
             ) {
                 Image(
-                    painter = androidx.compose.ui.res.painterResource(R.drawable.ic_localdrop_logo),
+                    painter = androidx.compose.ui.res.painterResource(R.drawable.app_logo),
                     contentDescription = "PulseDrop logo",
                     modifier = Modifier.size(38.dp)
                 )

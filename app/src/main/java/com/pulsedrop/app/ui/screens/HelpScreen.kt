@@ -1,20 +1,22 @@
 package com.pulsedrop.app.ui.screens
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.QuestionAnswer
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,19 +26,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.pulsedrop.app.ui.components.PulseButton
-import com.pulsedrop.app.ui.components.PulseButtonTone
-import com.pulsedrop.app.ui.components.PulseCard
-import com.pulsedrop.app.ui.components.PulseDivider
-import com.pulsedrop.app.ui.components.PulseSectionHeader
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowGroup
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.theme.LocalPulseColors
-import com.pulsedrop.app.ui.theme.PulseRadius
 import com.pulsedrop.app.ui.theme.PulseSpacing
 
 // ── The answers, all true of this build ───────────────────────────────────
@@ -141,159 +138,119 @@ fun HelpScreen(
                     .fillMaxWidth()
                     .padding(top = PulseSpacing.lg.dp)
                     .testTag("help_header")
-            ) {
-                Text(
-                    "Help & support",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = c.textPrimary
-                )
-                Text(
-                    "Answers checked against what this build actually does, and the few real " +
-                        "places to go when an answer is not enough.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.textSecondary
-                )
-            }
+            ) {}
         }
 
-        item { PulseSectionHeader("Questions with true answers") }
+        // ── FAQ: one question per row, the answer folds out underneath ───────
+        item { PulseRowLabel("Questions") }
 
         for (faq in faqs) {
             item(key = "faq-${faq.id}") {
                 val open = openId == faq.id
-                PulseCard(modifier = Modifier.fillMaxWidth().testTag("help_faq_${faq.id}")) {
-                    Column(Modifier.animateContentSize()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(PulseRadius.md.dp))
-                                .clickable { openId = if (open) null else faq.id }
-                                .padding(vertical = PulseSpacing.xs.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                faq.question,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = if (open) FontWeight.SemiBold else FontWeight.Medium,
-                                color = c.textPrimary,
-                                modifier = Modifier.weight(1f)
-                            )
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .animateContentSize()
+                        .testTag("help_faq_${faq.id}")
+                ) {
+                    PulseRow(
+                        title = faq.question,
+                        icon = Icons.Default.QuestionAnswer,
+                        showChevron = false,
+                        onClick = { openId = if (open) null else faq.id },
+                        trailing = {
                             Icon(
                                 if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
                                 contentDescription = if (open) "Collapse" else "Expand",
                                 tint = c.textTertiary
                             )
                         }
-                        if (open) {
-                            Text(
-                                faq.answer,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = c.textSecondary,
-                                modifier = Modifier
-                                    .padding(top = PulseSpacing.sm.dp)
-                                    .testTag("help_answer_${faq.id}")
-                            )
-                        }
+                    )
+                    if (open) {
+                        Text(
+                            faq.answer,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = c.textSecondary,
+                            modifier = Modifier
+                                .padding(start = 54.dp, end = 16.dp, top = 2.dp, bottom = 12.dp)
+                                .testTag("help_answer_${faq.id}")
+                        )
                     }
                 }
             }
         }
 
-        item { PulseSectionHeader("Go to the page that handles it") }
+        // ── Pages that handle it ────────────────────────────────────────────
+        item { PulseRowLabel("Related pages") }
 
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("help_links_card")) {
-                Column {
-                    HelpLinkRow("Hotspot guide", "When the network itself blocks local traffic", onOpenHotspotGuide, "help_link_hotspot")
-                    PulseDivider()
-                    HelpLinkRow("Notifications", "What this app can and cannot announce", onOpenNotifications, "help_link_notifications")
-                }
+            PulseRowGroup(modifier = Modifier.fillMaxWidth().testTag("help_links_card")) {
+                PulseRow(
+                    title = "Hotspot guide",
+                    icon = Icons.Default.Wifi,
+                    subtitle = "When the network itself blocks local traffic",
+                    onClick = onOpenHotspotGuide,
+                    modifier = Modifier.testTag("help_link_hotspot")
+                )
+                PulseRowDivider(insetStart = 54)
+                PulseRow(
+                    title = "Notifications",
+                    icon = Icons.Default.Notifications,
+                    subtitle = "What this app can and cannot announce",
+                    onClick = onOpenNotifications,
+                    modifier = Modifier.testTag("help_link_notifications")
+                )
             }
         }
 
-        item { PulseSectionHeader("When an answer is not enough") }
+        // ── Real support channels ───────────────────────────────────────────
+        item { PulseRowLabel("Support") }
 
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("help_support_card")) {
-                Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                    Text(
-                        "This project has one support channel, and it is public: the GitHub " +
-                            "issue tracker for the same repository the updates come from. " +
-                            "There is no support inbox, no live chat, and nobody can look at " +
-                            "your phone from theirs.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = c.textSecondary
-                    )
-                    PulseButton(
-                        label = "Report a problem on GitHub",
-                        onClick = onOpenGithubIssues,
-                        tone = PulseButtonTone.Primary,
-                        modifier = Modifier.testTag("help_report")
-                    )
-                    PulseButton(
-                        label = "Check for updates",
-                        onClick = onCheckUpdate,
-                        tone = PulseButtonTone.Neutral,
-                        modifier = Modifier.testTag("help_update")
-                    )
-                }
+            Column(Modifier.fillMaxWidth().testTag("help_support_card")) {
+                PulseRow(
+                    title = "Report a problem on GitHub",
+                    icon = Icons.Default.BugReport,
+                    onClick = onOpenGithubIssues,
+                    titleColor = c.accent,
+                    modifier = Modifier.testTag("help_report")
+                )
+                PulseRowDivider(insetStart = 54)
+                PulseRow(
+                    title = "Check for updates",
+                    icon = Icons.Default.Refresh,
+                    onClick = onCheckUpdate,
+                    modifier = Modifier.testTag("help_update")
+                )
             }
         }
 
-        item { PulseSectionHeader("What help here cannot do") }
+        // ── Honest limits ───────────────────────────────────────────────────
+        item { PulseRowLabel("Limits") }
 
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("help_limits_card")) {
-                Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)) {
-                    Text(
-                        "• No remote access: nothing in this app lets anyone reach your phone " +
-                            "to fix it.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary
-                    )
-                    Text(
-                        "• No deleted-file recovery: a file deleted from the received folder is " +
-                            "gone; the app keeps no copy.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary
-                    )
-                    Text(
-                        "• No diagnostics a support agent can run: a crash report is written " +
-                            "locally, and sharing it is your choice.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary
-                    )
-                }
+            PulseRowGroup(modifier = Modifier.fillMaxWidth().testTag("help_limits_card")) {
+                PulseRow(
+                    title = "No remote access",
+                    icon = Icons.Default.Block,
+                    subtitle = "No one can reach your phone to fix it.",
+                    showChevron = false
+                )
+                PulseRowDivider(insetStart = 54)
+                PulseRow(
+                    title = "No deleted-file recovery",
+                    icon = Icons.Default.Block,
+                    subtitle = "Deleted files are gone; the app keeps no copy.",
+                    showChevron = false
+                )
+                PulseRowDivider(insetStart = 54)
+                PulseRow(
+                    title = "No live diagnostics",
+                    icon = Icons.Default.Block,
+                    subtitle = "Crash reports stay on this phone until you share them.",
+                    showChevron = false
+                )
             }
         }
-    }
-}
-
-@Composable
-private fun HelpLinkRow(
-    title: String,
-    detail: String,
-    onClick: () -> Unit,
-    tag: String
-) {
-    val c = LocalPulseColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(PulseRadius.md.dp))
-            .clickable(onClick = onClick)
-            .testTag(tag)
-            .padding(vertical = PulseSpacing.sm.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = c.textPrimary)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
-        }
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = c.textTertiary
-        )
     }
 }

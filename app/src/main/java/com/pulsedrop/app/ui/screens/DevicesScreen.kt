@@ -22,7 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -88,13 +88,14 @@ import com.pulsedrop.app.ui.UiPeerConnection
 import com.pulsedrop.app.ui.components.PulseAction
 import com.pulsedrop.app.ui.components.PulseButton
 import com.pulsedrop.app.ui.components.PulseButtonTone
-import com.pulsedrop.app.ui.components.PulseCard
 import com.pulsedrop.app.ui.components.PulseChip
 import com.pulsedrop.app.ui.components.PulseDivider
 import com.pulsedrop.app.ui.components.PulseOverflowMenu
-import com.pulsedrop.app.ui.components.PulsePageHeader
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowGroup
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.components.PulseSearchField
-import com.pulsedrop.app.ui.components.PulseSectionHeader
 import com.pulsedrop.app.ui.components.PulseSkeletonList
 import com.pulsedrop.app.ui.components.PulseStatTile
 import com.pulsedrop.app.ui.components.PulseStatePanel
@@ -285,32 +286,35 @@ fun DevicesScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = PulseSpacing.lg.dp),
-        verticalArrangement = Arrangement.spacedBy(PulseSpacing.lg.dp)
+            .padding(horizontal = PulseSpacing.lg.dp)
     ) {
         item {
-            PulsePageHeader(
-                title = "Devices",
-                subtitle = "Find, pair and manage the machines on this network",
-                status = {
-                    PulseStatus(
-                        text = when {
-                            scanning -> "Searching"
-                            nearbyPeers.isNotEmpty() -> "${nearbyPeers.size} found"
-                            else -> "Idle"
-                        },
-                        tone = when {
-                            scanning -> PulseStatusTone.Active
-                            nearbyPeers.isNotEmpty() -> PulseStatusTone.Positive
-                            else -> PulseStatusTone.Neutral
-                        }
-                    )
-                }
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = PulseSpacing.md.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                PulseStatus(
+                    text = when {
+                        scanning -> "Searching"
+                        nearbyPeers.isNotEmpty() -> "${nearbyPeers.size} found"
+                        else -> "Idle"
+                    },
+                    tone = when {
+                        scanning -> PulseStatusTone.Active
+                        nearbyPeers.isNotEmpty() -> PulseStatusTone.Positive
+                        else -> PulseStatusTone.Neutral
+                    }
+                )
+            }
         }
 
         item {
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = PulseSpacing.md.dp),
                 horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -337,7 +341,12 @@ fun DevicesScreen(
 
         // ── Search, filters, sorting ───────────────────────────────────────
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = PulseSpacing.lg.dp),
+                verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
+            ) {
                 PulseSearchField(
                     value = query,
                     onValueChange = { query = it },
@@ -414,13 +423,7 @@ fun DevicesScreen(
 
         // ── Nearby ─────────────────────────────────────────────────────────
         if (!searchHidEverything && filter != DeviceFilter.TRUSTED) {
-            item {
-                PulseSectionHeader(
-                    "Nearby devices",
-                    if (nearbyPeers.isEmpty()) null
-                    else "Discovery is not trust — pairing still needs your yes"
-                )
-            }
+            item { PulseRowLabel("Nearby devices") }
             if (visiblePeers.isEmpty()) {
                 item {
                     if (scanning) {
@@ -439,7 +442,8 @@ fun DevicesScreen(
                     }
                 }
             } else {
-                items(visiblePeers, key = { it.id }) { peer ->
+                itemsIndexed(visiblePeers, key = { _, peer -> peer.id }) { index, peer ->
+                    if (index > 0) PulseRowDivider(insetStart = 54)
                     val paired = pairedByIp[peer.ip]
                     PeerDeviceRow(
                         peer = peer,
@@ -460,13 +464,7 @@ fun DevicesScreen(
 
         // ── Trusted ────────────────────────────────────────────────────────
         if (!searchHidEverything && (filter == DeviceFilter.ALL || filter == DeviceFilter.TRUSTED)) {
-            item {
-                PulseSectionHeader(
-                    "Trusted devices",
-                    if (pairedDevices.isEmpty()) null
-                    else "You confirmed these pairings — they are not just devices that answered"
-                )
-            }
+            item { PulseRowLabel("Trusted devices") }
             if (visiblePaired.isEmpty()) {
                 item {
                     PulseStatePanel(
@@ -479,7 +477,8 @@ fun DevicesScreen(
                     )
                 }
             } else {
-                items(visiblePaired, key = { it.pid }) { paired ->
+                itemsIndexed(visiblePaired, key = { _, paired -> paired.pid }) { index, paired ->
+                    if (index > 0) PulseRowDivider(insetStart = 54)
                     PairedDeviceRow(
                         paired = paired,
                         connected = connectedPeer?.peer?.ip == paired.originIp,
@@ -494,7 +493,10 @@ fun DevicesScreen(
 
         // ── Live connection ────────────────────────────────────────────────
         item {
-            AnimatedVisibility(visible = connectedPeer != null || peerConnecting) {
+            AnimatedVisibility(
+                visible = connectedPeer != null || peerConnecting,
+                modifier = Modifier.padding(top = PulseSpacing.lg.dp)
+            ) {
                 ConnectedPeerPanel(
                     connection = connectedPeer,
                     connecting = peerConnecting,
@@ -506,50 +508,48 @@ fun DevicesScreen(
 
         // ── Manual / QR connect ────────────────────────────────────────────
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth()) {
-                Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)) {
-                    PulseSectionHeader(
-                        "Connect by address",
-                        "Type an ip:port or scan the QR the other device shows"
-                    )
-                    OutlinedTextField(
-                        value = manualIp,
-                        onValueChange = { manualIp = it },
-                        placeholder = { Text("192.168.1.55:8080") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(PulseRadius.md.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Uri,
-                            imeAction = ImeAction.Go
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onGo = {
-                                val clean = manualIp.trim()
-                                if (clean.isNotBlank()) onConnectToAddress(clean)
-                                else PulseEvents.post("Enter an address or scan a QR")
-                            }
-                        ),
-                        leadingIcon = { Icon(Icons.Default.Link, null, tint = c.textTertiary) },
+            Column {
+                PulseRowLabel("Connect by address")
+                PulseRowGroup {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("manual_ip_input")
-                    )
-                    PulseButton(
-                        label = if (peerConnecting) "Connecting…" else "Connect",
-                        icon = Icons.Default.Link,
-                        enabled = !peerConnecting && manualIp.isNotBlank(),
-                        disabledReason = "Type or scan an address first",
-                        onClick = { onConnectToAddress(manualIp.trim()) },
-                        fullWidth = true,
-                        modifier = Modifier.testTag("connect_peer_btn")
-                    )
-                    Text(
-                        "A QR code carries only an address - it proves where a device lives, not who it " +
-                            "is. Trust comes from the safety code you confirm during pairing.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textTertiary
-                    )
+                            .padding(horizontal = 16.dp, vertical = PulseSpacing.md.dp),
+                        verticalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = manualIp,
+                            onValueChange = { manualIp = it },
+                            placeholder = { Text("192.168.1.55:8080") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(PulseRadius.md.dp),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Uri,
+                                imeAction = ImeAction.Go
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onGo = {
+                                    val clean = manualIp.trim()
+                                    if (clean.isNotBlank()) onConnectToAddress(clean)
+                                    else PulseEvents.post("Enter an address or scan a QR")
+                                }
+                            ),
+                            leadingIcon = { Icon(Icons.Default.Link, null, tint = c.textTertiary) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("manual_ip_input")
+                        )
+                        PulseButton(
+                            label = if (peerConnecting) "Connecting…" else "Connect",
+                            icon = Icons.Default.Link,
+                            enabled = !peerConnecting && manualIp.isNotBlank(),
+                            disabledReason = "Type or scan an address first",
+                            onClick = { onConnectToAddress(manualIp.trim()) },
+                            fullWidth = true,
+                            modifier = Modifier.testTag("connect_peer_btn")
+                        )
+                    }
                 }
             }
         }
@@ -773,115 +773,76 @@ private fun PeerDeviceRow(
 ) {
     val c = LocalPulseColors.current
     val pending = state == "Invite pending"
-    PulseCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("peer_row_${peer.id}")
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(PulseAvatarSize)
-                    .clip(CircleShape)
-                    .background(c.accentTint),
-                contentAlignment = Alignment.Center
+    PulseRow(
+        title = peer.name,
+        icon = when {
+            peer.appKind == "Browser" -> Icons.Default.Language
+            peer.name.contains("PC", ignoreCase = true) ||
+                peer.name.contains("Mac", ignoreCase = true) -> Icons.Default.Computer
+            else -> Icons.Default.Smartphone
+        },
+        iconTint = if (state == "Connected") c.accent else c.textSecondary,
+        subtitle = (if (peer.appKind == "Browser") peer.ip else "${peer.ip}:${peer.port}") +
+            if (peer.requiresPin) " · PIN protected" else "",
+        detail = state + (if (verified == false && state == "Trusted") " · not verified" else ""),
+        showChevron = false,
+        trailing = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)
             ) {
-                Icon(
-                    imageVector = when {
-                        peer.appKind == "Browser" -> Icons.Default.Language
-                        peer.name.contains("PC", ignoreCase = true) ||
-                            peer.name.contains("Mac", ignoreCase = true) -> Icons.Default.Computer
-                        else -> Icons.Default.Smartphone
-                    },
-                    contentDescription = null,
-                    tint = c.onAccentTint,
-                    modifier = Modifier.size(PulseSizes.icon.dp)
-                )
-            }
-            Spacer(Modifier.width(PulseSpacing.md.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    peer.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = c.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    (if (peer.appKind == "Browser") peer.ip else "${peer.ip}:${peer.port}") +
-                        if (peer.requiresPin) " · PIN protected" else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PulseStatus(
-                        text = state,
-                        tone = when (state) {
-                            "Connected" -> PulseStatusTone.Positive
-                            "Trusted" -> PulseStatusTone.Active
-                            "Invite pending" -> PulseStatusTone.Warning
-                            else -> PulseStatusTone.Neutral
-                        }
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)
+                ) {
+                    PulseButton(
+                        label = "Send",
+                        icon = Icons.AutoMirrored.Filled.Send,
+                        tone = PulseButtonTone.Quiet,
+                        onClick = onSend,
+                        modifier = Modifier.testTag("send_to_peer_${peer.id}")
                     )
-                    if (verified == false && state == "Trusted") {
-                        Spacer(Modifier.width(PulseSpacing.xs.dp))
-                        Text(
-                            "not verified",
+                    when {
+                        pending -> PulseButton(
+                            label = "Cancel invite",
+                            tone = PulseButtonTone.Quiet,
+                            onClick = onCancelPair,
+                            modifier = Modifier.testTag("cancel_pair_btn")
+                        )
+                        state == "Trusted" || state == "Connected" -> Unit
+                        peer.appKind == "Browser" -> Text(
+                            "Web session",
                             style = MaterialTheme.typography.labelSmall,
-                            color = c.warning
+                            color = c.textTertiary
+                        )
+                        else -> PulseButton(
+                            label = "Pair",
+                            icon = Icons.Default.Link,
+                            onClick = onPair,
+                            modifier = Modifier.testTag("pair_btn_${peer.id}")
                         )
                     }
                 }
-            }
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)
-            ) {
-                PulseButton(
-                    label = "Send",
-                    icon = Icons.AutoMirrored.Filled.Send,
-                    tone = PulseButtonTone.Quiet,
-                    onClick = onSend,
-                    modifier = Modifier.testTag("send_to_peer_${peer.id}")
+                PulseOverflowMenu(
+                    label = "Actions for ${peer.name}",
+                    actions = buildList {
+                        add(PulseAction("Details", Icons.Default.Info, onClick = { onDetails() }))
+                        add(PulseAction("Copy address", Icons.Default.ContentCopy, onClick = { onCopyAddress() }))
+                        if (peer.appKind != "Browser" && peer.hasServer) {
+                            add(PulseAction("Connect", Icons.Default.Link, onClick = { onConnect() }))
+                        }
+                        if (state == "Not paired" && peer.appKind != "Browser") {
+                            add(PulseAction("Pair", Icons.Default.Link, onClick = { onPair() }))
+                        }
+                    }
                 )
-                when {
-                    pending -> PulseButton(
-                        label = "Cancel invite",
-                        tone = PulseButtonTone.Quiet,
-                        onClick = onCancelPair,
-                        modifier = Modifier.testTag("cancel_pair_btn")
-                    )
-                    state == "Trusted" || state == "Connected" -> Unit
-                    peer.appKind == "Browser" -> Text(
-                        "Web session",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = c.textTertiary
-                    )
-                    else -> PulseButton(
-                        label = "Pair",
-                        icon = Icons.Default.Link,
-                        onClick = onPair,
-                        modifier = Modifier.testTag("pair_btn_${peer.id}")
-                    )
-                }
             }
-            PulseOverflowMenu(
-                label = "Actions for ${peer.name}",
-                actions = buildList {
-                    add(PulseAction("Details", Icons.Default.Info, onClick = { onDetails() }))
-                    add(PulseAction("Copy address", Icons.Default.ContentCopy, onClick = { onCopyAddress() }))
-                    if (peer.appKind != "Browser" && peer.hasServer) {
-                        add(PulseAction("Connect", Icons.Default.Link, onClick = { onConnect() }))
-                    }
-                    if (state == "Not paired" && peer.appKind != "Browser") {
-                        add(PulseAction("Pair", Icons.Default.Link, onClick = { onPair() }))
-                    }
-                }
-            )
-        }
-    }
+        },
+        onClick = onDetails,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("peer_row_${peer.id}")
+    )
 }
 
 @Composable
@@ -894,66 +855,43 @@ private fun PairedDeviceRow(
     onRequestUnpair: () -> Unit
 ) {
     val c = LocalPulseColors.current
-    PulseCard(
+    PulseRow(
+        title = paired.name,
+        icon = if (paired.verified) Icons.Default.VerifiedUser else Icons.Default.Key,
+        iconTint = if (paired.verified) c.success else c.warning,
+        subtitle = "Pair ${paired.pid.take(6).uppercase()} · ${paired.originIp}:${paired.originPort}" +
+            (if (paired.appVersion.isNotBlank()) " · PulseDrop ${paired.appVersion}" else ""),
+        // Trust is stated in words; colour only reinforces it, never replaces it.
+        detail = (if (paired.verified) "Verified" else "Not verified") +
+            (if (connected) " · connected now" else ""),
+        showChevron = false,
+        trailing = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)
+            ) {
+                PulseButton(
+                    label = if (paired.verified) "Code" else "Verify",
+                    tone = PulseButtonTone.Quiet,
+                    onClick = onVerify,
+                    modifier = Modifier.testTag("verify_btn_${paired.pid}")
+                )
+                PulseOverflowMenu(
+                    label = "Actions for ${paired.name}",
+                    actions = listOf(
+                        PulseAction("Details", Icons.Default.Info, onClick = { onDetails() }),
+                        PulseAction("View transfers", Icons.Default.History, onClick = { onViewTransfers() }),
+                        PulseAction("Revoke trust", Icons.Default.LinkOff,
+                            onClick = { onRequestUnpair() }, destructive = true)
+                    )
+                )
+            }
+        },
+        onClick = onDetails,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("paired_device_${paired.pid}")
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(PulseAvatarSize)
-                    .clip(CircleShape)
-                    .background(if (paired.verified) c.successTint else c.warningTint),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (paired.verified) Icons.Default.VerifiedUser else Icons.Default.Key,
-                    contentDescription = null,
-                    tint = if (paired.verified) c.onSuccessTint else c.onWarningTint,
-                    modifier = Modifier.size(PulseSizes.icon.dp)
-                )
-            }
-            Spacer(Modifier.width(PulseSpacing.md.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    paired.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = c.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    "Pair ${paired.pid.take(6).uppercase()} · ${paired.originIp}:${paired.originPort}" +
-                        if (paired.appVersion.isNotBlank()) " · PulseDrop ${paired.appVersion}" else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                PulseStatus(
-                    text = if (paired.verified) "Verified" else "Not verified",
-                    tone = if (paired.verified) PulseStatusTone.Positive else PulseStatusTone.Warning,
-                    detail = if (connected) "connected now" else null
-                )
-            }
-            PulseButton(
-                label = if (paired.verified) "Code" else "Verify",
-                tone = PulseButtonTone.Quiet,
-                onClick = onVerify,
-                modifier = Modifier.testTag("verify_btn_${paired.pid}")
-            )
-            PulseOverflowMenu(
-                label = "Actions for ${paired.name}",
-                actions = listOf(
-                    PulseAction("Details", Icons.Default.Info, onClick = { onDetails() }),
-                    PulseAction("View transfers", Icons.Default.History, onClick = { onViewTransfers() }),
-                    PulseAction("Revoke trust", Icons.Default.LinkOff,
-                        onClick = { onRequestUnpair() }, destructive = true)
-                )
-            )
-        }
-    }
+    )
 }
 
 @Composable
@@ -964,13 +902,13 @@ private fun ConnectedPeerPanel(
     onDisconnect: () -> Unit
 ) {
     val c = LocalPulseColors.current
-    PulseCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("connected_peer_panel")
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    // A short callout block, not a list row: it groups the live-connection facts and its two actions.
+    PulseRowGroup(modifier = Modifier.fillMaxWidth().testTag("connected_peer_panel")) {
+        PulseRow(
+            title = if (connection != null) connection.label else "Connecting…",
+            subtitle = connection?.peer?.let { "${it.ip}:${it.port}" },
+            showChevron = false,
+            leading = {
                 if (connecting || connection == null) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.5.dp)
                 } else {
@@ -981,22 +919,8 @@ private fun ConnectedPeerPanel(
                             .background(c.success)
                     )
                 }
-                Spacer(modifier = Modifier.width(PulseSpacing.md.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (connection != null) connection.label else "Connecting…",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = c.textPrimary,
-                        maxLines = 1
-                    )
-                    if (connection != null) {
-                        Text(
-                            text = connection.peer.let { "${it.ip}:${it.port}" },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = c.textSecondary
-                        )
-                    }
-                }
+            },
+            trailing = {
                 if (connection?.requiresPin == true) {
                     Icon(
                         imageVector = Icons.Default.Lock,
@@ -1006,30 +930,28 @@ private fun ConnectedPeerPanel(
                     )
                 }
             }
-
-            if (connection != null) {
-                Text(
-                    text = "Send pushes files straight to this device. To receive here, keep your own " +
-                        "server on — the other device sends to you.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.textSecondary
+        )
+        if (connection != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = PulseSpacing.sm.dp, bottom = PulseSpacing.sm.dp),
+                horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
+            ) {
+                PulseButton(
+                    label = "Send files",
+                    icon = Icons.AutoMirrored.Filled.Send,
+                    onClick = { onSendFiles(connection.peer) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("send_to_connected_peer")
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                    PulseButton(
-                        label = "Send files",
-                        icon = Icons.AutoMirrored.Filled.Send,
-                        onClick = { onSendFiles(connection.peer) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("send_to_connected_peer")
-                    )
-                    PulseButton(
-                        label = "Disconnect",
-                        tone = PulseButtonTone.Danger,
-                        onClick = onDisconnect,
-                        modifier = Modifier.testTag("disconnect_peer_btn")
-                    )
-                }
+                PulseButton(
+                    label = "Disconnect",
+                    tone = PulseButtonTone.Danger,
+                    onClick = onDisconnect,
+                    modifier = Modifier.testTag("disconnect_peer_btn")
+                )
             }
         }
     }
@@ -1247,5 +1169,3 @@ private fun DetailLine(label: String, value: String) {
 
 private fun dateFormat(): DateFormat =
     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-
-private val PulseAvatarSize = 44.dp

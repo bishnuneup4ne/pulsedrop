@@ -66,7 +66,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import com.pulsedrop.app.ui.components.PulseSectionHeader
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.UiServerState
 import com.pulsedrop.app.ui.theme.LocalPulseColors
 import com.pulsedrop.app.util.QrCodeGenerator
@@ -153,12 +155,7 @@ fun HotspotGuideScreen(
                     }
 
                     Text(
-                        text = "Hotspot mode",
-                        style = MaterialTheme.typography.displaySmall,
-                        color = colorScheme.onPrimary
-                    )
-                    Text(
-                        text = "Share files anywhere — no router, no internet, no data used. Turn your hotspot on and the network name and password appear here for the other device to join.",
+                        text = "Share files with no router and no internet.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = colorScheme.onPrimary.copy(alpha = 0.9f)
                     )
@@ -231,7 +228,7 @@ fun HotspotGuideScreen(
                             )
                         }
                         Text(
-                            text = "Turn the hotspot on with the button above. This screen recognises it automatically — or confirm below and your network details appear here.",
+                            text = "Turn the hotspot on. This screen detects it automatically.",
                             style = MaterialTheme.typography.bodySmall,
                             color = colorScheme.onSurfaceVariant
                         )
@@ -297,7 +294,7 @@ fun HotspotGuideScreen(
 
                         if (ssid.isBlank() || pass.isBlank()) {
                             Text(
-                                text = "Android doesn't let apps read the hotspot name and password. Enter them once from your hotspot settings — they stay on this phone.",
+                                text = "Android can't read these. Enter them once from your hotspot settings.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorScheme.onSurfaceVariant
                             )
@@ -401,19 +398,24 @@ fun HotspotGuideScreen(
         }
 
         item {
-            PulseSectionHeader("Setup", "Four steps, about a minute")
-        }
-
-        val steps = listOf(
-            "Turn on this phone's hotspot" to "Personal Hotspot in system settings. Mobile data can stay off — only the local Wi-Fi link matters.",
-            "Join the network" to "On the other device connect to the hotspot name and password shown on this screen. Scan the code on a phone, type it on a computer.",
-            "Open PulseDrop" to "Use Radar on the other phone to find this device, or open the browser address from the Server tab on a computer.",
-            "Transfer" to "Drop files either way. Size doesn't matter — even 4K video moves at the full speed of the Wi-Fi link."
-        )
-
-        steps.forEachIndexed { index, (title, description) ->
-            item {
-                StepRow(number = index + 1, title = title, description = description)
+            val steps = listOf(
+                "Turn on this phone's hotspot" to "Mobile data can stay off — only the local Wi-Fi link matters.",
+                "Join the network" to "Connect with the name and password shown here, or scan the code.",
+                "Open PulseDrop" to "Use Radar on the other phone, or the browser address on a computer.",
+                "Transfer" to "Size doesn't matter — files move at full Wi-Fi speed."
+            )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                PulseRowLabel("Setup") {
+                    Text(
+                        text = "Four steps, about a minute",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = pulse.textTertiary
+                    )
+                }
+                steps.forEachIndexed { index, (title, description) ->
+                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    StepRow(number = index + 1, title = title, description = description)
+                }
             }
         }
 
@@ -585,47 +587,27 @@ private fun wifiQrEscape(s: String): String =
 @Composable
 private fun StepRow(number: Int, title: String, description: String) {
     val colorScheme = MaterialTheme.colorScheme
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceContainerLow),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.Top
-        ) {
+    PulseRow(
+        title = title,
+        subtitle = description,
+        showChevron = false,
+        leading = {
             Box(
                 modifier = Modifier
-                    .size(30.dp)
+                    .size(26.dp)
                     .clip(CircleShape)
                     .background(colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = number.toString(),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
                     color = colorScheme.onPrimaryContainer
                 )
             }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = colorScheme.onSurface
-                )
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
-            }
         }
-    }
+    )
 }
 
 @Composable

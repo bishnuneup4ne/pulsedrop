@@ -12,7 +12,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,13 +26,17 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.ui.components.PulseButton
 import com.pulsedrop.app.ui.components.PulseButtonTone
 import com.pulsedrop.app.ui.components.PulseCard
-import com.pulsedrop.app.ui.components.PulseSectionHeader
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowGroup
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.components.PulseStatus
 import com.pulsedrop.app.ui.components.PulseStatusTone
 import com.pulsedrop.app.ui.theme.LocalPulseColors
@@ -51,13 +60,13 @@ internal val NOTIFICATION_FACTS = listOf(
     NotificationFact(
         id = "webdrop_server_channel",
         label = "Server running",
-        whenItAppears = "Sits in the shade the whole time the server is on, with its address.",
+        whenItAppears = "Persistent while the server is on, showing its address.",
         defaultImportance = NotificationManager.IMPORTANCE_LOW
     ),
     NotificationFact(
         id = "localdrop_screen_share",
         label = "Screen sharing",
-        whenItAppears = "Stays while your screen is being shared, with a stop control.",
+        whenItAppears = "Stays while the screen is shared, with a stop control.",
         defaultImportance = NotificationManager.IMPORTANCE_LOW
     ),
     NotificationFact(
@@ -69,13 +78,13 @@ internal val NOTIFICATION_FACTS = listOf(
     NotificationFact(
         id = "pulsedrop_call_ended",
         label = "Ended calls",
-        whenItAppears = "Posted once when a call finishes, saying how long it lasted.",
+        whenItAppears = "Posted once when a call ends, with its duration.",
         defaultImportance = NotificationManager.IMPORTANCE_DEFAULT
     ),
     NotificationFact(
         id = "pulsedrop_crash",
         label = "Crash reports",
-        whenItAppears = "Only after the app stops unexpectedly, pointing at the report it saved.",
+        whenItAppears = "Only after an unexpected stop, pointing at the saved report.",
         defaultImportance = NotificationManager.IMPORTANCE_HIGH
     )
 )
@@ -99,6 +108,16 @@ internal fun channelStateLine(fact: NotificationFact, channel: NotificationChann
     } else {
         "${channel.name}: ${importanceLabel(channel.importance)}"
     }
+
+/** The leading icon for a channel, chosen from what that channel actually announces. */
+internal fun channelIcon(id: String): ImageVector = when (id) {
+    "webdrop_server_channel" -> Icons.Default.Wifi
+    "localdrop_screen_share" -> Icons.Default.ScreenShare
+    "pulsedrop_call" -> Icons.Default.Call
+    "pulsedrop_call_ended" -> Icons.Default.CallEnd
+    "pulsedrop_crash" -> Icons.Default.BugReport
+    else -> Icons.Default.Notifications
+}
 
 // ── Screen ────────────────────────────────────────────────────────────────
 
@@ -139,17 +158,6 @@ fun NotificationScreen(
                     .padding(top = PulseSpacing.lg.dp)
                     .testTag("notif_header")
             ) {
-                Text(
-                    "Notifications",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = c.textPrimary
-                )
-                Text(
-                    "What this app can notify you about, what each one is for, and what it " +
-                        "never notifies — read from the channels it actually creates.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.textSecondary
-                )
                 PulseButton(
                     label = "Read channel states again",
                     onClick = { readTick++ },
@@ -163,7 +171,7 @@ fun NotificationScreen(
         }
 
         // ── Permission ─────────────────────────────────────────────────────
-        item { PulseSectionHeader("Permission") }
+        item { PulseRowLabel("Permission") }
 
         item {
             PulseCard(modifier = Modifier.fillMaxWidth().testTag("notif_permission_card")) {
@@ -175,12 +183,10 @@ fun NotificationScreen(
                     )
                     Text(
                         if (permissionGranted) {
-                            "Android shows this app's notifications. Each channel below can " +
-                                "still be turned off individually in system settings."
+                            "Each channel below can still be turned off in system settings."
                         } else {
-                            "Android 13+ hides every notification this app posts — including " +
-                                "the persistent one that says the server is running. The app " +
-                                "still works inside its own windows."
+                            "Android 13+ hides every notification this app posts, including " +
+                                "the persistent server one."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = c.textSecondary
@@ -204,50 +210,46 @@ fun NotificationScreen(
         }
 
         // ── Channels ───────────────────────────────────────────────────────
-        item { PulseSectionHeader("What this app notifies about") }
+        item { PulseRowLabel("What this app notifies about") }
 
-        for (fact in NOTIFICATION_FACTS) {
-            item(key = "channel-${fact.id}") {
-                PulseCard(modifier = Modifier.fillMaxWidth().testTag("notif_channel_${fact.id}")) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(fact.label, style = MaterialTheme.typography.bodyLarge, color = c.textPrimary)
-                        Text(
-                            fact.whenItAppears,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = c.textSecondary
-                        )
-                        Text(
-                            channelStateLine(fact, channels[fact.id]),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                                channels[fact.id]?.importance == NotificationManager.IMPORTANCE_NONE
-                            ) c.danger else c.textTertiary
-                        )
-                    }
+        item {
+            PulseRowGroup {
+                NOTIFICATION_FACTS.forEachIndexed { index, fact ->
+                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    val channel = channels[fact.id]
+                    val turnedOff = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                        channel?.importance == NotificationManager.IMPORTANCE_NONE
+                    PulseRow(
+                        title = fact.label,
+                        icon = channelIcon(fact.id),
+                        iconTint = if (turnedOff) c.danger else c.textSecondary,
+                        subtitle = fact.whenItAppears,
+                        detail = channelStateLine(fact, channel),
+                        showChevron = false,
+                        modifier = Modifier.testTag("notif_channel_${fact.id}")
+                    )
                 }
             }
         }
 
         // ── What never notifies ────────────────────────────────────────────
-        item { PulseSectionHeader("What never sends a notification") }
+        item { PulseRowLabel("What never sends a notification") }
 
         item {
             PulseCard(modifier = Modifier.fillMaxWidth().testTag("notif_silence_card")) {
                 Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)) {
                     Text(
-                        "• Chat messages: the app only refreshes chats while it is open; a " +
-                            "message that arrives later is not pushed to this phone.",
+                        "• Chat messages: the app only refreshes chats while it is open.",
                         style = MaterialTheme.typography.bodySmall,
                         color = c.textSecondary
                     )
                     Text(
-                        "• Finished transfers: progress lives in the server notification and " +
-                            "in the app; a completion is not announced separately.",
+                        "• Finished transfers: announced only in the server notification.",
                         style = MaterialTheme.typography.bodySmall,
                         color = c.textSecondary
                     )
                     Text(
-                        "• Updates and pairing requests: shown as banners inside the app only.",
+                        "• Updates and pairing requests: shown in-app only.",
                         style = MaterialTheme.typography.bodySmall,
                         color = c.textSecondary
                     )
@@ -256,15 +258,14 @@ fun NotificationScreen(
         }
 
         // ── No history ─────────────────────────────────────────────────────
-        item { PulseSectionHeader("History") }
+        item { PulseRowLabel("History") }
 
         item {
             PulseCard(modifier = Modifier.fillMaxWidth().testTag("notif_history_card")) {
                 Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
                     Text(
-                        "PulseDrop keeps no log of the notifications it posted — they belong " +
-                            "to Android, and Android does not hand that history back to apps. " +
-                            "The events this app does record are on the Transfers page.",
+                        "PulseDrop keeps no log of the notifications it posted. The events it " +
+                            "does record are on the Transfers page.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = c.textSecondary
                     )

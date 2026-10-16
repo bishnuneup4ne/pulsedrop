@@ -169,7 +169,8 @@ class AboutScreenTest {
     fun theLicenseCardNamesTheLicenseTheRepoActuallyCarries() {
         screen()
         scrollTo("about_license_card")
-        compose.onNodeWithText("PolyForm Noncommercial", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("about_license_card").assertIsDisplayed()
+        compose.onNodeWithText("PolyForm Noncommercial 1.0.0").assertIsDisplayed()
     }
 
     @Test

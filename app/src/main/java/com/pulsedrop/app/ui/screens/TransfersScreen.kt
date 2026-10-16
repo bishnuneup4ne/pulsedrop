@@ -1,7 +1,5 @@
 package com.pulsedrop.app.ui.screens
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,24 +11,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -50,8 +50,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.data.TransferHistoryEntity
 import com.pulsedrop.app.model.PendingUploadInfo
@@ -60,18 +60,15 @@ import com.pulsedrop.app.model.TransferItem
 import com.pulsedrop.app.model.TransferStatus
 import com.pulsedrop.app.ui.components.PulseChip
 import com.pulsedrop.app.ui.components.PulseIconButton
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.components.PulseStatePanel
-import com.pulsedrop.app.ui.components.PulseStatTile
-import com.pulsedrop.app.ui.components.PulseStatus
 import com.pulsedrop.app.ui.components.PulseStatusTone
-import com.pulsedrop.app.ui.components.TransferProgressRow
 import com.pulsedrop.app.ui.theme.LocalPulseColors
-import com.pulsedrop.app.ui.theme.PulseSizes
 import com.pulsedrop.app.ui.theme.PulseSpacing
 import com.pulsedrop.app.util.NetworkUtils
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 /** Lifecycle bucket a raw status string falls into; drives both tabs and row affordances. */
@@ -161,6 +158,11 @@ internal fun transferMatchesQuery(entry: TransferEntry, query: String): Boolean 
         entry.id.lowercase(Locale.ROOT).contains(q)
 }
 
+/**
+ * The transfer log as an Instagram-style settings list: quiet filter chips up top, then plain
+ * full-bleed rows split by hairlines inset past the status icon. Every row says what moved,
+ * between whom, and how it ended — sizes and times read gray, taps open the details page.
+ */
 @Composable
 fun TransfersScreen(
     activeTransfers: List<TransferItem>,
@@ -187,7 +189,7 @@ fun TransfersScreen(
     var removeConfirm by remember { mutableStateOf<TransferEntry?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
 
-    // Counts on the tiles and tabs come from the full store, never from the filtered view —
+    // Counts on the chips come from the full store, never from the filtered view —
     // otherwise searching would rewrite the summary the search itself is hiding rows from.
     val entries = remember(activeTransfers, history) { mergeTransfers(activeTransfers, history) }
     val activeCount = entries.count { it.category == TransferCategory.ACTIVE }
@@ -220,14 +222,6 @@ fun TransfersScreen(
         )
     }
 
-    val tabBadge = mapOf(
-        "ALL" to 0,
-        "ACTIVE" to activeCount,
-        "PENDING" to pendingUploads.size,
-        "COMPLETED" to 0,
-        "FAILED" to failedCount
-    )
-
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -236,64 +230,48 @@ fun TransfersScreen(
         verticalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)
     ) {
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = PulseSpacing.md.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Transfers", style = MaterialTheme.typography.headlineSmall, color = colors.textPrimary)
-                    Text(
-                        text = "${entries.size} record${if (entries.size == 1) "" else "s"} • $activeCount in flight",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary
-                    )
-                }
-                if (history.isNotEmpty()) {
-                    TextButton(
-                        onClick = { showClearConfirm = true },
-                        modifier = Modifier.testTag("transfers_clear_all_btn")
-                    ) {
-                        Text("Clear all", color = colors.danger, style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-            }
-        }
-
-        item {
             Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                StatTile("Active", activeCount, "transfers_tile_active") { tab = if (tab == "ACTIVE") "ALL" else "ACTIVE" }
-                StatTile("Done", completedCount, "transfers_tile_completed") { tab = if (tab == "COMPLETED") "ALL" else "COMPLETED" }
-                StatTile("Failed", failedCount, "transfers_tile_failed") { tab = if (tab == "FAILED") "ALL" else "FAILED" }
-                StatTile("Awaiting", pendingUploads.size, "transfers_tile_awaiting") { tab = if (tab == "PENDING") "ALL" else "PENDING" }
+                CountFilterChip("Active", activeCount, tab == "ACTIVE", "transfers_tile_active") {
+                    tab = if (tab == "ACTIVE") "ALL" else "ACTIVE"
+                }
+                CountFilterChip("Done", completedCount, tab == "COMPLETED", "transfers_tile_completed") {
+                    tab = if (tab == "COMPLETED") "ALL" else "COMPLETED"
+                }
+                CountFilterChip("Failed", failedCount, tab == "FAILED", "transfers_tile_failed") {
+                    tab = if (tab == "FAILED") "ALL" else "FAILED"
+                }
+                CountFilterChip("Awaiting", pendingUploads.size, tab == "PENDING", "transfers_tile_awaiting") {
+                    tab = if (tab == "PENDING") "ALL" else "PENDING"
+                }
             }
         }
 
         item {
-            Row(
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
-            ) {
-                listOf(
-                    "ALL" to "All",
-                    "ACTIVE" to "Active",
-                    "PENDING" to "Awaiting approval",
-                    "COMPLETED" to "Completed",
-                    "FAILED" to "Failed"
-                ).forEach { (key, label) ->
-                    PulseChip(
-                        label = label,
-                        selected = tab == key,
-                        badge = tabBadge.getValue(key),
-                        onClick = { tab = key },
-                        modifier = Modifier.testTag("transfers_tab_${key.lowercase(Locale.ROOT)}")
-                    )
-                }
-            }
+                    .testTag("transfers_search"),
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                placeholder = { Text("Name, device, IP or id") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        PulseIconButton(
+                            icon = Icons.Default.Close,
+                            label = "Clear search",
+                            onClick = { query = "" },
+                            modifier = Modifier.testTag("transfers_search_clear")
+                        )
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = colors.accent,
+                    unfocusedBorderColor = colors.borderSubtle
+                )
+            )
         }
 
         item {
@@ -302,31 +280,6 @@ fun TransfersScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
             ) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("transfers_search"),
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    placeholder = { Text("Name, device, IP or id") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    trailingIcon = {
-                        if (query.isNotEmpty()) {
-                            PulseIconButton(
-                                icon = Icons.Default.Close,
-                                label = "Clear search",
-                                onClick = { query = "" },
-                                modifier = Modifier.testTag("transfers_search_clear")
-                            )
-                        }
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.accent,
-                        unfocusedBorderColor = colors.borderSubtle
-                    )
-                )
                 PulseChip(
                     label = when (direction) {
                         "SENT" -> "Sent"
@@ -368,6 +321,15 @@ fun TransfersScreen(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.weight(1f))
+                if (history.isNotEmpty()) {
+                    TextButton(
+                        onClick = { showClearConfirm = true },
+                        modifier = Modifier.testTag("transfers_clear_all_btn")
+                    ) {
+                        Text("Clear all", color = colors.danger, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
             }
         }
 
@@ -377,7 +339,7 @@ fun TransfersScreen(
                     PulseStatePanel(
                         icon = Icons.Default.History,
                         title = "Nothing waiting on you",
-                        message = "When auto-accept is off, uploads pause on the Receive page until you decide.",
+                        message = "Uploads pause on the Receive page until you decide.",
                         modifier = Modifier.testTag("transfers_pending_empty")
                     )
                 }
@@ -386,15 +348,16 @@ fun TransfersScreen(
                     PulseStatePanel(
                         icon = Icons.Default.ErrorOutline,
                         title = "${pendingUploads.size} upload${if (pendingUploads.size == 1) "" else "s"} need a decision",
-                        message = "Accepting and declining happen on the Receive page, where the request details are verified — this list is a peek, not a second approval desk.",
+                        message = "Accept or decline on the Receive page.",
                         actionLabel = "Open Receive",
                         onAction = onOpenReceive,
                         tone = PulseStatusTone.Warning,
                         modifier = Modifier.testTag("transfers_pending_panel")
                     )
                 }
-                items(pendingUploads, key = { "pending_${it.id}" }) { pending ->
-                    PendingPeekRow(pending)
+                item { PulseRowLabel("Staged uploads") }
+                itemsIndexed(pendingUploads, key = { _, u -> "pending_${u.id}" }) { index, pending ->
+                    PendingPeekRow(pending, showDivider = index > 0)
                 }
             }
         } else if (visible.isEmpty()) {
@@ -403,7 +366,7 @@ fun TransfersScreen(
                     entries.isEmpty() -> PulseStatePanel(
                         icon = Icons.Default.History,
                         title = "No transfers yet",
-                        message = "Files you send or receive will be tracked here with live progress and history.",
+                        message = "Your sends and receives appear here.",
                         actionLabel = "Send a file",
                         onAction = onOpenSend,
                         modifier = Modifier.testTag("transfers_empty")
@@ -411,7 +374,7 @@ fun TransfersScreen(
                     query.isNotBlank() || direction != "ALL" -> PulseStatePanel(
                         icon = Icons.Outlined.SearchOff,
                         title = "Nothing matches",
-                        message = "${entries.size} record${if (entries.size == 1) "" else "s"} exist, but none match the current search and filters.",
+                        message = "None match the current search and filters.",
                         actionLabel = "Clear filters",
                         onAction = { query = ""; direction = "ALL" },
                         modifier = Modifier.testTag("transfers_no_results")
@@ -419,7 +382,7 @@ fun TransfersScreen(
                     tab == "ACTIVE" -> PulseStatePanel(
                         icon = Icons.Default.SwapHoriz,
                         title = "Nothing in flight",
-                        message = "Transfers do not survive an app restart — anything interrupted mid-way left no record and will not resume.",
+                        message = "Interrupted transfers leave no record.",
                         modifier = Modifier.testTag("transfers_tab_empty")
                     )
                     else -> PulseStatePanel(
@@ -433,9 +396,28 @@ fun TransfersScreen(
                 }
             }
         } else {
-            items(visible, key = { it.id }) { entry ->
+            item(key = "rows_label") {
+                PulseRowLabel(
+                    when (tab) {
+                        "ALL" -> "All transfers"
+                        "ACTIVE" -> "Active transfers"
+                        "COMPLETED" -> "Completed transfers"
+                        else -> "Failed transfers"
+                    }
+                ) {
+                    if (tab == "ALL") {
+                        Text(
+                            "${entries.size} record${if (entries.size == 1) "" else "s"} • $activeCount in flight",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.textTertiary
+                        )
+                    }
+                }
+            }
+            itemsIndexed(visible, key = { _, e -> e.id }) { index, entry ->
                 TransferListRow(
                     entry = entry,
+                    showDivider = index > 0,
                     onDetails = { onOpenDetails(entry.id) },
                     onOpen = { onOpenFile(entry.item.localFilePath) },
                     onShare = { onShareFile(entry.item.localFilePath) },
@@ -525,119 +507,145 @@ fun TransfersScreen(
     }
 }
 
+/** A count you can tap to filter, in the quiet chip style the rest of the lists use. */
 @Composable
-private fun RowScope.StatTile(label: String, value: Int, tag: String, onClick: () -> Unit) {
-    PulseStatTile(
+private fun RowScope.CountFilterChip(
+    label: String,
+    count: Int,
+    selected: Boolean,
+    tag: String,
+    onClick: () -> Unit
+) {
+    PulseChip(
         label = label,
-        value = value.toString(),
+        selected = selected,
+        badge = count,
+        onClick = onClick,
         modifier = Modifier
             .weight(1f)
-            .testTag(tag),
-        onClick = onClick
+            .testTag(tag)
     )
 }
 
 @Composable
-private fun PendingPeekRow(pending: PendingUploadInfo) {
+private fun PendingPeekRow(pending: PendingUploadInfo, showDivider: Boolean) {
     val colors = LocalPulseColors.current
-    androidx.compose.material3.Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("transfers_pending_${pending.id}"),
-        shape = RoundedCornerShape(16.dp),
-        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = colors.surfaceElevated)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(PulseSpacing.lg.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = pending.fileName,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = colors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "From ${pending.fromDevice} • ${NetworkUtils.formatBytes(pending.fileSize)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            PulseStatus(text = "Awaiting", tone = PulseStatusTone.Warning)
-        }
+    Column(modifier = Modifier.fillMaxWidth().testTag("transfers_pending_${pending.id}")) {
+        if (showDivider) PulseRowDivider(insetStart = 54)
+        PulseRow(
+            title = pending.fileName,
+            subtitle = "From ${pending.fromDevice}",
+            detail = NetworkUtils.formatBytes(pending.fileSize),
+            icon = Icons.Default.HourglassEmpty,
+            iconTint = colors.warning,
+            showChevron = false
+        )
     }
 }
 
 /**
- * The single row widget for the page. Running rows carry the live engine's bytes and speed;
- * finished rows reuse the same layout with a frozen bar. Actions are limited to what the
- * backend truly supports — there is deliberately no pause, resume, cancel or retry button here,
- * because the transfer engine exposes no such operation.
+ * The single row widget for the page: a status icon, the file name, who it moved between, and
+ * the one real number that matters (size, or live percent while the engine is moving bytes).
+ * Running rows carry the live engine's percentage; finished rows show what the log recorded.
+ * Actions are limited to what the backend truly supports — there is deliberately no pause,
+ * resume, cancel or retry button here, because the transfer engine exposes no such operation.
  */
 @Composable
 private fun TransferListRow(
     entry: TransferEntry,
+    showDivider: Boolean,
     onDetails: () -> Unit,
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onSave: () -> Unit,
     onRemove: () -> Unit
 ) {
-    if (entry.category == TransferCategory.UNKNOWN || entry.category == TransferCategory.CANCELLED) {
-        UnknownStateRow(entry, onDetails, onRemove)
-        return
-    }
-
     val colors = LocalPulseColors.current
-    val path = entry.item.localFilePath
-    val fileThere = remember(path) { !path.isNullOrBlank() && File(path).exists() }
+    Column(modifier = Modifier.fillMaxWidth().testTag("transfers_row_${entry.id}")) {
+        if (showDivider) PulseRowDivider(insetStart = 54)
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("transfers_row_${entry.id}")
-    ) {
-        TransferProgressRow(
-            item = entry.item,
+        if (entry.category == TransferCategory.UNKNOWN || entry.category == TransferCategory.CANCELLED) {
+            UnknownStateRow(entry, onDetails, onRemove)
+            return@Column
+        }
+
+        val path = entry.item.localFilePath
+        val fileThere = remember(path) { !path.isNullOrBlank() && File(path).exists() }
+        val isIncoming = entry.item.direction == TransferDirection.INCOMING
+        val device = entry.item.remoteDevice
+
+        val icon: ImageVector = when (entry.category) {
+            TransferCategory.ACTIVE ->
+                if (entry.item.status == TransferStatus.QUEUED) Icons.Default.HourglassEmpty else Icons.Default.Sync
+            TransferCategory.COMPLETED -> Icons.Default.CheckCircle
+            else -> Icons.Default.Error
+        }
+        val iconTint = when (entry.category) {
+            TransferCategory.ACTIVE -> colors.accent
+            TransferCategory.COMPLETED -> colors.success
+            else -> colors.danger
+        }
+        val subtitle = when (entry.category) {
+            TransferCategory.ACTIVE -> (if (isIncoming) "Receiving from " else "Sending to ") + device
+            TransferCategory.COMPLETED -> (if (isIncoming) "Received" else "Sent") + " · $device"
+            else -> "Failed · $device"
+        }
+        val detail = when (entry.category) {
+            TransferCategory.COMPLETED -> NetworkUtils.formatBytes(entry.item.fileSize)
+            TransferCategory.FAILED -> entry.item.errorMessage ?: "Reason not recorded"
+            else -> null
+        }
+
+        PulseRow(
+            title = entry.item.fileName,
+            subtitle = subtitle,
+            detail = detail,
+            icon = icon,
+            iconTint = iconTint,
+            modifier = Modifier.testTag("transfer_progress_${entry.id}"),
             onClick = onDetails,
-            actions = {
+            trailing = {
+                if (entry.category == TransferCategory.ACTIVE) {
+                    Text(
+                        text = "${(entry.item.progress.coerceIn(0f, 1f) * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.accent,
+                        modifier = Modifier.testTag("transfer_percentage_${entry.id}")
+                    )
+                }
                 if (fileThere) {
+                    Spacer(modifier = Modifier.size(4.dp))
                     PulseIconButton(
                         icon = Icons.Default.Download,
                         label = "Open file",
                         onClick = onOpen,
                         modifier = Modifier.testTag("transfers_open_${entry.id}")
                     )
-                    Spacer(modifier = Modifier.size(PulseSizes.icon.dp))
+                    var menuOpen by remember(entry.id) { mutableStateOf(false) }
                     PulseIconButton(
-                        icon = Icons.Default.Share,
-                        label = "Share file",
-                        onClick = onShare,
-                        modifier = Modifier.testTag("transfers_share_${entry.id}")
+                        icon = Icons.Default.MoreVert,
+                        label = "More actions",
+                        onClick = { menuOpen = true }
                     )
-                    Spacer(modifier = Modifier.size(PulseSizes.icon.dp))
-                    PulseIconButton(
-                        icon = Icons.Default.ContentCopy,
-                        label = "Save to Downloads",
-                        onClick = onSave,
-                        modifier = Modifier.testTag("transfers_save_${entry.id}")
-                    )
-                    Spacer(modifier = Modifier.size(PulseSizes.icon.dp))
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Share file") },
+                            leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                            onClick = { menuOpen = false; onShare() },
+                            modifier = Modifier.testTag("transfers_share_${entry.id}")
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Save to Downloads") },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                            onClick = { menuOpen = false; onSave() },
+                            modifier = Modifier.testTag("transfers_save_${entry.id}")
+                        )
+                    }
                 }
-                if (entry.category == TransferCategory.FAILED && entry.item.errorMessage.isNullOrBlank()) {
-                    Text(
-                        text = "Reason not recorded",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary
-                    )
-                    Spacer(modifier = Modifier.size(PulseSpacing.sm.dp))
-                }
+                Spacer(modifier = Modifier.size(4.dp))
                 PulseIconButton(
                     icon = Icons.Default.Delete,
                     label = if (entry.isHistory) "Remove from history" else "Hide from live list",
@@ -652,38 +660,14 @@ private fun TransferListRow(
 @Composable
 private fun UnknownStateRow(entry: TransferEntry, onDetails: () -> Unit, onRemove: () -> Unit) {
     val colors = LocalPulseColors.current
-    androidx.compose.material3.Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("transfers_row_${entry.id}"),
-        shape = RoundedCornerShape(16.dp),
-        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = colors.surfaceElevated)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(PulseSpacing.lg.dp)
-                .clickable { onDetails() },
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = colors.warning)
-            Spacer(modifier = Modifier.size(PulseSpacing.md.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = entry.item.fileName,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = colors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "State “${entry.rawStatus}” is not produced by the current engine — shown for honesty, with no actions beyond viewing details.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.textSecondary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+    PulseRow(
+        title = entry.item.fileName,
+        subtitle = "State “${entry.rawStatus}” is not produced by the current engine — shown for honesty, " +
+            "with no actions beyond viewing details.",
+        icon = Icons.Default.ErrorOutline,
+        iconTint = colors.warning,
+        onClick = onDetails,
+        trailing = {
             PulseIconButton(
                 icon = Icons.Default.Delete,
                 label = "Remove",
@@ -691,6 +675,5 @@ private fun UnknownStateRow(entry: TransferEntry, onDetails: () -> Unit, onRemov
                 modifier = Modifier.testTag("transfers_remove_${entry.id}")
             )
         }
-    }
+    )
 }
-

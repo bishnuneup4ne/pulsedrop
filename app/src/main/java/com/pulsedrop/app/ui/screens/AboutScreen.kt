@@ -1,27 +1,27 @@
 package com.pulsedrop.app.ui.screens
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,12 +37,12 @@ import com.pulsedrop.app.BuildConfig
 import com.pulsedrop.app.R
 import com.pulsedrop.app.ui.components.PulseButton
 import com.pulsedrop.app.ui.components.PulseButtonTone
-import com.pulsedrop.app.ui.components.PulseCard
-import com.pulsedrop.app.ui.components.PulseStatus
-import com.pulsedrop.app.ui.components.PulseStatusTone
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowGroup
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.theme.LocalPulseColors
 import com.pulsedrop.app.ui.theme.PulseRadius
-import com.pulsedrop.app.ui.theme.PulseSizes
 import com.pulsedrop.app.ui.theme.PulseSpacing
 import com.pulsedrop.app.update.UpdateInfo
 import java.text.SimpleDateFormat
@@ -52,7 +52,8 @@ import java.util.Locale
 /**
  * Truthful facts about this build. Every version number was pinned by this build's dependency
  * catalog, every license string was read from the license the library itself ships, and every
- * link goes to a page that exists.
+ * link goes to a page that exists. Laid out like Instagram's settings: small gray labels over
+ * rounded groups of icon + title + subtitle rows.
  */
 
 internal data class OpenSourceDep(
@@ -100,7 +101,7 @@ internal fun installSpanLine(firstInstall: Long, lastUpdate: Long, fmt: SimpleDa
 
 internal fun latestReleaseLine(updateInfo: UpdateInfo?): String =
     if (updateInfo == null)
-        "No newer release has been found in this session. The updater checks GitHub releases on launch."
+        "No newer release has been found. The updater checks GitHub on launch."
     else "The newest release GitHub reports is v${updateInfo.versionName} — ${updateInfo.releaseName}"
 
 @Composable
@@ -145,7 +146,7 @@ fun AboutScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.ic_localdrop_logo),
+                        painter = painterResource(id = R.drawable.app_logo),
                         contentDescription = "PulseDrop logo",
                         modifier = Modifier.size(80.dp)
                     )
@@ -168,8 +169,7 @@ fun AboutScreen(
                     color = c.textTertiary
                 )
                 Text(
-                    text = "Files, chats, calls and screen sharing between your own devices — over your " +
-                            "network, with no account and no cloud.",
+                    text = "Your devices, your network. No account, no cloud.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = c.textSecondary,
                     textAlign = TextAlign.Center,
@@ -180,52 +180,58 @@ fun AboutScreen(
             }
         }
 
+        // ── This install ────────────────────────────────────────────────────
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("about_device_card")) {
-                AboutColumn {
-                    Text(
-                        installSpanLine(installTimes.first, installTimes.second, fmt),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = c.textPrimary
-                    )
-                    Text(
-                        "Both times come from Android's own package record for this install.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textTertiary
-                    )
-                }
+            PulseRowGroup(modifier = Modifier.fillMaxWidth().testTag("about_device_card")) {
+                PulseRow(
+                    title = installSpanLine(installTimes.first, installTimes.second, fmt),
+                    icon = Icons.Default.Info,
+                    subtitle = "From Android's package record.",
+                    showChevron = false
+                )
             }
         }
 
+        // ── How it works ────────────────────────────────────────────────────
+        item { PulseRowLabel("How it works") }
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("about_how_card")) {
-                AboutColumn {
-                    Text(
-                        "How it works",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = c.textPrimary
-                    )
-                    AboutFact(Icons.Default.Wifi, "One server, every device",
-                        "Turn the server on and phones, tablets and browsers on the same network connect to " +
-                                "this one address — there is no per-device server.")
-                    AboutFact(Icons.Default.Lock, "Encrypted pairing",
-                        "Pairing runs on an end-to-end encrypted channel with a spoken safety code, so you " +
-                                "know the device you trusted is the one in the room.")
-                    AboutFact(Icons.Default.PhoneAndroid, "No accounts, no cloud",
-                        "Nothing is uploaded anywhere. Transfers go device to device; the optional browser " +
-                                "server only ever talks to your own network.")
-                }
+            PulseRowGroup(modifier = Modifier.fillMaxWidth().testTag("about_how_card")) {
+                AboutFactRow(
+                    icon = Icons.Default.Wifi,
+                    title = "One server, every device",
+                    body = "Turn the server on; every device on your network uses this one address."
+                )
+                PulseRowDivider(insetStart = 54)
+                AboutFactRow(
+                    icon = Icons.Default.Lock,
+                    title = "Encrypted pairing",
+                    body = "End-to-end encrypted, with a code you confirm on both devices."
+                )
+                PulseRowDivider(insetStart = 54)
+                AboutFactRow(
+                    icon = Icons.Default.PhoneAndroid,
+                    title = "No accounts, no cloud",
+                    body = "Device-to-device only; the browser server stays on your own network."
+                )
             }
         }
 
+        // ── Updates ─────────────────────────────────────────────────────────
+        item { PulseRowLabel("Updates") }
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("about_update_card")) {
-                AboutColumn {
-                    PulseStatus(
-                        text = "Updates",
-                        tone = if (updateStatus != null) PulseStatusTone.Warning else PulseStatusTone.Neutral,
-                        detail = updateStatus ?: latestReleaseLine(updateInfo)
-                    )
+            PulseRowGroup(modifier = Modifier.fillMaxWidth().testTag("about_update_card")) {
+                PulseRow(
+                    title = "Updates",
+                    icon = Icons.Default.SystemUpdate,
+                    subtitle = updateStatus ?: latestReleaseLine(updateInfo),
+                    showChevron = false
+                )
+                PulseRowDivider(insetStart = 54)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
                     PulseButton(
                         "Check for updates",
                         onClick = onCheckUpdate,
@@ -236,73 +242,59 @@ fun AboutScreen(
             }
         }
 
+        // ── License ─────────────────────────────────────────────────────────
+        item { PulseRowLabel("License") }
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("about_license_card")) {
-                AboutColumn {
-                    Text(
-                        "License",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = c.textPrimary
-                    )
-                    Text(
-                        "PulseDrop is free for noncommercial use under the PolyForm Noncommercial " +
-                                "1.0.0 license, the license file committed at the root of the source " +
-                                "repository. The full source is public.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary
-                    )
-                }
+            PulseRowGroup(modifier = Modifier.fillMaxWidth().testTag("about_license_card")) {
+                PulseRow(
+                    title = "PolyForm Noncommercial 1.0.0",
+                    icon = Icons.Default.Lock,
+                    showChevron = false
+                )
+                Text(
+                    text = "Free for noncommercial use — LICENSE file in the source repo.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textSecondary,
+                    modifier = Modifier.padding(start = 54.dp, end = 16.dp, top = 2.dp, bottom = 10.dp)
+                )
             }
         }
 
-        item {
-            Text(
-                "Built with open source",
-                style = MaterialTheme.typography.titleSmall,
-                color = c.textPrimary,
-                modifier = Modifier.fillMaxWidth().padding(top = PulseSpacing.xs.dp)
+        // ── Built with open source ──────────────────────────────────────────
+        item { PulseRowLabel("Built with open source") }
+        items(OPEN_SOURCE_DEPS, key = { "dep_${it.artifact}" }) { dep ->
+            PulseRow(
+                title = dep.name,
+                icon = Icons.Default.Description,
+                subtitle = "${dep.artifact} • ${dep.version}",
+                detail = dep.license,
+                showChevron = false,
+                modifier = Modifier.fillMaxWidth().testTag("about_dep_${dep.artifact}")
             )
         }
-        items(OPEN_SOURCE_DEPS, key = { "dep_${it.artifact}" }) { dep ->
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("about_dep_${dep.artifact}")) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(dep.name, style = MaterialTheme.typography.bodyMedium, color = c.textPrimary)
-                        Text(
-                            "${dep.artifact} • ${dep.version}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = c.textTertiary
-                        )
-                    }
-                    Text(dep.license, style = MaterialTheme.typography.labelMedium, color = c.accent)
-                }
-            }
-        }
         item {
             Text(
-                "These are the versions this build pinned. Each license name is the one the library " +
-                        "itself states; this page does not restate their text.",
+                "These are the versions this build pinned; license names are the libraries' own.",
                 style = MaterialTheme.typography.bodySmall,
                 color = c.textTertiary,
                 modifier = Modifier.fillMaxWidth().testTag("about_deps_note")
             )
         }
 
+        // ── Links ───────────────────────────────────────────────────────────
+        item { PulseRowLabel("Links") }
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("about_links_card")) {
-                AboutColumn {
-                    Text(
-                        "Links",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = c.textPrimary
+            PulseRowGroup(modifier = Modifier.fillMaxWidth().testTag("about_links_card")) {
+                ABOUT_LINKS.forEachIndexed { index, link ->
+                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    PulseRow(
+                        title = link.label,
+                        icon = Icons.Default.Link,
+                        subtitle = link.url,
+                        onClick = { onOpenLink(link.url) },
+                        titleColor = c.accent,
+                        modifier = Modifier.testTag("about_link_${link.id}")
                     )
-                    ABOUT_LINKS.forEach { link ->
-                        AboutLinkRow(
-                            link = link,
-                            onClick = { onOpenLink(link.url) },
-                            modifier = Modifier.testTag("about_link_${link.id}")
-                        )
-                    }
                 }
             }
         }
@@ -310,52 +302,11 @@ fun AboutScreen(
 }
 
 @Composable
-private fun AboutColumn(content: @Composable () -> Unit) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) { content() }
-}
-
-@Composable
-private fun AboutLinkRow(
-    link: AboutLink,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val c = LocalPulseColors.current
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(PulseRadius.md.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = PulseSpacing.xs.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(link.label, style = MaterialTheme.typography.bodyMedium, color = c.accent)
-                Text(link.url, style = MaterialTheme.typography.bodySmall, color = c.textTertiary)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AboutFact(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    body: String
-) {
-    val c = LocalPulseColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top
-    ) {
-        Icon(icon, contentDescription = null, tint = c.accent, modifier = Modifier.size(PulseSizes.iconLg.dp))
-        Spacer(Modifier.width(PulseSpacing.md.dp))
-        Column {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = c.textPrimary)
-            Text(body, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
-        }
-    }
+private fun AboutFactRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, body: String) {
+    PulseRow(
+        title = title,
+        icon = icon,
+        subtitle = body,
+        showChevron = false
+    )
 }

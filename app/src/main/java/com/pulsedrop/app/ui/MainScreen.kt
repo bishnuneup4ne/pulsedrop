@@ -445,7 +445,6 @@ fun MainScreen(viewModel: MainViewModel) {
                         history = historyList,
                         pairedDevices = pairedDevices,
                         peersCount = displayPeers.size,
-                        webClientsCount = webClients.size,
                         pendingUploads = pendingUploads,
                         incomingPairCount = incomingPairRequests.size,
                         relayHostName = relayHostName,

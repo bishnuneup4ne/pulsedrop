@@ -7,23 +7,26 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.BuildConfig
 import com.pulsedrop.app.model.PendingUploadInfo
@@ -31,10 +34,10 @@ import com.pulsedrop.app.ui.UiServerState
 import com.pulsedrop.app.ui.components.PulseButton
 import com.pulsedrop.app.ui.components.PulseButtonTone
 import com.pulsedrop.app.ui.components.PulseCard
-import com.pulsedrop.app.ui.components.PulseDivider
-import com.pulsedrop.app.ui.components.PulseListItem
-import com.pulsedrop.app.ui.components.PulseSectionHeader
-import com.pulsedrop.app.ui.components.PulseSwitch
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowGroup
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.theme.LocalPulseColors
 import com.pulsedrop.app.ui.theme.PulseSpacing
 import com.pulsedrop.app.update.UpdateInfo
@@ -46,9 +49,33 @@ private fun bytesLabel(bytes: Long): String = when {
     else -> "$bytes B"
 }
 
+/** Instagram's toggle: the switch rides at the end of the row, styled from the semantic palette. */
+@Composable
+private fun RowSwitch(
+    checked: Boolean,
+    label: String,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val c = LocalPulseColors.current
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = Modifier.semantics { contentDescription = label },
+        colors = SwitchDefaults.colors(
+            checkedTrackColor = c.accent,
+            checkedThumbColor = c.onAccent,
+            uncheckedTrackColor = c.borderStrong,
+            uncheckedThumbColor = c.surfaceElevated,
+            uncheckedBorderColor = c.borderSubtle
+        )
+    )
+}
+
 /**
  * Every switch here drives a real behaviour: the theme store, the server's upload gate, the
  * PIN the browser sees, the update checker. Nothing decorative, nothing that needs a restart.
+ * Laid out as Instagram's "Settings and activity": a small gray label, then rows of
+ * icon + title + subtitle with a switch (or a chevron) at the end, hairlines inset to the text.
  */
 @Composable
 fun SettingsSheet(
@@ -76,27 +103,24 @@ fun SettingsSheet(
             .padding(bottom = PulseSpacing.xl.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Text(
-            text = "Settings",
-            style = MaterialTheme.typography.titleLarge,
-            color = c.textPrimary,
-            modifier = Modifier.padding(bottom = PulseSpacing.xs.dp)
-        )
-
-        PulseSectionHeader(
-            title = "Files",
-            detail = if (serverState.autoAcceptTransfers)
-                "Incoming uploads land in the received folder as they arrive."
-            else
-                "Incoming uploads wait on this phone until you accept or decline them."
-        )
-        PulseSwitch(
-            checked = serverState.autoAcceptTransfers,
-            onCheckedChange = onAutoAcceptChange,
-            label = "Accept files automatically",
-            detail = "Turn off to approve every file on the phone first",
-            modifier = Modifier.testTag("settings_auto_accept")
-        )
+        // ── Files ───────────────────────────────────────────────────────────
+        PulseRowLabel("Files")
+        PulseRowGroup {
+            PulseRow(
+                title = "Accept files automatically",
+                icon = Icons.Default.Download,
+                subtitle = "Turn off to approve every file on the phone first",
+                onClick = { onAutoAcceptChange(!serverState.autoAcceptTransfers) },
+                trailing = {
+                    RowSwitch(
+                        checked = serverState.autoAcceptTransfers,
+                        label = "Accept files automatically",
+                        onCheckedChange = onAutoAcceptChange
+                    )
+                },
+                modifier = Modifier.testTag("settings_auto_accept")
+            )
+        }
         if (pendingUploads.isNotEmpty()) {
             Spacer(Modifier.height(PulseSpacing.xs.dp))
             pendingUploads.forEach { upload ->
@@ -135,75 +159,86 @@ fun SettingsSheet(
             }
         }
 
-        PulseDivider()
-        PulseSectionHeader(title = "Security")
-        PulseSwitch(
-            checked = serverState.isPinRequired,
-            onCheckedChange = onSetPinRequired,
-            label = "Require PIN in browsers",
-            detail = if (serverState.isPinRequired)
-                "PIN ${serverState.pin} — anyone opening the address must type it"
-            else "The address opens without a code",
-            modifier = Modifier.testTag("settings_pin_required")
-        )
-        PulseListItem(
-            title = "New PIN",
-            subtitle = "Replaces the current browser code",
-            leading = { Icon(Icons.Default.Refresh, contentDescription = null, tint = c.textSecondary) },
-            onClick = onRegeneratePin,
-            modifier = Modifier.testTag("settings_regenerate_pin")
-        )
-        PulseListItem(
-            title = "Paired devices",
-            subtitle = if (pairedCount == 0)
-                "None yet — pair from the Radar tab"
-            else "$pairedCount trusted ${if (pairedCount == 1) "phone" else "phones"}",
-            leading = { Icon(Icons.Default.Security, contentDescription = null, tint = c.textSecondary) },
-            onClick = onOpenDevices,
-            modifier = Modifier.testTag("settings_open_devices")
-        )
-
-        PulseDivider()
-        PulseSectionHeader(title = "Server")
-        PulseListItem(
-            title = "Open the server card",
-            subtitle = "${serverState.ipAddress}:${serverState.port} · ${
-                if (serverState.isRunning) "serving now" else "not serving"
-            }",
-            leading = { Icon(Icons.Default.FolderOpen, contentDescription = null, tint = c.textSecondary) },
-            onClick = onOpenServer,
-            modifier = Modifier.testTag("settings_open_server")
-        )
-
-        PulseDivider()
-        PulseSectionHeader(title = "Updates")
-        Text(
-            text = "PulseDrop v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
-            style = MaterialTheme.typography.bodyMedium,
-            color = c.textPrimary
-        )
-        if (updateStatus != null) {
-            Text(
-                text = updateStatus,
-                style = MaterialTheme.typography.bodySmall,
-                color = c.textSecondary
+        // ── Security ────────────────────────────────────────────────────────
+        PulseRowLabel("Security")
+        PulseRowGroup {
+            PulseRow(
+                title = "Require PIN in browsers",
+                icon = Icons.Default.Key,
+                subtitle = if (serverState.isPinRequired)
+                    "PIN ${serverState.pin} — anyone opening the address must type it"
+                else "The address opens without a code",
+                onClick = { onSetPinRequired(!serverState.isPinRequired) },
+                trailing = {
+                    RowSwitch(
+                        checked = serverState.isPinRequired,
+                        label = "Require PIN in browsers",
+                        onCheckedChange = onSetPinRequired
+                    )
+                },
+                modifier = Modifier.testTag("settings_pin_required")
+            )
+            PulseRowDivider(insetStart = 54)
+            PulseRow(
+                title = "New PIN",
+                icon = Icons.Default.Refresh,
+                subtitle = "Replaces the current browser code",
+                onClick = onRegeneratePin,
+                modifier = Modifier.testTag("settings_regenerate_pin")
+            )
+            PulseRowDivider(insetStart = 54)
+            PulseRow(
+                title = "Paired devices",
+                icon = Icons.Default.Security,
+                subtitle = if (pairedCount == 0)
+                    "None yet — pair from the Radar tab"
+                else "$pairedCount trusted ${if (pairedCount == 1) "phone" else "phones"}",
+                onClick = onOpenDevices,
+                modifier = Modifier.testTag("settings_open_devices")
             )
         }
-        if (updateInfo != null) {
-            Text(
-                text = "v${updateInfo.versionName} is available",
-                style = MaterialTheme.typography.bodySmall,
-                color = c.accent
+
+        // ── Server ──────────────────────────────────────────────────────────
+        PulseRowLabel("Server")
+        PulseRowGroup {
+            PulseRow(
+                title = "Open the server card",
+                icon = Icons.Default.FolderOpen,
+                subtitle = "${serverState.ipAddress}:${serverState.port} · ${
+                    if (serverState.isRunning) "serving now" else "not serving"
+                }",
+                onClick = onOpenServer,
+                modifier = Modifier.testTag("settings_open_server")
             )
         }
-        PulseButton(
-            label = "Check for updates",
-            onClick = onCheckUpdate,
-            tone = PulseButtonTone.Neutral,
-            modifier = Modifier
-                .padding(top = PulseSpacing.xs.dp)
-                .testTag("settings_check_update")
-        )
+
+        // ── Updates ─────────────────────────────────────────────────────────
+        PulseRowLabel("Updates")
+        PulseRowGroup {
+            PulseRow(
+                title = "PulseDrop v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+                icon = Icons.Default.Info,
+                subtitle = updateStatus,
+                showChevron = false
+            )
+            if (updateInfo != null) {
+                PulseRowDivider(insetStart = 54)
+                PulseRow(
+                    title = "v${updateInfo.versionName} is available",
+                    icon = Icons.Default.TrendingUp,
+                    titleColor = c.accent,
+                    showChevron = false
+                )
+            }
+            PulseRowDivider(insetStart = 54)
+            PulseRow(
+                title = "Check for updates",
+                icon = Icons.Default.Refresh,
+                onClick = onCheckUpdate,
+                showChevron = false,
+                modifier = Modifier.testTag("settings_check_update")
+            )
+        }
 
         Spacer(Modifier.height(8.dp))
     }

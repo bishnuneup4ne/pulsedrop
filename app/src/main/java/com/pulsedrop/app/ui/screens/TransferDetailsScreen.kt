@@ -1,8 +1,6 @@
 package com.pulsedrop.app.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,21 +8,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Send
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -49,10 +45,12 @@ import com.pulsedrop.app.model.TransferItem
 import com.pulsedrop.app.model.TransferStatus
 import com.pulsedrop.app.ui.components.PulseButton
 import com.pulsedrop.app.ui.components.PulseButtonTone
-import com.pulsedrop.app.ui.components.PulseCard
 import com.pulsedrop.app.ui.components.PulseChip
 import com.pulsedrop.app.ui.components.PulseIconButton
-import com.pulsedrop.app.ui.components.PulseSectionHeader
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowGroup
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.components.PulseStatePanel
 import com.pulsedrop.app.ui.components.PulseStatus
 import com.pulsedrop.app.ui.components.PulseStatusTone
@@ -203,6 +201,12 @@ internal fun diagnosticsText(
     appendLine("capturedAt=$now")
 }
 
+/**
+ * One transfer's record, laid out like the Instagram settings pages: small gray section labels
+ * (File, Progress, Between which devices, Timing…), rows of icon + title + gray detail split by
+ * hairlines, and only the honesty notes that the engine's real data allows. No invented speeds,
+ * no invented states — every number on this page was measured or stored somewhere.
+ */
 @Composable
 fun TransferDetailsScreen(
     transferId: String?,
@@ -329,8 +333,7 @@ fun TransferDetailsScreen(
             PulseStatePanel(
                 icon = Icons.Default.History,
                 title = "Nothing lives behind this id",
-                message = "The transfer was removed from the log, dismissed from the live list, or the id never existed. " +
-                    "No other transfer's data is shown — the engine simply has no record to read.",
+                message = "Removed from the log, dismissed, or never existed — there is no record to read.",
                 actionLabel = "Back to transfers",
                 onAction = onBack,
                 modifier = Modifier.testTag("details_missing")
@@ -430,231 +433,292 @@ fun TransferDetailsScreen(
             }
         }
 
+        // ── File ──────────────────────────────────────────────────────────
+        PulseRowLabel("File")
+        PulseRow(
+            title = "Total size",
+            detail = NetworkUtils.formatBytes(totalBytes),
+            icon = Icons.Default.Description,
+            showChevron = false
+        )
+        if (!localPath.isNullOrBlank()) {
+            PulseRowDivider(insetStart = 54)
+            PulseRow(
+                title = "Saved on this phone",
+                subtitle = localPath,
+                showChevron = false
+            )
+        }
+
         // ── Progress ──────────────────────────────────────────────────────
-        PulseCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(PulseSpacing.lg.dp),
-                verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
-            ) {
-                PulseSectionHeader("Progress", detail = if (running) "Measured from the wire, throttled by the engine" else null)
-                when {
-                    model is TransferDetailModel.FromPending -> {
-                        Text(
-                            text = "All ${NetworkUtils.formatBytes(totalBytes)} already sit on this phone in the staging folder, " +
-                                "paused until you accept or decline. Nothing has been released into the received folder.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.textPrimary,
-                            modifier = Modifier.testTag("details_progress_pending")
-                        )
-                    }
-                    totalBytes == 0L -> {
-                        Text(
-                            text = "A 0-byte file has no byte count to measure. Completion here means the request itself finished.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.textSecondary,
-                            modifier = Modifier.testTag("details_progress_zerobyte")
-                        )
-                    }
-                    totalBytes > 0L -> {
-                        val fraction = (bytesDone.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-                        LinearProgressIndicator(
-                            progress = { fraction },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .testTag("details_progress_bar")
-                        )
-                        Text(
-                            text = "${NetworkUtils.formatBytes(bytesDone)} of ${NetworkUtils.formatBytes(totalBytes)} • ${(fraction * 100).toInt()}%",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.textPrimary,
-                            modifier = Modifier.testTag("details_progress_counts")
-                        )
-                    }
-                    else -> Text(
-                        text = "The record stores no byte count, so no percentage is shown.",
+        PulseRowLabel("Progress")
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PulseSpacing.lg.dp),
+            verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
+        ) {
+            when {
+                model is TransferDetailModel.FromPending -> {
+                    Text(
+                        text = "All ${NetworkUtils.formatBytes(totalBytes)} sit staged on this phone, waiting for your decision.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textSecondary
+                        color = colors.textPrimary,
+                        modifier = Modifier.testTag("details_progress_pending")
                     )
                 }
-                if (running) {
-                    val eta = etaSecondsLeft(bytesDone, totalBytes, speed)
+                totalBytes == 0L -> {
                     Text(
-                        text = buildString {
-                            append("Speed: ${NetworkUtils.formatSpeed(speed)}")
-                            append(" — ")
-                            append(
-                                if (eta != null) "about ${formatEta(eta)} left at this measured speed"
-                                else "no stable estimate yet (ETA needs a non-zero measured speed and a known total)"
-                            )
-                        },
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "A 0-byte file has nothing to count — completion means the request finished.",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = colors.textSecondary,
-                        modifier = Modifier.testTag("details_eta")
+                        modifier = Modifier.testTag("details_progress_zerobyte")
                     )
                 }
-                startedAt?.let {
+                totalBytes > 0L -> {
+                    val fraction = (bytesDone.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .testTag("details_progress_bar")
+                    )
                     Text(
-                        text = "Started ${dateFormatter.format(Date(it))}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary
+                        text = "${NetworkUtils.formatBytes(bytesDone)} of ${NetworkUtils.formatBytes(totalBytes)} • ${(fraction * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.textPrimary,
+                        modifier = Modifier.testTag("details_progress_counts")
                     )
                 }
-                recordedAt?.let {
-                    Text(
-                        text = "Recorded ${dateFormatter.format(Date(it))}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary
-                    )
-                }
-                if (model is TransferDetailModel.FromPending) {
-                    Text(
-                        text = "Arrival time is not recorded by the staging queue.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary
-                    )
-                }
-                Text(
-                    text = "One file per transfer: a multi-file send appears as one transfer each.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.textSecondary,
-                    modifier = Modifier.testTag("details_single_file")
-                )
-            }
-        }
-
-        // ── Between which devices ─────────────────────────────────────────
-        PulseCard(modifier = Modifier.fillMaxWidth().testTag("details_peers")) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(PulseSpacing.lg.dp),
-                verticalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)
-            ) {
-                PulseSectionHeader("Between which devices")
-                DetailFact(
-                    if (direction == "INCOMING") "From" else "To",
-                    remoteName.ifBlank { "Unknown device" }
-                )
-                DetailFact("This phone", "the PulseDrop app you are reading")
-                if (peerIp.isNotBlank()) DetailFact("Peer address", peerIp)
-                val paired = pairedDevices.firstOrNull { it.originIp.isNotBlank() && it.originIp == peerIp }
-                val visibleNow = nearbyPeers.any { peerIp.isNotBlank() && it.ip == peerIp }
-                Text(
-                    text = when {
-                        paired != null && paired.verified ->
-                            "Paired and trusted: both sides confirmed the safety code."
-                        paired != null ->
-                            "Paired, but the safety code was never confirmed on this phone — the key is trusted, the identity is not proven."
-                        model is TransferDetailModel.FromPending || direction == "INCOMING" ->
-                            "Identity unverified: this name arrived with the request and proves nothing. Network proximity is not authorisation."
-                        else ->
-                            "Unpaired device: the transfer was authorised by the PIN entered at the time, not by a verified identity."
-                    } + if (peerIp.isNotBlank() && !visibleNow && model is TransferDetailModel.FromLive)
-                        " The peer is not currently visible on the network."
-                    else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (paired != null && paired.verified) colors.success else colors.warning,
-                    modifier = Modifier.testTag("details_trust")
-                )
-            }
-        }
-
-        // ── Integrity verification ────────────────────────────────────────
-        PulseCard(modifier = Modifier.fillMaxWidth().testTag("details_integrity")) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(PulseSpacing.lg.dp),
-                verticalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)
-            ) {
-                PulseSectionHeader("Integrity verification", detail = "Not supported — shown as the protocol is, not as one would like it")
-                Text(
-                    text = "This transfer engine computes no content hash and the protocol authenticates no checksum. " +
-                        "“Completed” means every declared byte reached the peer and the request closed successfully — " +
-                        "transport framing only. Nothing here has been independently verified, and no file is scanned or safe by virtue of completing.",
-                    style = MaterialTheme.typography.bodySmall,
+                else -> Text(
+                    text = "The record stores no byte count, so no percentage is shown.",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = colors.textSecondary
                 )
             }
+            if (running) {
+                val eta = etaSecondsLeft(bytesDone, totalBytes, speed)
+                Text(
+                    text = buildString {
+                        append("Speed: ${NetworkUtils.formatSpeed(speed)}")
+                        append(" — ")
+                        append(
+                            if (eta != null) "about ${formatEta(eta)} left at this measured speed"
+                            else "no stable estimate yet"
+                        )
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary,
+                    modifier = Modifier.testTag("details_eta")
+                )
+            }
+            Text(
+                text = "One file per transfer.",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textSecondary,
+                modifier = Modifier.testTag("details_single_file")
+            )
+        }
+
+        // ── Between which devices ─────────────────────────────────────────
+        val paired = pairedDevices.firstOrNull { it.originIp.isNotBlank() && it.originIp == peerIp }
+        val visibleNow = nearbyPeers.any { peerIp.isNotBlank() && it.ip == peerIp }
+        PulseRowLabel("Between which devices")
+        Column(modifier = Modifier.fillMaxWidth().testTag("details_peers")) {
+            PulseRow(
+                title = remoteName.ifBlank { "Unknown device" },
+                subtitle = if (direction == "INCOMING") "From" else "To",
+                icon = if (paired != null && paired.verified) Icons.Default.CheckCircle else Icons.Default.Warning,
+                iconTint = if (paired != null && paired.verified) colors.success else colors.warning,
+                showChevron = false
+            )
+            PulseRowDivider(insetStart = 54)
+            PulseRow(
+                title = "This phone",
+                subtitle = "The PulseDrop app on this device",
+                showChevron = false
+            )
+            if (peerIp.isNotBlank()) {
+                PulseRowDivider(insetStart = 16)
+                PulseRow(
+                    title = "Peer address",
+                    detail = peerIp,
+                    showChevron = false
+                )
+            }
+            Text(
+                text = when {
+                    paired != null && paired.verified ->
+                        "Paired — both sides confirmed the safety code."
+                    paired != null ->
+                        "Paired, but the safety code was never confirmed here."
+                    model is TransferDetailModel.FromPending || direction == "INCOMING" ->
+                        "Identity unverified. Network proximity is not authorisation."
+                    else ->
+                        "Authorised by the PIN entered at the time, not a verified identity."
+                } + if (peerIp.isNotBlank() && !visibleNow && model is TransferDetailModel.FromLive)
+                    " The peer is not currently visible on the network."
+                else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (paired != null && paired.verified) colors.success else colors.warning,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = PulseSpacing.lg.dp,
+                        end = PulseSpacing.lg.dp,
+                        top = PulseSpacing.sm.dp,
+                        bottom = PulseSpacing.sm.dp
+                    )
+                    .testTag("details_trust")
+            )
+        }
+
+        // ── Integrity verification ────────────────────────────────────────
+        PulseRowLabel("Integrity verification") {
+            Text(
+                text = "Not supported by the protocol",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.textTertiary,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("details_integrity")
+        ) {
+            Text(
+                text = "No content hash is computed — “Completed” means transport framing only, nothing scanned or safe.",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textSecondary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = PulseSpacing.lg.dp,
+                        end = PulseSpacing.lg.dp,
+                        bottom = PulseSpacing.sm.dp
+                    )
+            )
         }
 
         // ── Errors and recovery ───────────────────────────────────────────
         if (detailStateLabel(model) == "Failed") {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("details_error")) {
-                Column(
+            PulseRowLabel("What happened")
+            Column(modifier = Modifier.fillMaxWidth().testTag("details_error")) {
+                Text(
+                    text = errorMessage ?: "No failure message was recorded.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.danger,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(PulseSpacing.lg.dp),
-                    verticalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = colors.danger)
-                        Spacer(modifier = Modifier.width(PulseSpacing.sm.dp))
-                        Text("What happened", style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
-                    }
-                    Text(
-                        text = errorMessage ?: "The failure carried no message, and rows written before reasons were stored never kept one.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.danger,
-                        modifier = Modifier.testTag("details_error_message")
-                    )
-                    DetailFact("Category", errorCategory(errorMessage))
-                    recordedAt?.let { DetailFact("Occurred", dateFormatter.format(Date(it))) }
-                    Text(
-                        text = if (direction == "INCOMING")
-                            "Recovery: nothing was released into the received folder. The sender simply uploads again; there is no resume checkpoint."
-                        else
-                            "Recovery: re-send the file from the Send page. A retry restarts the whole transfer — the engine keeps no checkpoint to resume from.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary,
-                        modifier = Modifier.testTag("details_error_guidance")
+                        .padding(
+                            start = PulseSpacing.lg.dp,
+                            end = PulseSpacing.lg.dp,
+                            top = PulseSpacing.sm.dp,
+                            bottom = PulseSpacing.sm.dp
+                        )
+                        .testTag("details_error_message")
+                )
+                PulseRowDivider(insetStart = 16)
+                PulseRow(
+                    title = "Category",
+                    subtitle = errorCategory(errorMessage),
+                    showChevron = false
+                )
+                recordedAt?.let {
+                    PulseRowDivider(insetStart = 16)
+                    PulseRow(
+                        title = "Occurred",
+                        detail = dateFormatter.format(Date(it)),
+                        showChevron = false
                     )
                 }
+                PulseRowDivider(insetStart = 16)
+                Text(
+                    text = if (direction == "INCOMING")
+                        "Recovery: nothing was released — the sender uploads again, no resume."
+                    else
+                        "Recovery: re-send from the Send page — no checkpoint to resume from.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = PulseSpacing.lg.dp,
+                            end = PulseSpacing.lg.dp,
+                            top = PulseSpacing.sm.dp,
+                            bottom = PulseSpacing.sm.dp
+                        )
+                        .testTag("details_error_guidance")
+                )
             }
         }
 
-        // ── Timeline ──────────────────────────────────────────────────────
-        PulseCard(modifier = Modifier.fillMaxWidth().testTag("details_timeline")) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(PulseSpacing.lg.dp),
-                verticalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)
-            ) {
-                PulseSectionHeader("Timeline")
-                if (startedAt != null) {
-                    TimelineRow(dateFormatter.format(Date(startedAt)), if (running) "Transfer started — bytes have been moving since" else "Transfer started")
-                }
-                if (model is TransferDetailModel.FromPending) {
-                    TimelineRow("—", "Staged on this phone, waiting for your decision (arrival time not recorded)")
-                }
-                if (recordedAt != null) {
-                    TimelineRow(
-                        dateFormatter.format(Date(recordedAt)),
-                        when (detailStateLabel(model)) {
-                            "Completed" -> "Recorded complete — the durable log wrote this row"
-                            "Failed" -> "Recorded as failed"
-                            else -> "Recorded (${detailStateLabel(model)})"
-                        }
-                    )
-                }
-                if (startedAt == null && recordedAt == null && model !is TransferDetailModel.FromPending) {
-                    Text(
-                        text = "The engine stored no timestamps for this record beyond what you see above.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary
-                    )
-                }
+        // ── Timing ────────────────────────────────────────────────────────
+        PulseRowLabel("Timing")
+        Column(modifier = Modifier.fillMaxWidth().testTag("details_timeline")) {
+            var firstRow = true
+            startedAt?.let { t ->
+                PulseRow(
+                    title = "Transfer started",
+                    detail = dateFormatter.format(Date(t)),
+                    showChevron = false
+                )
+                firstRow = false
+            }
+            if (model is TransferDetailModel.FromPending) {
+                if (!firstRow) PulseRowDivider(insetStart = 16)
+                PulseRow(
+                    title = "Staged on this phone, waiting for your decision (arrival time not recorded)",
+                    detail = "—",
+                    showChevron = false
+                )
+                firstRow = false
+            }
+            recordedAt?.let { t ->
+                if (!firstRow) PulseRowDivider(insetStart = 16)
+                PulseRow(
+                    title = when (detailStateLabel(model)) {
+                        "Completed" -> "Recorded complete — the durable log wrote this row"
+                        "Failed" -> "Recorded as failed"
+                        else -> "Recorded (${detailStateLabel(model)})"
+                    },
+                    detail = dateFormatter.format(Date(t)),
+                    showChevron = false
+                )
+                firstRow = false
+            }
+            if (firstRow) {
                 Text(
-                    text = "Only timestamps the engine actually persisted are listed; there is no fuller event log to show.",
+                    text = "No timestamps were stored for this record.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = colors.textSecondary
+                    color = colors.textSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = PulseSpacing.lg.dp,
+                            end = PulseSpacing.lg.dp,
+                            top = PulseSpacing.sm.dp
+                        )
                 )
             }
+            Text(
+                text = "Nothing more is stored — there is no fuller event log.",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textSecondary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = PulseSpacing.lg.dp,
+                        end = PulseSpacing.lg.dp,
+                        top = PulseSpacing.sm.dp,
+                        bottom = PulseSpacing.sm.dp
+                    )
+            )
         }
 
         // ── Diagnostics ───────────────────────────────────────────────────
@@ -686,7 +750,7 @@ fun TransferDetailsScreen(
                 }
             }
             if (showDiagnostics) {
-                PulseCard(modifier = Modifier.fillMaxWidth().testTag("details_diag_block")) {
+                PulseRowGroup(modifier = Modifier.testTag("details_diag_block")) {
                     Text(
                         text = diagnosticsText(
                             transferId = id,
@@ -713,52 +777,3 @@ fun TransferDetailsScreen(
 
 /** History rows are the only ones with a durable record to delete. */
 private fun TransferDetailModel.isHistoryRecord(): Boolean = this is TransferDetailModel.FromDurable
-
-@Composable
-private fun DetailFact(label: String, value: String) {
-    val colors = LocalPulseColors.current
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = colors.textSecondary,
-            modifier = Modifier.width(110.dp)
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodySmall,
-            color = colors.textPrimary,
-            modifier = Modifier.weight(1f)
-        )
-    }
-}
-
-@Composable
-private fun TimelineRow(time: String, description: String) {
-    val colors = LocalPulseColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 5.dp)
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(colors.accent)
-        )
-        Column {
-            Text(
-                text = time,
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.textSecondary
-            )
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.textPrimary
-            )
-        }
-    }
-}

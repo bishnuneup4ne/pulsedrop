@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -55,7 +55,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
@@ -66,9 +65,9 @@ import com.pulsedrop.app.ui.UiPeerConnection
 import com.pulsedrop.app.ui.components.PulseButton
 import com.pulsedrop.app.ui.components.PulseButtonTone
 import com.pulsedrop.app.ui.components.PulseCard
-import com.pulsedrop.app.ui.components.PulseDivider
-import com.pulsedrop.app.ui.components.PulsePageHeader
-import com.pulsedrop.app.ui.components.PulseSectionHeader
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.components.PulseStatePanel
 import com.pulsedrop.app.ui.components.PulseStatus
 import com.pulsedrop.app.ui.components.PulseStatusTone
@@ -327,75 +326,64 @@ fun SendScreen(
         verticalArrangement = Arrangement.spacedBy(PulseSpacing.lg.dp)
     ) {
         item {
-            PulsePageHeader(
-                title = "Send files",
-                subtitle = "Pick, choose a recipient, review — nothing moves before that last tap",
-                status = {
-                    PulseButton(
-                        label = "Recent",
-                        icon = Icons.Default.History,
-                        tone = PulseButtonTone.Quiet,
-                        onClick = onOpenTransfers
-                    )
-                }
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                PulseButton(
+                    label = "Recent",
+                    icon = Icons.Default.History,
+                    tone = PulseButtonTone.Quiet,
+                    onClick = onOpenTransfers
+                )
+            }
         }
 
         // ── 1. Selection ───────────────────────────────────────────────────
-        item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("send_drop_zone")) {
-                Column(
-                    modifier = Modifier.padding(PulseSpacing.xl.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(c.accentTint),
-                        contentAlignment = Alignment.Center
+        if (items.isEmpty()) {
+            item {
+                PulseCard(modifier = Modifier.fillMaxWidth().testTag("send_drop_zone")) {
+                    Column(
+                        modifier = Modifier.padding(PulseSpacing.xl.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)
                     ) {
-                        Icon(
-                            Icons.Default.Add, null,
-                            tint = c.onAccentTint,
-                            modifier = Modifier.size(PulseSizes.iconLg.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .background(c.accentTint),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Add, null,
+                                tint = c.onAccentTint,
+                                modifier = Modifier.size(PulseSizes.iconLg.dp)
+                            )
+                        }
+                        Text(
+                            "Choose the files to send",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = c.textPrimary
                         )
-                    }
-                    Text(
-                        "Choose the files to send",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = c.textPrimary
-                    )
-                    Text(
-                        "Any file type works. Drag-and-drop and folder picks are not offered " +
-                            "because the transfer engine carries single files, not trees.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
+                        Text(
+                            "Any file type. Single files only, not folders.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.textSecondary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
                         PulseButton(
-                            label = if (items.isEmpty()) "Browse files" else "Add more files",
+                            label = "Browse files",
                             icon = Icons.Default.Folder,
                             onClick = { picker.launch(arrayOf("*/*")) },
                             modifier = Modifier.testTag("send_browse_btn")
                         )
-                        if (items.isNotEmpty()) {
-                            PulseButton(
-                                label = "Clear all",
-                                icon = Icons.Default.DeleteSweep,
-                                tone = PulseButtonTone.Quiet,
-                                onClick = { clearConfirm = true },
-                                modifier = Modifier.testTag("send_clear_btn")
-                            )
-                        }
+                        Text(
+                            "Nothing sends until you review.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = c.textTertiary
+                        )
                     }
-                    Text(
-                        "Selecting sends nothing. Files leave only when you confirm the review.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = c.textTertiary
-                    )
                 }
             }
         }
@@ -403,28 +391,47 @@ fun SendScreen(
         // ── 2. Selected items ──────────────────────────────────────────────
         if (items.isNotEmpty()) {
             item {
-                PulseSectionHeader(
-                    "Selected — ${items.size} file(s)",
-                    if (warnings.any { it.text.contains("no known size") }) "Total excludes unknown sizes"
-                    else "Total ${if (total > 0) NetworkUtils.formatBytes(total) else "0 B"}"
-                )
+                PulseRowLabel("Selected — ${items.size} file(s)") {
+                    Text(
+                        if (warnings.any { it.text.contains("no known size") }) "Total excludes unknown sizes"
+                        else "Total ${if (total > 0) NetworkUtils.formatBytes(total) else "0 B"}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = c.textTertiary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    PulseButton(
+                        label = "Add more files",
+                        icon = Icons.Default.Folder,
+                        tone = PulseButtonTone.Quiet,
+                        onClick = { picker.launch(arrayOf("*/*")) },
+                        modifier = Modifier.testTag("send_browse_btn")
+                    )
+                    Spacer(Modifier.width(PulseSpacing.xs.dp))
+                    PulseButton(
+                        label = "Clear all",
+                        icon = Icons.Default.DeleteSweep,
+                        tone = PulseButtonTone.Quiet,
+                        onClick = { clearConfirm = true },
+                        modifier = Modifier.testTag("send_clear_btn")
+                    )
+                }
             }
-            items(items, key = { it.uri.toString() }) { file ->
-                SelectedFileRow(
-                    file = file,
-                    onRemove = {
-                        onSelectedFilesChange(items.filterNot { it.uri == file.uri }.map { it.uri })
-                    }
-                )
+            itemsIndexed(items, key = { _, it -> it.uri.toString() }) { index, file ->
+                Column {
+                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    SelectedFileRow(
+                        file = file,
+                        onRemove = {
+                            onSelectedFilesChange(items.filterNot { it.uri == file.uri }.map { it.uri })
+                        }
+                    )
+                }
             }
         }
 
         // ── 3. Recipient ───────────────────────────────────────────────────
         item {
-            PulseSectionHeader(
-                "Who receives them",
-                if (recipients.none { it.online }) null else "Trust is stated in words, never assumed"
-            )
+            PulseRowLabel("Who receives them")
         }
         if (recipients.isEmpty()) {
             item {
@@ -432,35 +439,39 @@ fun SendScreen(
                     icon = Icons.Default.Radar,
                     title = "No one to send to yet",
                     message = if (scanning) "Still looking for devices on this network…"
-                    else "A recipient is a device discovery found this session — paired sends " +
-                        "encrypted, an unpaired one is stated as unencrypted before anything leaves.",
+                    else "No devices found on this network yet.",
                     actionLabel = "Open devices",
                     onAction = onOpenDevices
                 )
             }
         } else {
-            items(recipients, key = { it.id }) { r ->
-                RecipientRow(
-                    recipient = r,
-                    selected = r.id == recipientId,
-                    onSelect = { recipientId = r.id }
-                )
+            itemsIndexed(recipients, key = { _, r -> r.id }) { index, r ->
+                Column {
+                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    RecipientRow(
+                        recipient = r,
+                        selected = r.id == recipientId,
+                        onSelect = { recipientId = r.id }
+                    )
+                }
             }
         }
 
         // ── 4. What this engine actually does ──────────────────────────────
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("send_options_card")) {
-                Column(Modifier.padding(PulseSpacing.xl.dp), verticalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)) {
-                    PulseSectionHeader(
-                        "How this send behaves",
-                        "Only what the transfer engine really does — nothing here is a knob that turns nothing"
-                    )
-                    OptionLine("Integrity", "Paired sends are end-to-end encrypted and verified by the pairing's safety code. Unpaired sends are plain HTTP and say so above.")
-                    OptionLine("Destination", "The recipient chooses where files land. This page does not write to another device's filesystem.")
-                    OptionLine("Name conflicts", "If the file name is taken on the recipient, it appends a timestamp. Nothing is silently overwritten.")
-                    OptionLine("Resume and priority", "The protocol has no resume, priority or compression request, so no control pretends otherwise.")
-                }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("send_options_card")
+            ) {
+                PulseRowLabel("How this send behaves")
+                OptionLine("Integrity", "Paired sends are encrypted; unpaired sends are plain HTTP.")
+                PulseRowDivider()
+                OptionLine("Destination", "The recipient chooses where files land.")
+                PulseRowDivider()
+                OptionLine("Name conflicts", "A taken name gets a timestamp appended — no overwriting.")
+                PulseRowDivider()
+                OptionLine("Resume and priority", "No resume, priority or compression — the protocol has none.")
             }
         }
 
@@ -622,49 +633,31 @@ private fun resolveFileForSend(context: Context, uri: Uri): SendFileItem {
 @Composable
 private fun SelectedFileRow(file: SendFileItem, onRemove: () -> Unit) {
     val c = LocalPulseColors.current
-    PulseCard(modifier = Modifier.fillMaxWidth().testTag("send_file_row_${file.name}")) {
-        Row(
-            modifier = Modifier.padding(horizontal = PulseSpacing.lg.dp, vertical = PulseSpacing.md.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(PulseSizes.avatar.dp)
-                    .clip(RoundedCornerShape(PulseRadius.sm.dp))
-                    .background(c.surfaceSunken),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    fileIconFor(file.mimeType), null,
-                    tint = if (file.readable) c.textSecondary else c.danger,
-                    modifier = Modifier.size(PulseSizes.iconLg.dp)
-                )
-            }
-            Spacer(Modifier.width(PulseSpacing.md.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    file.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = c.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                val meta = buildString {
-                    append(if (file.size >= 0) NetworkUtils.formatBytes(file.size) else "Size unknown")
-                    file.mimeType?.let { append(" · $it") }
-                }
-                Text(meta, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
-                if (!file.readable) {
-                    Text(
-                        "Cannot be read any more — it moved, or access was revoked",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = c.danger
-                    )
+    val meta = buildString {
+        append(if (file.size >= 0) NetworkUtils.formatBytes(file.size) else "Size unknown")
+        file.mimeType?.let { append(" · $it") }
+    }
+    Column(modifier = Modifier.testTag("send_file_row_${file.name}")) {
+        PulseRow(
+            title = file.name,
+            subtitle = meta,
+            icon = fileIconFor(file.mimeType),
+            iconTint = if (file.readable) c.textSecondary else c.danger,
+            titleColor = if (file.readable) null else c.danger,
+            showChevron = false,
+            trailing = {
+                IconButton(onClick = onRemove, modifier = Modifier.testTag("send_remove_${file.name}")) {
+                    Icon(Icons.Default.Close, "Remove ${file.name}", tint = c.textSecondary)
                 }
             }
-            IconButton(onClick = onRemove, modifier = Modifier.testTag("send_remove_${file.name}")) {
-                Icon(Icons.Default.Close, "Remove ${file.name}", tint = c.textSecondary)
-            }
+        )
+        if (!file.readable) {
+            Text(
+                "Cannot be read any more — it moved, or access was revoked",
+                style = MaterialTheme.typography.labelSmall,
+                color = c.danger,
+                modifier = Modifier.padding(start = 54.dp)
+            )
         }
     }
 }
@@ -673,53 +666,29 @@ private fun SelectedFileRow(file: SendFileItem, onRemove: () -> Unit) {
 private fun RecipientRow(recipient: SendRecipient, selected: Boolean, onSelect: () -> Unit) {
     val c = LocalPulseColors.current
     val (channelText, channelTone) = channelLine(recipient.channel)
-    PulseCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .testTag("send_recipient_${recipient.id}")
-                .clickable(enabled = recipient.online) { onSelect() }
-                .padding(horizontal = PulseSpacing.lg.dp, vertical = PulseSpacing.md.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(PulseSizes.avatar.dp)
-                    .clip(CircleShape)
-                    .background(if (recipient.online) c.accentTint else c.surfaceSunken),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    if (recipient.channel == SendChannel.WEB_HOSTED) Icons.Default.Language else Icons.Default.Radar,
-                    null,
-                    tint = if (recipient.online) c.onAccentTint else c.disabled,
-                    modifier = Modifier.size(PulseSizes.icon.dp)
-                )
-            }
-            Spacer(Modifier.width(PulseSpacing.md.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    recipient.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                    color = if (recipient.online) c.textPrimary else c.disabled,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    recipient.address,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.textTertiary
-                )
+    PulseRow(
+        title = recipient.name,
+        subtitle = recipient.address,
+        icon = if (recipient.channel == SendChannel.WEB_HOSTED) Icons.Default.Language else Icons.Default.Radar,
+        iconTint = if (recipient.online) c.textSecondary else c.disabled,
+        titleColor = if (recipient.online) null else c.disabled,
+        showChevron = false,
+        // The click and its tag stay on one chain: an offline row is honestly disabled, not just quiet.
+        modifier = Modifier
+            .testTag("send_recipient_${recipient.id}")
+            .clickable(enabled = recipient.online) { onSelect() },
+        trailing = {
+            Column(horizontalAlignment = Alignment.End) {
                 PulseStatus(
                     text = if (recipient.online) channelText else "Offline — not found this scan",
                     tone = if (recipient.online) channelTone else PulseStatusTone.Neutral
                 )
-            }
-            if (selected && recipient.online) {
-                PulseStatus(text = "Selected", tone = PulseStatusTone.Active)
+                if (selected && recipient.online) {
+                    PulseStatus(text = "Selected", tone = PulseStatusTone.Active)
+                }
             }
         }
-    }
+    )
 }
 
 @Composable
@@ -754,10 +723,9 @@ private fun IssueBanner(issue: SendIssue, tag: String) {
 
 @Composable
 private fun OptionLine(label: String, detail: String) {
-    val c = LocalPulseColors.current
-    Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = c.textTertiary)
-        Text(detail, style = MaterialTheme.typography.bodySmall, color = c.textPrimary)
-        PulseDivider()
-    }
+    PulseRow(
+        title = label,
+        subtitle = detail,
+        showChevron = false
+    )
 }

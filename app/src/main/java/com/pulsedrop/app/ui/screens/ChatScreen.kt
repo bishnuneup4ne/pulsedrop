@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -101,6 +102,11 @@ import com.pulsedrop.app.ui.components.AttachmentPreview
 import com.pulsedrop.app.ui.components.formatAttachmentSize
 import com.pulsedrop.app.ui.components.PreviewKind
 import com.pulsedrop.app.ui.components.previewKindOf
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowGroup
+import com.pulsedrop.app.ui.components.PulseRowLabel
+import com.pulsedrop.app.ui.theme.LocalPulseColors
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -373,22 +379,9 @@ private fun InboxView(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 20.dp, end = 12.dp, top = 12.dp),
+            horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Chats",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = colorScheme.onSurface
-                )
-                Text(
-                    text = threads.firstOrNull { it.id == ROOM_ID }?.messages?.size?.let { "$it room messages" }
-                        ?: "No traffic yet",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colorScheme.onSurfaceVariant
-                )
-            }
             Box {
                 IconButton(
                     onClick = { menuOpen = true },
@@ -469,7 +462,7 @@ private fun InboxView(
                 PulseStatePanel(
                     icon = Icons.Outlined.SearchOff,
                     title = "Nothing matches \"$query\"",
-                    message = "Try a shorter word, or clear the search to see every conversation.",
+                    message = "Try a shorter word.",
                     actionLabel = "Clear search",
                     onAction = { query = "" }
                 )
@@ -478,17 +471,18 @@ private fun InboxView(
                     icon = Icons.AutoMirrored.Filled.Chat,
                     title = "No conversations yet",
                     message = if (pairedDevices.isEmpty())
-                        "Pair a device from the Radar tab to open an encrypted channel, or talk to Everyone on this network."
+                        "Pair a device, or talk to Everyone."
                     else
-                        "Open the room below, or start a private channel with a paired device."
+                        "Open the room, or message a paired device."
                 )
             }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 24.dp)
+                contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp)
             ) {
-                items(visible, key = { it.id ?: ROOM_ID }) { t ->
+                itemsIndexed(visible, key = { _, t -> t.id ?: ROOM_ID }) { index, t ->
+                    if (index > 0) PulseRowDivider(insetStart = 54)
                     ThreadRow(
                         thread = t,
                         typingUsers = typingUsers,
@@ -499,31 +493,15 @@ private fun InboxView(
         }
 
         if (pairedDevices.isNotEmpty()) {
-            HorizontalDivider(color = colorScheme.outlineVariant)
-            Text(
-                text = "QUICK CHANNELS",
-                style = MaterialTheme.typography.labelSmall,
-                color = colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 20.dp, top = 10.dp, bottom = 2.dp)
-            )
-            pairedDevices.forEach { p ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { onOpen("pair:${p.pid}") }
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    PulseAvatar(name = p.name, size = 26)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Message ${p.name} privately",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorScheme.primary,
-                        modifier = Modifier.testTag("chat_channel_pair_${p.pid}")
-                    )
-                }
+            PulseRowLabel("Quick channels")
+            pairedDevices.forEachIndexed { index, p ->
+                if (index > 0) PulseRowDivider(insetStart = 54)
+                PulseRow(
+                    title = "Message ${p.name} privately",
+                    leading = { PulseAvatar(name = p.name, size = 40) },
+                    onClick = { onOpen("pair:${p.pid}") },
+                    modifier = Modifier.testTag("chat_channel_pair_${p.pid}")
+                )
             }
             Spacer(modifier = Modifier.height(12.dp))
         }
@@ -557,94 +535,60 @@ private fun ThreadRow(
     typingUsers: List<String>,
     onClick: () -> Unit
 ) {
-    val colorScheme = MaterialTheme.colorScheme
+    val c = LocalPulseColors.current
     val last = thread.messages.lastOrNull()
     val unread = thread.unread > 0
     val typing = if (thread.id == ROOM_ID) typingUsers.firstOrNull() else null
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 10.dp)
-            .testTag(
-                "chat_channel_" + when (thread.id) {
-                    null, ROOM_ID -> "everyone"
-                    else -> thread.id.replace(":", "_")
-                }
-            ),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        PulseAvatar(
-            name = thread.title,
-            size = 54,
-            icon = when {
-                thread.id == ROOM_ID -> Icons.Default.Groups
-                thread.isGroup -> Icons.Default.PersonAddAlt1
-                else -> null
-            }
-           )
-        Spacer(modifier = Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = thread.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = if (unread) FontWeight.Bold else FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = colorScheme.onSurface,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (last != null) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = shortTime(last.timestamp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (unread) colorScheme.primary else colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(3.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val body = last?.text?.takeIf { it.isNotBlank() }
-                    ?: last?.attachment?.name?.let { "File: $it" }
-                    ?: ""
-                val preview = when {
-                    typing != null -> "$typing is typing…"
-                    last == null -> thread.hint
-                    last.sender == thread.title -> body
-                    last.sender.isNotEmpty() -> "${last.sender}: $body"
-                    else -> body
-                }
-                Text(
-                    text = preview,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = if (unread) colorScheme.onSurface else colorScheme.onSurfaceVariant,
-                    fontWeight = if (unread) FontWeight.Medium else FontWeight.Normal,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (unread) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(colorScheme.primary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = if (thread.unread > 9) "9+" else thread.unread.toString(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colorScheme.onPrimary
-                        )
-                    }
-                }
-            }
-        }
+    val body = last?.text?.takeIf { it.isNotBlank() }
+        ?: last?.attachment?.name?.let { "File: $it" }
+        ?: ""
+    val preview = when {
+        typing != null -> "$typing is typing…"
+        last == null -> thread.hint
+        last.sender == thread.title -> body
+        last.sender.isNotEmpty() -> "${last.sender}: $body"
+        else -> body
     }
+
+    PulseRow(
+        title = thread.title,
+        subtitle = preview,
+        detail = last?.let { shortTime(it.timestamp) },
+        leading = {
+            PulseAvatar(
+                name = thread.title,
+                size = 54,
+                icon = when {
+                    thread.id == ROOM_ID -> Icons.Default.Groups
+                    thread.isGroup -> Icons.Default.PersonAddAlt1
+                    else -> null
+                }
+            )
+        },
+        trailing = if (unread) ({
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(c.accent),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (thread.unread > 9) "9+" else thread.unread.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = c.onAccent
+                )
+            }
+        }) else null,
+        onClick = onClick,
+        modifier = Modifier.testTag(
+            "chat_channel_" + when (thread.id) {
+                null, ROOM_ID -> "everyone"
+                else -> thread.id.replace(":", "_")
+            }
+        )
+    )
 }
 
 @Composable
@@ -662,7 +606,7 @@ private fun GroupDialog(
         text = {
             Column(modifier = Modifier.heightIn(max = 400.dp)) {
                 Text(
-                    text = "Every member gets the message sealed with their own pairwise key — a device you are not paired with cannot read anything.",
+                    text = "Sealed with each member's own key.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -677,23 +621,24 @@ private fun GroupDialog(
                         .testTag("group_name_input")
                 )
                 Spacer(modifier = Modifier.height(10.dp))
-                Text("Members", style = MaterialTheme.typography.labelMedium)
+                PulseRowLabel("Members")
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    pairedDevices.forEach { p ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
+                    PulseRowGroup {
+                        pairedDevices.forEachIndexed { index, p ->
+                            if (index > 0) PulseRowDivider(insetStart = 54)
+                            PulseRow(
+                                title = p.name,
+                                leading = { PulseAvatar(name = p.name, size = 40) },
+                                showChevron = false,
+                                trailing = {
+                                    Checkbox(checked = p.pid in selected, onCheckedChange = null)
+                                },
+                                onClick = {
                                     selected = if (p.pid in selected) selected - p.pid
                                     else selected + p.pid
-                                }
-                                .padding(vertical = 2.dp)
-                                .testTag("group_member_${p.pid}")
-                        ) {
-                            Checkbox(checked = p.pid in selected, onCheckedChange = null)
-                            Text(p.name, style = MaterialTheme.typography.bodyMedium)
+                                },
+                                modifier = Modifier.testTag("group_member_${p.pid}")
+                            )
                         }
                     }
                 }
@@ -729,39 +674,29 @@ private fun IpDialog(
         text = {
             Column(modifier = Modifier.heightIn(max = 380.dp)) {
                 Text(
-                    text = "A direct thread delivers to that address over the local network, but keeps the exchange in its own conversation.",
+                    text = "A direct local thread, kept out of the room.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 if (lanPeers.isEmpty()) {
                     Text(
-                        text = "Nothing on the radar yet — scan from the Radar tab, or type an address below.",
+                        text = "Nothing found yet — type an address below.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 } else {
                     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                        lanPeers.forEach { peer ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { onPick(peer.ip) }
-                                    .padding(vertical = 8.dp, horizontal = 4.dp)
-                                    .testTag("ip_peer_${peer.ip}")
-                            ) {
-                                PulseAvatar(name = peer.name, size = 34)
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(peer.name, style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        text = if (peer.port > 0) "${peer.ip}:${peer.port}"
-                                        else "${peer.ip} · ${peer.appKind?.lowercase() ?: "browser"}, chat only",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                        PulseRowGroup {
+                            lanPeers.forEachIndexed { index, peer ->
+                                if (index > 0) PulseRowDivider(insetStart = 54)
+                                PulseRow(
+                                    title = peer.name,
+                                    subtitle = if (peer.port > 0) "${peer.ip}:${peer.port}"
+                                    else "${peer.ip} · ${peer.appKind?.lowercase() ?: "browser"}, chat only",
+                                    leading = { PulseAvatar(name = peer.name, size = 40) },
+                                    onClick = { onPick(peer.ip) },
+                                    modifier = Modifier.testTag("ip_peer_${peer.ip}")
+                                )
                             }
                         }
                     }
@@ -941,9 +876,9 @@ private fun ConversationView(
                     icon = Icons.AutoMirrored.Filled.Chat,
                     title = "Say hi to ${thread.title}",
                     message = if (thread.encrypted)
-                        "Everything here is sealed on your device and opened only by ${thread.title}. No server can read it."
+                        "Sealed on your device; only ${thread.title} can open it."
                     else
-                        "Messages in this thread travel straight across the local network."
+                        "Messages travel straight over the local network."
                 )
             } else {
                 LazyColumn(
@@ -1189,7 +1124,7 @@ private fun AttachmentCard(
     mine: Boolean,
     onOpen: () -> Unit
 ) {
-    val colorScheme = MaterialTheme.colorScheme
+    val c = LocalPulseColors.current
     val kind = previewKindOf(attachment.name)
     val glyph = when (kind) {
         PreviewKind.IMAGE -> Icons.Default.Image
@@ -1199,10 +1134,10 @@ private fun AttachmentCard(
         PreviewKind.TEXT -> Icons.Default.Description
         PreviewKind.OTHER -> Icons.Default.InsertDriveFile
     }
-    val fill = if (mine) colorScheme.onPrimary.copy(alpha = 0.14f) else colorScheme.surface
-    val edge = if (mine) colorScheme.onPrimary.copy(alpha = 0.32f) else colorScheme.outlineVariant
-    val title = if (mine) colorScheme.onPrimary else colorScheme.onSurface
-    val sub = if (mine) colorScheme.onPrimary.copy(alpha = 0.78f) else colorScheme.onSurfaceVariant
+    val fill = if (mine) c.onAccent.copy(alpha = 0.14f) else c.surfaceSunken
+    val edge = if (mine) c.onAccent.copy(alpha = 0.32f) else c.borderSubtle
+    val title = if (mine) c.onAccent else c.textPrimary
+    val sub = if (mine) c.onAccent.copy(alpha = 0.78f) else c.textSecondary
 
     Row(
         modifier = Modifier
@@ -1218,13 +1153,13 @@ private fun AttachmentCard(
             modifier = Modifier
                 .size(38.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(if (mine) colorScheme.onPrimary.copy(alpha = 0.2f) else colorScheme.primaryContainer),
+                .background(if (mine) c.onAccent.copy(alpha = 0.2f) else c.accentTint),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = glyph,
                 contentDescription = null,
-                tint = if (mine) colorScheme.onPrimary else colorScheme.onPrimaryContainer,
+                tint = if (mine) c.onAccent else c.onAccentTint,
                 modifier = Modifier.size(19.dp)
             )
         }
@@ -1248,14 +1183,14 @@ private fun AttachmentCard(
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
-                .background(if (mine) colorScheme.onPrimary.copy(alpha = 0.22f) else colorScheme.primary.copy(alpha = 0.10f))
+                .background(if (mine) c.onAccent.copy(alpha = 0.22f) else c.accent.copy(alpha = 0.10f))
                 .padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = Icons.Default.Visibility,
                 contentDescription = null,
-                tint = if (mine) colorScheme.onPrimary else colorScheme.primary,
+                tint = if (mine) c.onAccent else c.accent,
                 modifier = Modifier.size(13.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
@@ -1263,7 +1198,7 @@ private fun AttachmentCard(
                 text = "Preview",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
-                color = if (mine) colorScheme.onPrimary else colorScheme.primary
+                color = if (mine) c.onAccent else c.accent
             )
         }
     }
@@ -1290,13 +1225,14 @@ private fun MessageRow(
     onReply: () -> Unit,
     onDelete: (Boolean) -> Unit
 ) {
-    val colorScheme = MaterialTheme.colorScheme
+    val c = LocalPulseColors.current
     var menuOpen by remember { mutableStateOf(false) }
+    val bubbleRadius = 18.dp
     val bubbleShape = RoundedCornerShape(
-        topStart = 18.dp,
-        topEnd = 18.dp,
-        bottomStart = if (mine) 18.dp else if (lastOfRun) 6.dp else 18.dp,
-        bottomEnd = if (mine && lastOfRun) 6.dp else 18.dp
+        topStart = bubbleRadius,
+        topEnd = bubbleRadius,
+        bottomStart = if (mine) bubbleRadius else if (lastOfRun) 6.dp else bubbleRadius,
+        bottomEnd = if (mine && lastOfRun) 6.dp else bubbleRadius
     )
 
     Box {
@@ -1310,7 +1246,7 @@ private fun MessageRow(
                 Text(
                     text = msg.sender,
                     style = MaterialTheme.typography.labelMedium,
-                    color = colorScheme.primary,
+                    color = c.accent,
                     modifier = Modifier.padding(start = 14.dp, bottom = 2.dp)
                 )
             }
@@ -1328,11 +1264,11 @@ private fun MessageRow(
                         .widthIn(max = 320.dp)
                         .clip(bubbleShape)
                         .background(
-                            if (msg.deleted) colorScheme.surfaceContainerLowest
-                            else if (mine) colorScheme.primary else colorScheme.surfaceContainerHigh
+                            if (msg.deleted) c.surfaceSunken
+                            else if (mine) c.accent else c.surfaceElevated
                         )
                         .combinedClickable(
-                            onClick = {},
+                            onClick = { menuOpen = true },
                             onLongClickLabel = "Message options",
                             onLongClick = { menuOpen = true }
                         )
@@ -1346,7 +1282,7 @@ private fun MessageRow(
                                 text = "This message was deleted",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontStyle = FontStyle.Italic,
-                                color = colorScheme.onSurfaceVariant
+                                color = c.textSecondary
                             )
                         } else {
                             if (msg.replyTo != null) ReplyQuote(msg = msg, mine = mine)
@@ -1362,7 +1298,7 @@ private fun MessageRow(
                                 Text(
                                     text = msg.text,
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = if (mine) colorScheme.onPrimary else colorScheme.onSurface
+                                    color = if (mine) c.onAccent else c.textPrimary
                                 )
                             }
                         }
@@ -1373,7 +1309,7 @@ private fun MessageRow(
                 Text(
                     text = shortTime(msg.timestamp),
                     style = MaterialTheme.typography.labelSmall,
-                    color = colorScheme.onSurfaceVariant,
+                    color = c.textTertiary,
                     modifier = Modifier.padding(top = 2.dp, start = 14.dp, end = 14.dp)
                 )
             }
@@ -1390,7 +1326,7 @@ private fun MessageRow(
             )
             DropdownMenuItem(
                 text = { Text(if (mine) "Delete for me" else "Delete here") },
-                leadingIcon = { Icon(Icons.Default.Delete, null, tint = colorScheme.error) },
+                leadingIcon = { Icon(Icons.Default.Delete, null, tint = c.danger) },
                 onClick = {
                     menuOpen = false
                     onDelete(false)
@@ -1399,7 +1335,7 @@ private fun MessageRow(
             if (mine) {
                 DropdownMenuItem(
                     text = { Text("Delete for everyone") },
-                    leadingIcon = { Icon(Icons.Default.Delete, null, tint = colorScheme.error) },
+                    leadingIcon = { Icon(Icons.Default.Delete, null, tint = c.danger) },
                     onClick = {
                         menuOpen = false
                         onDelete(true)
@@ -1417,15 +1353,15 @@ private fun MessageRow(
  */
 @Composable
 private fun ReplyQuote(msg: ClipMessage, mine: Boolean) {
-    val colorScheme = MaterialTheme.colorScheme
-    val accent = if (mine) colorScheme.onPrimary else colorScheme.primary
+    val c = LocalPulseColors.current
+    val accent = if (mine) c.onAccent else c.accent
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(9.dp))
             .background(
-                if (mine) colorScheme.onPrimary.copy(alpha = 0.13f)
-                else colorScheme.onSurface.copy(alpha = 0.07f)
+                if (mine) c.onAccent.copy(alpha = 0.13f)
+                else c.textPrimary.copy(alpha = 0.07f)
             )
             .padding(start = 7.dp, end = 9.dp, top = 5.dp, bottom = 5.dp)
     ) {
@@ -1449,7 +1385,7 @@ private fun ReplyQuote(msg: ClipMessage, mine: Boolean) {
             Text(
                 text = msg.replyText.orEmpty(),
                 style = MaterialTheme.typography.labelSmall,
-                color = if (mine) colorScheme.onPrimary.copy(alpha = 0.85f) else colorScheme.onSurfaceVariant,
+                color = if (mine) c.onAccent.copy(alpha = 0.85f) else c.textSecondary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )

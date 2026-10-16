@@ -1,7 +1,6 @@
 package com.pulsedrop.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,7 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -46,17 +45,15 @@ import com.pulsedrop.app.model.PendingUploadInfo
 import com.pulsedrop.app.model.TransferItem
 import com.pulsedrop.app.ui.components.PulseButton
 import com.pulsedrop.app.ui.components.PulseButtonTone
-import com.pulsedrop.app.ui.components.PulseCard
-import com.pulsedrop.app.ui.components.PulseDivider
 import com.pulsedrop.app.ui.components.PulseIconButton
-import com.pulsedrop.app.ui.components.PulsePageHeader
-import com.pulsedrop.app.ui.components.PulseSectionHeader
+import com.pulsedrop.app.ui.components.PulseRow
+import com.pulsedrop.app.ui.components.PulseRowDivider
+import com.pulsedrop.app.ui.components.PulseRowLabel
 import com.pulsedrop.app.ui.components.PulseStatePanel
 import com.pulsedrop.app.ui.components.PulseStatus
 import com.pulsedrop.app.ui.components.PulseStatusTone
 import com.pulsedrop.app.ui.components.PulseSwitch
 import com.pulsedrop.app.ui.theme.LocalPulseColors
-import com.pulsedrop.app.ui.theme.PulseSizes
 import com.pulsedrop.app.ui.theme.PulseSpacing
 import com.pulsedrop.app.util.NetworkUtils
 import java.text.SimpleDateFormat
@@ -108,20 +105,17 @@ fun ReceiveScreen(
         verticalArrangement = Arrangement.spacedBy(PulseSpacing.lg.dp)
     ) {
         item {
-            PulsePageHeader(
-                title = "Receive files",
-                subtitle = "The queue, the folder and the policy — all of it is the real server state",
-                status = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                        PulseButton(
-                            label = "History",
-                            icon = Icons.Default.History,
-                            tone = PulseButtonTone.Quiet,
-                            onClick = onOpenTransfers
-                        )
-                    }
-                }
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                PulseButton(
+                    label = "History",
+                    icon = Icons.Default.History,
+                    tone = PulseButtonTone.Quiet,
+                    onClick = onOpenTransfers
+                )
+            }
         }
 
         // ── 1. Is this phone even listening? ───────────────────────────────
@@ -130,8 +124,7 @@ fun ReceiveScreen(
                 PulseStatePanel(
                     icon = Icons.Default.Pause,
                     title = "Receiving is off",
-                    message = "The server is stopped, so nothing can arrive. Start it and devices on " +
-                        "your network — and browser tabs on the web page — can send to this phone.",
+                    message = "Nothing can arrive while the server is stopped.",
                     actionLabel = "Start server",
                     onAction = onToggleServer,
                     tone = PulseStatusTone.Neutral,
@@ -140,205 +133,233 @@ fun ReceiveScreen(
             }
         } else {
             item {
-                PulseCard(modifier = Modifier.fillMaxWidth().testTag("receive_listening_card")) {
-                    Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                        PulseStatus(
-                            text = "Listening on your network",
-                            tone = PulseStatusTone.Positive,
-                            detail = "Files arrive through the same server that serves your downloads."
-                        )
-                    }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("receive_listening_card"),
+                    verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
+                ) {
+                    PulseStatus(
+                        text = "Listening on your network",
+                        tone = PulseStatusTone.Positive
+                    )
                 }
             }
         }
 
         // ── 2. The policy, as an explicit choice ───────────────────────────
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("receive_policy_card")) {
-                Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                    PulseSectionHeader(
-                        title = "When something arrives",
-                        detail = "This is a security decision, not a convenience switch"
-                    )
-                    PulseSwitch(
-                        checked = autoAccept,
-                        onCheckedChange = onSetAutoAccept,
-                        label = "Accept files automatically",
-                        detail = if (autoAccept)
-                            "On — every file that passes the PIN lands in the received folder without asking."
-                        else
-                            "Off — files wait below for you to accept or decline, one at a time.",
-                        modifier = Modifier.testTag("receive_auto_accept")
-                    )
-                    Text(
-                        text = if (autoAccept)
-                            "Anyone who can reach this server and knows the PIN can write files to this phone. " +
-                                "Turn the switch off if you would rather see every file first."
-                        else
-                            "Declining deletes the file from the phone. Accepting stores it — " +
-                                "it never pairs or trusts the sender.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textTertiary
-                    )
-                }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("receive_policy_card"),
+                verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
+            ) {
+                PulseRowLabel("When something arrives")
+                PulseSwitch(
+                    checked = autoAccept,
+                    onCheckedChange = onSetAutoAccept,
+                    label = "Accept files automatically",
+                    detail = if (autoAccept)
+                        "On — every file that passes the PIN lands in the received folder without asking."
+                    else
+                        "Off — files wait below for you to accept or decline, one at a time.",
+                    modifier = Modifier.testTag("receive_auto_accept")
+                )
+                Text(
+                    text = if (autoAccept)
+                        "Anyone with the PIN can write files to this phone."
+                    else
+                        "Accept stores it — it never pairs or trusts the sender.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textTertiary,
+                    modifier = Modifier.padding(start = 16.dp)
+                )
             }
         }
 
         // ── 3. Waiting for a decision ──────────────────────────────────────
         item {
-            PulseSectionHeader(
-                title = "Needs your decision",
-                detail = if (pendingUploads.isEmpty()) null
-                else "${pendingUploads.size} file(s) parked on disk, nothing stored yet"
-            )
+            PulseRowLabel("Needs your decision") {
+                if (pendingUploads.isNotEmpty()) {
+                    Text(
+                        "${pendingUploads.size} waiting",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = c.textTertiary
+                    )
+                }
+            }
         }
         if (pendingUploads.isEmpty() && serverRunning && !autoAccept) {
             item {
                 Text(
-                    text = "Nothing waiting. With auto-accept off, every incoming file stops here " +
-                        "until you say so.",
+                    text = "Nothing waiting — files stop here first.",
                     style = MaterialTheme.typography.bodySmall,
                     color = c.textTertiary,
-                    modifier = Modifier.testTag("receive_queue_empty")
+                    modifier = Modifier
+                        .padding(start = 16.dp)
+                        .testTag("receive_queue_empty")
                 )
             }
         }
-        items(pendingUploads, key = { "pending_" + it.id }) { upload ->
-            PendingUploadRow(upload = upload, onAccept = { onAccept(upload.id) }, onDecline = { onDecline(upload.id) })
+        itemsIndexed(pendingUploads, key = { _, upload -> "pending_" + upload.id }) { index, upload ->
+            Column {
+                if (index > 0) PulseRowDivider(insetStart = 54)
+                PendingUploadRow(upload = upload, onAccept = { onAccept(upload.id) }, onDecline = { onDecline(upload.id) })
+            }
         }
 
         // ── 4. In transit right now ────────────────────────────────────────
         if (incomingActive.isNotEmpty()) {
-            item { PulseSectionHeader("Arriving right now") }
-            items(incomingActive, key = { "active_" + it.id }) { item ->
-                PulseCard(modifier = Modifier.fillMaxWidth().testTag("receive_active_${item.id}")) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Inbox,
-                            contentDescription = null,
-                            tint = c.accent,
-                            modifier = Modifier.size(PulseSizes.icon.dp)
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                item.fileName,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = c.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = if (item.fileSize >= 0)
-                                    "${NetworkUtils.formatBytes(item.fileSize)} · from ${item.remoteDevice}"
-                                else "from ${item.remoteDevice}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = c.textSecondary
-                            )
-                        }
-                    }
+            item { PulseRowLabel("Arriving right now") }
+            itemsIndexed(incomingActive, key = { _, item -> "active_" + item.id }) { index, item ->
+                Column {
+                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    PulseRow(
+                        title = item.fileName,
+                        subtitle = if (item.fileSize >= 0)
+                            "${NetworkUtils.formatBytes(item.fileSize)} · from ${item.remoteDevice}"
+                        else "from ${item.remoteDevice}",
+                        icon = Icons.Default.Inbox,
+                        iconTint = c.accent,
+                        showChevron = false,
+                        modifier = Modifier.testTag("receive_active_${item.id}")
+                    )
                 }
             }
         }
 
         // ── 5. Where files land ────────────────────────────────────────────
         item {
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("receive_dest_card")) {
-                Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                    PulseSectionHeader(
-                        title = "Where files land",
-                        detail = "One folder the app owns; the engine has no other destination"
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("receive_dest_card"),
+                verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)
+            ) {
+                PulseRowLabel("Where files land")
+                // Same geometry as PulseRow; the folder name carries its own test tag.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = null,
+                        tint = c.textSecondary,
+                        modifier = Modifier.size(22.dp)
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Folder,
-                            contentDescription = null,
-                            tint = c.textTertiary,
-                            modifier = Modifier.size(PulseSizes.icon.dp)
-                        )
-                        Spacer(Modifier.width(PulseSpacing.sm.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                receiveDir.substringAfterLast('/'),
-                                style = MaterialTheme.typography.titleSmall,
-                                color = c.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.testTag("receive_dir_value")
-                            )
-                            Text(
-                                receiveDir,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = c.textTertiary,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        PulseIconButton(
-                            icon = Icons.Default.ContentCopy,
-                            label = "Copy folder location",
-                            onClick = { clipboard.setText(AnnotatedString(receiveDir)) }
-                        )
-                    }
-                    if (freeSpaceBytes in 0 until LOW_SPACE_BYTES) {
-                        PulseStatus(
-                            text = "Almost no room left",
-                            tone = PulseStatusTone.Warning,
-                            detail = "${NetworkUtils.formatBytes(freeSpaceBytes)} free where files land — " +
-                                "incoming uploads will fail until you clear space.",
-                            modifier = Modifier.testTag("receive_low_space")
-                        )
-                    } else if (freeSpaceBytes >= 0) {
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            "${NetworkUtils.formatBytes(freeSpaceBytes)} free in that folder.",
+                            receiveDir.substringAfterLast('/'),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = c.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("receive_dir_value")
+                        )
+                        Text(
+                            receiveDir,
                             style = MaterialTheme.typography.bodySmall,
                             color = c.textTertiary,
-                            modifier = Modifier.testTag("receive_free_space")
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    PulseDivider()
-                    HonestLine("A taken name gets a timestamp appended. Accepting never overwrites a file already on disk.")
-                    HonestLine("Sender-supplied paths are sanitized; directory escapes are rejected before anything is written.")
-                    HonestLine("Choosing a different folder is not supported by the current engine, so no control pretends otherwise.")
+                    Spacer(Modifier.width(6.dp))
+                    PulseIconButton(
+                        icon = Icons.Default.ContentCopy,
+                        label = "Copy folder location",
+                        onClick = { clipboard.setText(AnnotatedString(receiveDir)) }
+                    )
                 }
+                if (freeSpaceBytes in 0 until LOW_SPACE_BYTES) {
+                    PulseStatus(
+                        text = "Almost no room left",
+                        tone = PulseStatusTone.Warning,
+                        detail = "${NetworkUtils.formatBytes(freeSpaceBytes)} free — uploads fail until you clear space.",
+                        modifier = Modifier
+                            .padding(start = 16.dp)
+                            .testTag("receive_low_space")
+                    )
+                } else if (freeSpaceBytes >= 0) {
+                    Text(
+                        "${NetworkUtils.formatBytes(freeSpaceBytes)} free in that folder.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.textTertiary,
+                        modifier = Modifier
+                            .padding(start = 16.dp)
+                            .testTag("receive_free_space")
+                    )
+                }
+                PulseRowDivider()
+                HonestLine("A taken name gets a timestamp appended — never overwritten.")
+                HonestLine("Sender paths are sanitized; escapes are rejected.")
+                HonestLine("Another folder is not supported by the current engine.")
             }
         }
 
         // ── 6. Recently received ───────────────────────────────────────────
         item {
-            PulseSectionHeader(
-                title = "Recently received",
-                detail = "From this phone's history — removing a row never deletes the file"
-            )
+            Column {
+                PulseRowLabel("Recently received")
+                Text(
+                    "Removing a row never deletes the file",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textTertiary,
+                    modifier = Modifier.padding(start = 16.dp)
+                )
+            }
         }
         val received = receivedRows(receivedHistory)
         if (received.isEmpty()) {
             item {
                 Text(
-                    "Nothing has been received on this phone yet.",
+                    "Nothing received yet.",
                     style = MaterialTheme.typography.bodySmall,
                     color = c.textTertiary,
-                    modifier = Modifier.testTag("receive_history_empty")
-                )
+                    modifier = Modifier
+                        .padding(start = 16.dp)
+                        .testTag("receive_history_empty")
+                    )
             }
         }
-        items(received.take(20), key = { "recv_" + it.id }) { row ->
-            PulseCard(modifier = Modifier.fillMaxWidth().testTag("receive_history_${row.id}")) {
-                Column {
-                    Text(
-                        row.fileName,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = c.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        "${NetworkUtils.formatBytes(row.fileSize)} · ${dateFormatter.format(Date(row.timestamp))}" +
+        itemsIndexed(received.take(20), key = { _, row -> "recv_" + row.id }) { index, row ->
+            Column {
+                if (index > 0) PulseRowDivider(insetStart = 54)
+                Column(modifier = Modifier.testTag("receive_history_${row.id}")) {
+                    PulseRow(
+                        title = row.fileName,
+                        subtitle = "${NetworkUtils.formatBytes(row.fileSize)} · ${dateFormatter.format(Date(row.timestamp))}" +
                             " · from ${row.remoteDevice}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary
+                        icon = Icons.Default.Description,
+                        iconTint = c.textSecondary,
+                        showChevron = false,
+                        trailing = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)) {
+                                PulseIconButton(
+                                    icon = Icons.Default.Visibility,
+                                    label = "Open ${row.fileName}",
+                                    onClick = { onOpenFile(row.localFilePath) },
+                                    modifier = Modifier.testTag("receive_open_${row.id}")
+                                )
+                                PulseIconButton(
+                                    icon = Icons.Default.ContentCopy,
+                                    label = "Copy file location",
+                                    onClick = { row.localFilePath?.let { clipboard.setText(AnnotatedString(it)) } },
+                                    modifier = Modifier.testTag("receive_copy_${row.id}")
+                                )
+                                PulseIconButton(
+                                    icon = Icons.Default.Delete,
+                                    label = "Remove ${row.fileName} from history",
+                                    onClick = { removeTarget = row },
+                                    modifier = Modifier.testTag("receive_remove_${row.id}")
+                                )
+                            }
+                        }
                     )
                     row.localFilePath?.let { path ->
                         Text(
@@ -347,28 +368,8 @@ fun ReceiveScreen(
                             fontFamily = FontFamily.Monospace,
                             color = c.textTertiary,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)) {
-                        PulseIconButton(
-                            icon = Icons.Default.Visibility,
-                            label = "Open ${row.fileName}",
-                            onClick = { onOpenFile(row.localFilePath) },
-                            modifier = Modifier.testTag("receive_open_${row.id}")
-                        )
-                        PulseIconButton(
-                            icon = Icons.Default.ContentCopy,
-                            label = "Copy file location",
-                            onClick = { row.localFilePath?.let { clipboard.setText(AnnotatedString(it)) } },
-                            modifier = Modifier.testTag("receive_copy_${row.id}")
-                        )
-                        Box(Modifier.weight(1f))
-                        PulseIconButton(
-                            icon = Icons.Default.Delete,
-                            label = "Remove ${row.fileName} from history",
-                            onClick = { removeTarget = row },
-                            modifier = Modifier.testTag("receive_remove_${row.id}")
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = 54.dp)
                         )
                     }
                 }
@@ -385,8 +386,7 @@ fun ReceiveScreen(
             title = { Text("Remove from history?") },
             text = {
                 Text(
-                    "${row.fileName} stays on this phone. Only the entry in the history list is removed — " +
-                        "the file itself is never deleted from here."
+                    "${row.fileName} stays on this phone — only the history entry is removed."
                 )
             },
             confirmButton = {
@@ -414,53 +414,35 @@ private fun PendingUploadRow(
     onDecline: () -> Unit
 ) {
     val c = LocalPulseColors.current
-    PulseCard(modifier = Modifier.fillMaxWidth().testTag("receive_pending_${upload.id}")) {
-        Column(verticalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(PulseSpacing.md.dp)
-            ) {
-                Icon(
-                    Icons.Default.Description,
-                    contentDescription = null,
-                    tint = c.warning,
-                    modifier = Modifier.size(PulseSizes.icon.dp)
-                )
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        upload.fileName,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = c.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+    Column(modifier = Modifier.testTag("receive_pending_${upload.id}")) {
+        PulseRow(
+            title = upload.fileName,
+            subtitle = "${NetworkUtils.formatBytes(upload.fileSize)} · from ${upload.fromDevice}",
+            icon = Icons.Default.Description,
+            iconTint = c.warning,
+            showChevron = false,
+            trailing = {
+                Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.xs.dp)) {
+                    PulseButton(
+                        label = "Decline",
+                        tone = PulseButtonTone.Danger,
+                        onClick = onDecline,
+                        modifier = Modifier.testTag("receive_decline_${upload.id}")
                     )
-                    Text(
-                        "${NetworkUtils.formatBytes(upload.fileSize)} · from ${upload.fromDevice}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary
+                    PulseButton(
+                        label = "Accept",
+                        onClick = onAccept,
+                        modifier = Modifier.testTag("receive_accept_${upload.id}")
                     )
                 }
             }
-            Text(
-                "The sender named itself — treat that name as unverified. Accept stores the file; " +
-                    "decline deletes it from the phone.",
-                style = MaterialTheme.typography.bodySmall,
-                color = c.textTertiary
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
-                PulseButton(
-                    label = "Accept",
-                    onClick = onAccept,
-                    modifier = Modifier.testTag("receive_accept_${upload.id}")
-                )
-                PulseButton(
-                    label = "Decline",
-                    tone = PulseButtonTone.Danger,
-                    onClick = onDecline,
-                    modifier = Modifier.testTag("receive_decline_${upload.id}")
-                )
-            }
-        }
+        )
+        Text(
+            "Sender-named — treat that name as unverified. Decline deletes the file.",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.textTertiary,
+            modifier = Modifier.padding(start = 54.dp, bottom = 8.dp)
+        )
     }
 }
 
@@ -469,6 +451,7 @@ private fun HonestLine(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,
-        color = LocalPulseColors.current.textTertiary
+        color = LocalPulseColors.current.textTertiary,
+        modifier = Modifier.padding(start = 16.dp)
     )
 }
