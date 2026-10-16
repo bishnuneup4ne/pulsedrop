@@ -270,6 +270,9 @@ class CallEngine(
             active = true, outgoing = true, video = video,
             peerName = peer.name, peerPid = pid, status = "Ringing ${peer.name}…"
         )
+        // An outgoing video call opens on your own picture, not on a black screen:
+        // the lens is live before the other phone picks up.
+        if (video) startCamera()
 
         scope.launch(Dispatchers.IO) {
             val body = JSONObject()
@@ -1541,6 +1544,11 @@ class CallEngine(
         _state.value = _state.value.copy(muted = !_state.value.muted)
         if (_state.value.conference) broadcastConfState()
         notifyMediaState()
+    }
+
+    /** Open the lens without flipping it off when it is already live; safe before media is up. */
+    fun ensureCamera() {
+        if (!_state.value.cameraOn) startCamera()
     }
 
     fun toggleCamera() {

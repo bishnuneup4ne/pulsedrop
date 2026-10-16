@@ -1,5 +1,6 @@
 package com.pulsedrop.app.ui.screens
 
+import android.view.SurfaceHolder
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.pulsedrop.app.call.CallState
 import com.pulsedrop.app.server.WebCall
 import com.pulsedrop.app.ui.theme.PulseStageColors
 import kotlinx.coroutines.delay
@@ -43,7 +45,12 @@ fun WebCallScreen(
     call: WebCall,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
-    onHangUp: () -> Unit
+    onHangUp: () -> Unit,
+    callState: CallState = CallState(),
+    onToggleMute: () -> Unit = {},
+    onToggleCamera: () -> Unit = {},
+    onEnsureCamera: () -> Unit = {},
+    onAttachPreview: (SurfaceHolder?) -> Unit = {}
 ) {
     val outgoing = call.outgoing
     val name = call.name.ifBlank { "Browser" }
@@ -52,6 +59,9 @@ fun WebCallScreen(
     else null
 
     if (call.state != "accepted") {
+        if (outgoing && call.video) {
+            LaunchedEffect(call.cid) { onEnsureCamera() }
+        }
         IncomingCallStage(
             card = IncomingCallCard(
                 name = name,
@@ -68,7 +78,14 @@ fun WebCallScreen(
                 declineTag = if (outgoing) "web_call_cancel_btn" else "web_call_decline_btn"
             ),
             onAccept = onAccept,
-            onDecline = onDecline
+            onDecline = onDecline,
+            media = if (outgoing) OutgoingCallMedia(
+                muted = callState.muted,
+                cameraOn = callState.cameraOn,
+                onToggleMute = onToggleMute,
+                onToggleCamera = onToggleCamera,
+                onAttachPreview = onAttachPreview
+            ) else null
         )
         return
     }

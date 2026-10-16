@@ -1,5 +1,6 @@
 package com.pulsedrop.app.ui.screens
 
+import android.view.SurfaceHolder
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -23,6 +24,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -60,9 +65,27 @@ data class IncomingCallCard(
     val declineTag: String = "decline_call_btn"
 )
 
+/**
+ * What the dialling end can touch while the other side has not answered: your own live camera
+ * and the two toggles that stay true the moment you set them. The peer's controls (share, end)
+ * only appear once the call is actually answered, so nothing here promises a live connection.
+ */
+data class OutgoingCallMedia(
+    val muted: Boolean,
+    val cameraOn: Boolean,
+    val onToggleMute: () -> Unit,
+    val onToggleCamera: () -> Unit,
+    val onAttachPreview: (SurfaceHolder?) -> Unit
+)
+
 /** The one ringing screen: an avatar that breathes, who is calling, and the way out. */
 @Composable
-fun IncomingCallStage(card: IncomingCallCard, onAccept: () -> Unit, onDecline: () -> Unit) {
+fun IncomingCallStage(
+    card: IncomingCallCard,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit,
+    media: OutgoingCallMedia? = null
+) {
     val stage = PulseStageColors
     val reduced = LocalReducedMotion.current
     // The breathe is the only movement here; the buttons must stay exactly where a thumb already
@@ -94,6 +117,21 @@ fun IncomingCallStage(card: IncomingCallCard, onAccept: () -> Unit, onDecline: (
             .systemBarsPadding()
             .testTag("incoming_call_stage")
     ) {
+        if (media != null && media.cameraOn) {
+            // Your own lens behind the ringing screen: what a video call should show
+            // while nobody has answered yet.
+            SelfPreview(
+                onAttach = media.onAttachPreview,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("outgoing_call_preview")
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(stage.background.copy(alpha = 0.45f))
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -153,6 +191,26 @@ fun IncomingCallStage(card: IncomingCallCard, onAccept: () -> Unit, onDecline: (
             )
 
             Spacer(modifier = Modifier.weight(1f))
+
+            if (media != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
+                    CallStageControl(
+                        icon = if (media.muted) Icons.Default.MicOff else Icons.Default.Mic,
+                        label = if (media.muted) "Unmute" else "Mute",
+                        selected = media.muted,
+                        onClick = media.onToggleMute,
+                        tag = "outgoing_call_mute_btn"
+                    )
+                    CallStageControl(
+                        icon = if (media.cameraOn) Icons.Default.Videocam else Icons.Default.VideocamOff,
+                        label = if (media.cameraOn) "Cam off" else "Cam on",
+                        selected = media.cameraOn,
+                        onClick = media.onToggleCamera,
+                        tag = "outgoing_call_cam_btn"
+                    )
+                }
+                Spacer(modifier = Modifier.height(26.dp))
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

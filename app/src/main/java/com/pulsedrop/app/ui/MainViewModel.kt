@@ -671,6 +671,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleCallCamera() = callEngine.toggleCamera()
 
+    /** Open the lens for a dialled video call without waiting for the answer. */
+    fun ensureCallCamera() = callEngine.ensureCamera()
+
     fun switchCallCamera() = callEngine.switchCamera()
 
     fun attachCallPreview(holder: android.view.SurfaceHolder?) = callEngine.attachPreview(holder)

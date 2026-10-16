@@ -908,7 +908,19 @@ fun MainScreen(viewModel: MainViewModel) {
                     withCallPermissions(browserCall.video) { viewModel.answerWebCall(true) }
                 },
                 onDecline = leaveBrowserCall,
-                onHangUp = { viewModel.endWebCall() }
+                onHangUp = { viewModel.endWebCall() },
+                callState = callState,
+                onToggleMute = { viewModel.toggleCallMute() },
+                onToggleCamera = {
+                    val missing = if (callState.cameraOn) emptyList() else missingCallPermissions(true)
+                    if (missing.isEmpty()) viewModel.toggleCallCamera()
+                    else {
+                        pendingCallAction = { viewModel.toggleCallCamera() }
+                        callPermissionLauncher.launch(missing.toTypedArray())
+                    }
+                },
+                onEnsureCamera = { viewModel.ensureCallCamera() },
+                onAttachPreview = { viewModel.attachCallPreview(it) }
             )
         }
 

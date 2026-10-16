@@ -114,7 +114,7 @@ fun CallOverlay(
             )
         }
 
-        if (!state.conference && remoteFrame != null) {
+        if (!state.conference && (remoteFrame != null || state.cameraOn)) {
             // The name and status sit over live video, so fade the top of the stage to black.
             Box(
                 modifier = Modifier
@@ -190,17 +190,28 @@ fun CallOverlay(
         }
 
         if (state.cameraOn) {
-            SelfPreview(
-                onAttach = onAttachPreview,
-                // Bottom corner, clear of both the peer's name and the control dock.
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 14.dp, bottom = 176.dp)
-                    .size(width = 96.dp, height = 128.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .border(1.dp, stage.borderStrong, RoundedCornerShape(14.dp))
-                    .testTag("call_self_preview")
-            )
+            if (!state.conference && remoteFrame == null) {
+                // Nothing from the other side yet: your own lens fills the stage so a video
+                // call opens as a video screen, not a black avatar with a spinner.
+                SelfPreview(
+                    onAttach = onAttachPreview,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("call_self_preview")
+                )
+            } else {
+                SelfPreview(
+                    onAttach = onAttachPreview,
+                    // Bottom corner, clear of both the peer's name and the control dock.
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 14.dp, bottom = 176.dp)
+                        .size(width = 96.dp, height = 128.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .border(1.dp, stage.borderStrong, RoundedCornerShape(14.dp))
+                        .testTag("call_self_preview")
+                )
+            }
         }
 
         Column(
@@ -211,7 +222,7 @@ fun CallOverlay(
         ) {
             Spacer(modifier = Modifier.height(48.dp))
 
-            if (!state.conference && remoteFrame == null) {
+            if (!state.conference && remoteFrame == null && !state.cameraOn) {
                 Box(
                     modifier = Modifier
                         .size(112.dp)
@@ -318,14 +329,17 @@ fun CallOverlay(
                     )
                 }
                 Spacer(modifier = Modifier.size(12.dp))
-                CallControl(
-                    icon = if (state.sharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare,
-                    label = if (state.sharing) "Stop share" else "Share",
-                    selected = state.sharing,
-                    onClick = onToggleScreenShare,
-                    tag = "call_share_btn"
-                )
-                Spacer(modifier = Modifier.size(12.dp))
+                // Sharing is a thing you do inside a live call, not at the ringing screen.
+                if (state.connected) {
+                    CallControl(
+                        icon = if (state.sharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare,
+                        label = if (state.sharing) "Stop share" else "Share",
+                        selected = state.sharing,
+                        onClick = onToggleScreenShare,
+                        tag = "call_share_btn"
+                    )
+                    Spacer(modifier = Modifier.size(12.dp))
+                }
                 CallControl(
                     icon = Icons.Default.CallEnd,
                     label = "End",
@@ -446,7 +460,7 @@ private fun ConferenceGrid(
  * device receives. It is a self-view only - nothing is rendered back from the wire.
  */
 @Composable
-private fun SelfPreview(
+internal fun SelfPreview(
     onAttach: (SurfaceHolder?) -> Unit,
     modifier: Modifier = Modifier
 ) {
