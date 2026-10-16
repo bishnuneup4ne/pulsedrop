@@ -103,6 +103,7 @@ import com.pulsedrop.app.ui.screens.ReceiveScreen
 import com.pulsedrop.app.ui.screens.SendScreen
 import com.pulsedrop.app.ui.screens.SettingsSheet
 import com.pulsedrop.app.ui.screens.TransfersScreen
+import com.pulsedrop.app.ui.screens.FileManagerScreen
 import com.pulsedrop.app.ui.screens.MyFilesScreen
 import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
@@ -116,6 +117,7 @@ import com.pulsedrop.app.ui.screens.HomeScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -720,6 +722,86 @@ fun MainScreen(viewModel: MainViewModel) {
                             onMessage = { msg -> com.pulsedrop.app.ui.PulseEvents.post(msg) },
                             onOpenReceive = { selectSection(PulseSection.RECEIVE_FILES) },
                             onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
+                        )
+                    }
+
+                    PulseSection.FILE_MANAGER -> {
+                        val extRoot = context.getExternalFilesDir(null) ?: context.filesDir
+                        val ioScope = rememberCoroutineScope()
+                        val roots = remember(extRoot) {
+                            listOf(
+                                com.pulsedrop.app.ui.screens.ManagedRoot(
+                                    "received", "Received files",
+                                    "Everything accepted from browsers or peers lands here.",
+                                    java.io.File(extRoot, "WebDrop_Received"), false
+                                ),
+                                com.pulsedrop.app.ui.screens.ManagedRoot(
+                                    "pending", "Waiting for a decision",
+                                    "Uploads held here while auto-accept is off.",
+                                    java.io.File(extRoot, "WebDrop_Pending"), false
+                                ),
+                                com.pulsedrop.app.ui.screens.ManagedRoot(
+                                    "chat", "Chat attachments",
+                                    "Files pulled in through conversations.",
+                                    java.io.File(extRoot, "WebDrop_Chat"), false
+                                ),
+                                com.pulsedrop.app.ui.screens.ManagedRoot(
+                                    "updates", "Update downloads",
+                                    "APKs the updater fetched before an install.",
+                                    java.io.File(extRoot, "updates"), true
+                                ),
+                                com.pulsedrop.app.ui.screens.ManagedRoot(
+                                    "crashes", "Crash logs",
+                                    "Reports kept until the next launch shares them.",
+                                    java.io.File(context.filesDir, "crashes"), false
+                                ),
+                                com.pulsedrop.app.ui.screens.ManagedRoot(
+                                    "cache", "Cache",
+                                    "Working files — the server writes through here mid-transfer.",
+                                    context.cacheDir, true
+                                )
+                            )
+                        }
+                        val recordIdsByPath = remember(historyList) {
+                            historyList.mapNotNull { r ->
+                                r.localFilePath?.let { it to r.id }
+                            }.toMap()
+                        }
+                        val volumeStats = remember(extRoot) {
+                            try {
+                                val fs = android.os.StatFs(extRoot.absolutePath)
+                                Pair(fs.availableBytes, fs.totalBytes)
+                            } catch (_: Exception) {
+                                Pair(-1L, -1L)
+                            }
+                        }
+                        FileManagerScreen(
+                            roots = roots,
+                            recordIdsByPath = recordIdsByPath,
+                            volumeFreeBytes = volumeStats.first,
+                            volumeTotalBytes = volumeStats.second,
+                            onOpen = { path, result -> viewModel.openFile(path, result) },
+                            onShare = { path -> viewModel.shareFile(path) },
+                            onSaveToDownloads = { path -> viewModel.saveToDownloads(path) },
+                            onRename = { id, name, result -> viewModel.renameReceivedFile(id, name, result) },
+                            onDelete = { path, recordId, result ->
+                                if (recordId != null) {
+                                    viewModel.deleteReceivedFile(recordId, result)
+                                } else {
+                                    ioScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                        val f = java.io.File(path)
+                                        val ok = f.exists() && f.delete()
+                                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                            result(
+                                                ok,
+                                                if (ok) "Deleted ${f.name} — no copy is kept."
+                                                else "The file was already gone — nothing was deleted."
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            onMessage = { msg -> com.pulsedrop.app.ui.PulseEvents.post(msg) }
                         )
                     }
 

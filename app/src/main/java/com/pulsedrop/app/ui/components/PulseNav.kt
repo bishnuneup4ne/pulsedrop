@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
@@ -98,6 +99,7 @@ enum class PulseSection(
     RECEIVE_FILES("Receive files", Icons.Filled.Download, "section_receive"),
     TRANSFERS("Transfers", Icons.Filled.SwapHoriz, "section_transfers"),
     MY_FILES("My files", Icons.Filled.Folder, "section_myfiles"),
+    FILE_MANAGER("File manager", Icons.Filled.FolderOpen, "section_filemanager"),
     MEDIA("Media library", Icons.Filled.PhotoLibrary, "section_media"),
     MESSAGES("Messages", Icons.AutoMirrored.Filled.Chat, "section_messages"),
     CALLS("Calls", Icons.Filled.Call, "section_calls",
