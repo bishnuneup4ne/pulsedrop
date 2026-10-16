@@ -108,6 +108,7 @@ import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.ActivityScreen
 import com.pulsedrop.app.ui.screens.MediaScreen
+import com.pulsedrop.app.ui.screens.NetworkScreen
 import com.pulsedrop.app.ui.screens.SecurityScreen
 import com.pulsedrop.app.ui.screens.HomeScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
@@ -146,6 +147,8 @@ fun MainScreen(viewModel: MainViewModel) {
     val updateApk by viewModel.updateManager.downloadedApk.collectAsState()
     val downloadCount by viewModel.updateManager.downloads.collectAsState()
     val relayHostName by viewModel.relayHostName.collectAsState()
+    val relayHost by viewModel.relayHost.collectAsState()
+    val relayLastSync by viewModel.relayClient.lastSync.collectAsState()
     val pendingUploads by viewModel.pendingUploads.collectAsState()
     val updateStatus by viewModel.updateManager.statusMessage.collectAsState()
     val themeMode = com.pulsedrop.app.ui.theme.ThemePreference.mode.value
@@ -706,6 +709,33 @@ fun MainScreen(viewModel: MainViewModel) {
                         onOpenTransferDetails = { id ->
                             selectSection(PulseSection.TRANSFERS)
                             transferDetailsId = id
+                        }
+                    )
+
+                    PulseSection.NETWORK -> NetworkScreen(
+                        serverRunning = serverState.isRunning,
+                        serverUrl = serverState.serverUrl,
+                        startedAt = serverState.startedAt,
+                        pinRequired = serverState.isPinRequired,
+                        autoAccept = serverState.autoAcceptTransfers,
+                        webClients = webClients,
+                        nearbyPeers = nearbyPeers,
+                        scannedPeers = scannedPeers,
+                        radarScanning = radarScanning,
+                        relayHost = relayHost,
+                        relayLastSync = relayLastSync,
+                        onToggleServer = { viewModel.toggleServer() },
+                        onRefresh = { viewModel.refreshNetwork() },
+                        onScanRadar = { viewModel.startRadarScan() },
+                        onStopRadar = { viewModel.stopRadarScan() },
+                        onOpenHotspotSettings = {
+                            try {
+                                context.startActivity(
+                                    android.content.Intent("android.settings.TETHER_SETTINGS")
+                                )
+                            } catch (_: Exception) {
+                                com.pulsedrop.app.ui.PulseEvents.post("This phone does not expose hotspot settings")
+                            }
                         }
                     )
 

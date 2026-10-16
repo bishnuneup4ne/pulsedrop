@@ -656,7 +656,7 @@ private fun DiagnosticsRow(label: String, value: String, last: Boolean = false) 
     }
 }
 
-private object HotspotState {
+internal object HotspotState {
     fun isActive(context: Context): Boolean {
         return try {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
