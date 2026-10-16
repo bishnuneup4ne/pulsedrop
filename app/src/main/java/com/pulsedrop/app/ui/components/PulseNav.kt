@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.HelpOutline
@@ -95,6 +96,7 @@ enum class PulseSection(
     val shortcut: PulseSection? = null
 ) {
     HOME("Home", Icons.Filled.Home, "section_home"),
+    ONBOARDING("Get started", Icons.Filled.Checklist, "section_onboarding"),
     DEVICES("Devices", Icons.Filled.Radar, "section_devices"),
     SEND_FILES("Send files", Icons.AutoMirrored.Filled.Send, "section_send"),
     RECEIVE_FILES("Receive files", Icons.Filled.Download, "section_receive"),

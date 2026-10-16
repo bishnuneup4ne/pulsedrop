@@ -107,6 +107,7 @@ import com.pulsedrop.app.ui.screens.FileManagerScreen
 import com.pulsedrop.app.ui.screens.MyFilesScreen
 import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
+import com.pulsedrop.app.ui.screens.OnboardingScreen
 import com.pulsedrop.app.ui.screens.ActivityScreen
 import com.pulsedrop.app.ui.screens.HelpScreen
 import com.pulsedrop.app.ui.screens.MediaScreen
@@ -203,13 +204,22 @@ fun MainScreen(viewModel: MainViewModel) {
     ) { /* the answer is re-read from the permission itself, not from this callback */ notifPermTick++ }
 
     // Without this, Android 13+ silently hides the server's persistent notification, so
-    // the user sees no sign the LAN server is live and has no Stop control.
+    // the user sees no sign the server is live and has no Stop control.
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // First launch lands on the setup page exactly once; the flag is written immediately, so
+    // a returning user is never intercepted again and the page stays reachable from the drawer.
+    LaunchedEffect(Unit) {
+        if (!com.pulsedrop.app.ui.screens.OnboardingPrefs.isSeen(context)) {
+            com.pulsedrop.app.ui.screens.OnboardingPrefs.markSeen(context)
+            selectedSection = PulseSection.ONBOARDING
         }
     }
 
@@ -439,6 +449,23 @@ fun MainScreen(viewModel: MainViewModel) {
                 ) {
             Crossfade(targetState = selectedSection, label = "tab_crossfade") { section ->
                 when (section) {
+                    PulseSection.ONBOARDING -> OnboardingScreen(
+                        serverRunning = serverState.isRunning,
+                        serverUrl = serverState.serverUrl,
+                        pinRequired = serverState.isPinRequired,
+                        notificationsGranted = notifPermissionGranted,
+                        osAsksAboutNotifications =
+                            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU,
+                        pairedCount = pairedDevices.size,
+                        onToggleServer = { viewModel.toggleServer() },
+                        onSetPinRequired = { viewModel.setPinRequired(true) },
+                        onAskNotifications = {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        },
+                        onOpenDevices = { selectSection(PulseSection.DEVICES) },
+                        onOpenSettings = { selectSection(PulseSection.SETTINGS) }
+                    )
+
                     PulseSection.HOME -> HomeScreen(
                         serverState = serverState,
                         qrBitmap = qrBitmap,
