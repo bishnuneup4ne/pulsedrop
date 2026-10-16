@@ -107,8 +107,10 @@ import com.pulsedrop.app.ui.screens.MyFilesScreen
 import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.ActivityScreen
+import com.pulsedrop.app.ui.screens.HelpScreen
 import com.pulsedrop.app.ui.screens.MediaScreen
 import com.pulsedrop.app.ui.screens.NetworkScreen
+import com.pulsedrop.app.ui.screens.NotificationScreen
 import com.pulsedrop.app.ui.screens.SecurityScreen
 import com.pulsedrop.app.ui.screens.HomeScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
@@ -187,9 +189,15 @@ fun MainScreen(viewModel: MainViewModel) {
         if (action != null && result[Manifest.permission.RECORD_AUDIO] == true) action()
     }
 
+    var notifPermTick by remember { mutableStateOf(0) }
+    val notifPermissionGranted = remember(notifPermTick) {
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            context, Manifest.permission.POST_NOTIFICATIONS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* the server's foreground notification becomes visible once granted */ }
+    ) { /* the answer is re-read from the permission itself, not from this callback */ notifPermTick++ }
 
     // Without this, Android 13+ silently hides the server's persistent notification, so
     // the user sees no sign the LAN server is live and has no Stop control.
@@ -627,9 +635,33 @@ fun MainScreen(viewModel: MainViewModel) {
                         }
                     }
 
-                    PulseSection.HELP -> HotspotGuideScreen(
-                        serverState = serverState
-                    )
+                    PulseSection.HELP -> {
+                        var guideOpen by remember { mutableStateOf(false) }
+                        if (guideOpen) {
+                            HotspotGuideScreen(serverState = serverState)
+                        } else {
+                            HelpScreen(
+                                receiveDir = viewModel.receiveDir,
+                                onOpenHotspotGuide = { guideOpen = true },
+                                onOpenNetwork = { selectSection(PulseSection.NETWORK) },
+                                onOpenSecurity = { selectSection(PulseSection.SECURITY) },
+                                onOpenNotifications = { selectSection(PulseSection.NOTIFICATIONS) },
+                                onOpenGithubIssues = {
+                                    try {
+                                        context.startActivity(
+                                            android.content.Intent(
+                                                android.content.Intent.ACTION_VIEW,
+                                                android.net.Uri.parse("https://github.com/bishnuneup4ne/pulsedrop/issues/new")
+                                            )
+                                        )
+                                    } catch (_: Exception) {
+                                        com.pulsedrop.app.ui.PulseEvents.post("No browser available to open GitHub")
+                                    }
+                                },
+                                onCheckUpdate = { viewModel.updateManager.check(auto = false) }
+                            )
+                        }
+                    }
 
                     PulseSection.SETTINGS -> SettingsSheet(
                         serverState = serverState,
@@ -701,6 +733,27 @@ fun MainScreen(viewModel: MainViewModel) {
                             transferDetailsId = id
                         },
                         onOpenDevices = { selectSection(PulseSection.DEVICES) }
+                    )
+
+                    PulseSection.NOTIFICATIONS -> NotificationScreen(
+                        permissionGranted = notifPermissionGranted,
+                        onRequestPermission = {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        },
+                        onOpenSystemSettings = {
+                            try {
+                                context.startActivity(
+                                    android.content.Intent("android.settings.APP_NOTIFICATION_SETTINGS")
+                                        .putExtra(
+                                            "android.provider.extra.APP_PACKAGE",
+                                            context.packageName
+                                        )
+                                )
+                            } catch (_: Exception) {
+                                com.pulsedrop.app.ui.PulseEvents.post("This phone does not expose notification settings")
+                            }
+                        },
+                        onOpenActivity = { selectSection(PulseSection.ACTIVITY) }
                     )
 
                     PulseSection.MEDIA -> MediaScreen(
