@@ -688,7 +688,23 @@ fun MainScreen(viewModel: MainViewModel) {
                         onOpenServer = { selectSection(PulseSection.HOME) }
                     )
 
-                    PulseSection.ABOUT -> AboutScreen()
+                    PulseSection.ABOUT -> AboutScreen(
+                        updateInfo = updateInfo,
+                        updateStatus = updateStatus,
+                        onCheckUpdate = { viewModel.updateManager.check(auto = false) },
+                        onOpenLink = { url ->
+                            try {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(url)
+                                    )
+                                )
+                            } catch (_: Exception) {
+                                com.pulsedrop.app.ui.PulseEvents.post("No browser available to open this link")
+                            }
+                        }
+                    )
 
                     PulseSection.MY_FILES -> {
                         val receiveDir = viewModel.receiveDir
