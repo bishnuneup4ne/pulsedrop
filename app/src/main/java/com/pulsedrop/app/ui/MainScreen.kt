@@ -108,6 +108,7 @@ import com.pulsedrop.app.ui.screens.MyFilesScreen
 import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.OnboardingScreen
+import com.pulsedrop.app.ui.screens.ProfileScreen
 import com.pulsedrop.app.ui.screens.ActivityScreen
 import com.pulsedrop.app.ui.screens.HelpScreen
 import com.pulsedrop.app.ui.screens.MediaScreen
@@ -692,6 +693,22 @@ fun MainScreen(viewModel: MainViewModel) {
                             )
                         }
                     }
+
+                    PulseSection.PROFILE -> ProfileScreen(
+                        deviceName = serverState.deviceName,
+                        deviceId = remember { viewModel.pairManager.myDeviceId() },
+                        modelLabel = "${android.os.Build.BRAND} ${android.os.Build.MODEL}",
+                        androidLabel = "${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
+                        serverRunning = serverState.isRunning,
+                        pairedCount = pairedDevices.size,
+                        groupCount = chatGroups.size,
+                        historyCount = historyList.size,
+                        onRename = { newName -> viewModel.setDeviceName(newName) },
+                        onOpenDevices = { selectSection(PulseSection.DEVICES) },
+                        onOpenSecurity = { selectSection(PulseSection.SECURITY) },
+                        onOpenChats = { selectSection(PulseSection.MESSAGES) },
+                        onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
+                    )
 
                     PulseSection.SETTINGS -> SettingsSheet(
                         serverState = serverState,
