@@ -40,9 +40,11 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DrawerState
@@ -120,6 +122,8 @@ enum class PulseSection(
     DIAGNOSTICS("Diagnostics", Icons.Filled.MonitorHeart, "section_diagnostics"),
     SECURITY("Security center", Icons.Filled.Security, "section_security"),
     PROFILE("Profile", Icons.Filled.Person, "section_profile"),
+    WHATS_NEW("What's new", Icons.Filled.Update, "section_whatsnew"),
+    UPDATE_CENTER("Update center", Icons.Filled.SystemUpdate, "section_updatecenter"),
     SETTINGS("Settings", Icons.Filled.Settings, "section_settings"),
     HELP("Help & support", Icons.Filled.HelpOutline, "section_help"),
     ABOUT("About PulseDrop", Icons.Filled.Info, "section_about");

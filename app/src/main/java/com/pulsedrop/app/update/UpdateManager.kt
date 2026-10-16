@@ -29,6 +29,26 @@ data class UpdateInfo(
     val sizeBytes: Long
 )
 
+/** One published release exactly as GitHub describes it — the raw material of a changelog. */
+data class ReleaseInfo(
+    val versionName: String,
+    val releaseName: String,
+    val notes: String,
+    val publishedAt: String,
+    val isPrerelease: Boolean,
+    val hasApk: Boolean,
+    val apkDownloads: Int
+)
+
+/** Newest first, by the same version comparison the updater itself uses. */
+internal fun sortReleases(list: List<ReleaseInfo>): List<ReleaseInfo> = list.sortedWith { a, b ->
+    when {
+        UpdateManager.isNewer(a.versionName, b.versionName) -> -1
+        UpdateManager.isNewer(b.versionName, a.versionName) -> 1
+        else -> 0
+    }
+}
+
 /**
  * Checks the project's GitHub releases on every launch and downloads the update in-app, so
  * users never have to open a browser and hunt for the APK. Installs go through the standard
@@ -58,6 +78,14 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
     private val _update = MutableStateFlow<UpdateInfo?>(null)
     val update: StateFlow<UpdateInfo?> = _update.asStateFlow()
 
+    /**
+     * The last update a check actually confirmed, kept even when the popup was snoozed:
+     * closing a dialog is not amnesia, and the Update Center would otherwise claim
+     * "no check has answered" right under "last check reached GitHub 3 minutes ago".
+     */
+    private val _lastKnown = MutableStateFlow<UpdateInfo?>(null)
+    val lastKnown: StateFlow<UpdateInfo?> = _lastKnown.asStateFlow()
+
     /** Null when idle; 0f..1f while downloading; 1f with [installedApk] set when done. */
     private val _progress = MutableStateFlow<Float?>(null)
     val progress: StateFlow<Float?> = _progress.asStateFlow()
@@ -72,14 +100,37 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
     private val _downloads = MutableStateFlow<Int?>(null)
     val downloads: StateFlow<Int?> = _downloads.asStateFlow()
 
+    /** Every published release GitHub lists, or null until the first fetch answers. */
+    private val _releases = MutableStateFlow<List<ReleaseInfo>?>(null)
+    val releases: StateFlow<List<ReleaseInfo>?> = _releases.asStateFlow()
+
+    /** Why the last release-list fetch failed, in GitHub's terms — never a swallowed error. */
+    private val _releasesError = MutableStateFlow<String?>(null)
+    val releasesError: StateFlow<String?> = _releasesError.asStateFlow()
+
+    private var releasesFetching = false
+
     private var updateVersion = ""
+
+    /** True while a check request is actually in flight, so the UI can disable its own button. */
+    private val _checking = MutableStateFlow(false)
+    val checking: StateFlow<Boolean> = _checking.asStateFlow()
+
+    private val settingsPrefs =
+        context.getSharedPreferences("localdrop_settings", Context.MODE_PRIVATE)
 
     /** When a check last actually reached GitHub and read an answer, on the monotonic clock. */
     private var _lastSuccessAt = 0L
     val lastSuccessAt: Long get() = _lastSuccessAt
 
-    /** A banner the user closed stays closed for that version, until they ask again on purpose. */
-    private var dismissedVersion = ""
+    /**
+     * When a banner the user closed stays closed for that version. The version lives in the
+     * settings store, so "not now" survives a restart — but a deliberate manual check always
+     * overrides it.
+     */
+    private var dismissedVersion = settingsPrefs.getString("update_snoozed", "").orEmpty()
+    private val _snoozed = MutableStateFlow(dismissedVersion.ifBlank { null })
+    val snoozed: StateFlow<String?> = _snoozed.asStateFlow()
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -89,8 +140,9 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
 
     /** The launched lookup, so a caller that cares can wait for it instead of guessing. */
     fun check(auto: Boolean): Job {
-        if (_downloads.value == null) fetchDownloads()
+        if (_downloads.value == null) fetchReleases()
         return scope.launch(Dispatchers.IO) {
+            _checking.value = true
             try {
                 val req = Request.Builder()
                     .url(LATEST_URL)
@@ -110,19 +162,10 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
                     if (!isNewer(version, BuildConfig.VERSION_NAME)) {
                         updateVersion = ""
                         _update.value = null
+                        _lastKnown.value = null
                         _downloadedApk.value = null
                         if (!auto) _statusMessage.value = "You are on the latest version (${BuildConfig.VERSION_NAME})"
                         return@use
-                    }
-                    if (version == dismissedVersion) {
-                        if (auto) {
-                            // A banner the user closed is not a bug to re-report on the next reconnect.
-                            updateVersion = ""
-                            _update.value = null
-                            return@use
-                        }
-                        // Asking on purpose overrides having closed it earlier.
-                        dismissedVersion = ""
                     }
                     val assets = json.optJSONArray("assets") ?: org.json.JSONArray()
                     var url = ""
@@ -140,6 +183,26 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
                         if (!auto) _statusMessage.value = "Release $tag has no installable file yet"
                         return@use
                     }
+                    val info = UpdateInfo(
+                        versionName = version,
+                        releaseName = json.optString("name", "PulseDrop $version"),
+                        notes = json.optString("body").take(1200),
+                        downloadUrl = url,
+                        sizeBytes = size
+                    )
+                    _lastKnown.value = info
+                    if (version == dismissedVersion) {
+                        // A banner the user closed is not a bug to re-report on the next reconnect;
+                        // asking on purpose overrides having closed it earlier.
+                        if (auto) {
+                            updateVersion = ""
+                            _update.value = null
+                            return@use
+                        }
+                        dismissedVersion = ""
+                        settingsPrefs.edit().remove("update_snoozed").apply()
+                        _snoozed.value = null
+                    }
                     updateVersion = version
                     // A previously downloaded file for this exact version can be reused.
                     val prior = apkFile(version)
@@ -149,23 +212,26 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
                         prior?.delete()
                         _downloadedApk.value = null
                     }
-                    _update.value = UpdateInfo(
-                        versionName = version,
-                        releaseName = json.optString("name", "PulseDrop $version"),
-                        notes = json.optString("body").take(1200),
-                        downloadUrl = url,
-                        sizeBytes = size
-                    )
+                    _update.value = info
                     _statusMessage.value = null
                 }
             } catch (e: Exception) {
                 if (!auto) _statusMessage.value = "Update check failed: ${e.message}"
+            } finally {
+                _checking.value = false
             }
         }
     }
 
-    /** Lifetime download count summed over every published release's assets. */
-    private fun fetchDownloads() {
+    /**
+     * Fetch every published release once and read two things out of the same answer: the
+     * lifetime APK download total the About page shows, and the release list the What's-new
+     * page renders verbatim. A forced refresh is the page's retry button, nothing more.
+     */
+    fun fetchReleases(force: Boolean = false) {
+        if (releasesFetching) return
+        if (!force && _releases.value != null) return
+        releasesFetching = true
         scope.launch(Dispatchers.IO) {
             try {
                 val req = Request.Builder()
@@ -173,23 +239,45 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
                     .header("Accept", "application/vnd.github+json")
                     .build()
                 client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use
+                    if (!resp.isSuccessful) {
+                        _releasesError.value = "GitHub answered HTTP ${resp.code} for the release list."
+                        return@use
+                    }
                     val arr = org.json.JSONArray(resp.body?.string() ?: return@use)
                     var total = 0
+                    val list = ArrayList<ReleaseInfo>()
                     for (i in 0 until arr.length()) {
-                        val assets = arr.getJSONObject(i).optJSONArray("assets") ?: continue
+                        val r = arr.getJSONObject(i)
+                        if (r.optBoolean("draft")) continue
+                        val assets = r.optJSONArray("assets") ?: org.json.JSONArray()
+                        var hasApk = false
+                        var apkPulls = 0
                         for (j in 0 until assets.length()) {
                             val a = assets.getJSONObject(j)
                             if (a.optString("name").endsWith(".apk", ignoreCase = true)) {
+                                hasApk = true
+                                apkPulls += a.optInt("download_count", 0)
                                 total += a.optInt("download_count", 0)
                             }
                         }
+                        list += ReleaseInfo(
+                            versionName = r.optString("tag_name").removePrefix("v"),
+                            releaseName = r.optString("name"),
+                            notes = r.optString("body"),
+                            publishedAt = r.optString("published_at"),
+                            isPrerelease = r.optBoolean("prerelease"),
+                            hasApk = hasApk,
+                            apkDownloads = apkPulls
+                        )
                     }
                     _downloads.value = total
+                    _releases.value = sortReleases(list)
+                    _releasesError.value = null
                 }
             } catch (e: Exception) {
-                // Counter is best-effort; leave it null so the UI hides it.
+                _releasesError.value = "Could not reach GitHub for the release list: ${e.message}"
             }
+            releasesFetching = false
         }
     }
 
@@ -201,7 +289,7 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
     }
 
     fun download() {
-        val info = _update.value ?: return
+        val info = _update.value ?: _lastKnown.value ?: return
         if (_progress.value != null) return
         scope.launch(Dispatchers.IO) {
             val target = apkFile(info.versionName) ?: return@launch
@@ -244,7 +332,11 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
     }
 
     fun dismiss() {
-        _update.value?.versionName?.let { dismissedVersion = it }
+        (_update.value ?: _lastKnown.value)?.versionName?.let {
+            dismissedVersion = it
+            settingsPrefs.edit().putString("update_snoozed", it).apply()
+            _snoozed.value = it
+        }
         _progress.value = null
         _update.value = null
     }

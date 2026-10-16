@@ -109,6 +109,8 @@ import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.OnboardingScreen
 import com.pulsedrop.app.ui.screens.ProfileScreen
+import com.pulsedrop.app.ui.screens.WhatsNewScreen
+import com.pulsedrop.app.ui.screens.UpdateCenterScreen
 import com.pulsedrop.app.ui.screens.ActivityScreen
 import com.pulsedrop.app.ui.screens.HelpScreen
 import com.pulsedrop.app.ui.screens.MediaScreen
@@ -150,6 +152,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val webClients by viewModel.webClients.collectAsState()
     val lastReadAt by viewModel.lastReadAt.collectAsState()
     val updateInfo by viewModel.updateManager.update.collectAsState()
+    val updateLastKnown by viewModel.updateManager.lastKnown.collectAsState()
     val updateProgress by viewModel.updateManager.progress.collectAsState()
     val updateApk by viewModel.updateManager.downloadedApk.collectAsState()
     val downloadCount by viewModel.updateManager.downloads.collectAsState()
@@ -158,6 +161,10 @@ fun MainScreen(viewModel: MainViewModel) {
     val relayLastSync by viewModel.relayClient.lastSync.collectAsState()
     val pendingUploads by viewModel.pendingUploads.collectAsState()
     val updateStatus by viewModel.updateManager.statusMessage.collectAsState()
+    val whatsNewReleases by viewModel.updateManager.releases.collectAsState()
+    val whatsNewError by viewModel.updateManager.releasesError.collectAsState()
+    val updateChecking by viewModel.updateManager.checking.collectAsState()
+    val updateSnoozed by viewModel.updateManager.snoozed.collectAsState()
     val themeMode = com.pulsedrop.app.ui.theme.ThemePreference.mode.value
     val colorScheme = MaterialTheme.colorScheme
 
@@ -708,6 +715,45 @@ fun MainScreen(viewModel: MainViewModel) {
                         onOpenSecurity = { selectSection(PulseSection.SECURITY) },
                         onOpenChats = { selectSection(PulseSection.MESSAGES) },
                         onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
+                    )
+
+                    PulseSection.WHATS_NEW -> WhatsNewScreen(
+                        installedVersion = BuildConfig.VERSION_NAME,
+                        releases = whatsNewReleases,
+                        error = whatsNewError,
+                        onFetch = { viewModel.updateManager.fetchReleases(force = false) }
+                    )
+
+                    PulseSection.UPDATE_CENTER -> UpdateCenterScreen(
+                        installedVersion = BuildConfig.VERSION_NAME,
+                        buildCode = BuildConfig.VERSION_CODE,
+                        isDebugBuild = BuildConfig.DEBUG,
+                        info = updateLastKnown,
+                        statusMessage = updateStatus,
+                        progress = updateProgress,
+                        apkReady = updateApk != null,
+                        checking = updateChecking,
+                        canInstallPermission = viewModel.updateManager.canInstall(),
+                        snoozedVersion = updateSnoozed,
+                        lastCheckLine = com.pulsedrop.app.ui.screens.lastCheckLine(
+                            viewModel.updateManager.lastSuccessAt,
+                            android.os.SystemClock.elapsedRealtime()
+                        ),
+                        lastAnswered = viewModel.updateManager.lastSuccessAt > 0L,
+                        onCheck = { viewModel.updateManager.check(auto = false) },
+                        onDownload = { viewModel.updateManager.download() },
+                        onInstall = { viewModel.updateManager.install() },
+                        onAskInstallPermission = {
+                            try {
+                                context.startActivity(viewModel.updateManager.installPermissionIntent())
+                            } catch (_: Exception) {
+                                com.pulsedrop.app.ui.PulseEvents.post(
+                                    "Android's install-permission screen is not available on this device"
+                                )
+                            }
+                        },
+                        onSnooze = { viewModel.updateManager.dismiss() },
+                        onOpenWhatsNew = { selectSection(PulseSection.WHATS_NEW) }
                     )
 
                     PulseSection.SETTINGS -> SettingsSheet(
