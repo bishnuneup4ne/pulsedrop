@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.ScreenShare
@@ -108,6 +109,7 @@ enum class PulseSection(
                 "and tap Share screen.",
         shortcutLabel = "Open messages", shortcut = MESSAGES),
     ACTIVITY("Activity", Icons.Filled.Notifications, "section_activity"),
+    NOTIFICATIONS("Notifications", Icons.Filled.NotificationsActive, "section_notifications"),
     NETWORK("Network status", Icons.Filled.Language, "section_network"),
     SECURITY("Security center", Icons.Filled.Security, "section_security"),
     SETTINGS("Settings", Icons.Filled.Settings, "section_settings"),
