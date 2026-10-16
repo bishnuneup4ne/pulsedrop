@@ -442,7 +442,7 @@ fun TransferDetailsScreen(
             showChevron = false
         )
         if (!localPath.isNullOrBlank()) {
-            PulseRowDivider(insetStart = 54)
+            PulseRowDivider(insetStart = 52)
             PulseRow(
                 title = "Saved on this phone",
                 subtitle = localPath,
@@ -534,7 +534,7 @@ fun TransferDetailsScreen(
                 iconTint = if (paired != null && paired.verified) colors.success else colors.warning,
                 showChevron = false
             )
-            PulseRowDivider(insetStart = 54)
+            PulseRowDivider(insetStart = 52)
             PulseRow(
                 title = "This phone",
                 subtitle = "The PulseDrop app on this device",

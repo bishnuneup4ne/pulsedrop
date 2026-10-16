@@ -418,7 +418,7 @@ fun SendScreen(
             }
             itemsIndexed(items, key = { _, it -> it.uri.toString() }) { index, file ->
                 Column {
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 52)
                     SelectedFileRow(
                         file = file,
                         onRemove = {
@@ -447,7 +447,7 @@ fun SendScreen(
         } else {
             itemsIndexed(recipients, key = { _, r -> r.id }) { index, r ->
                 Column {
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 52)
                     RecipientRow(
                         recipient = r,
                         selected = r.id == recipientId,
@@ -642,7 +642,7 @@ private fun SelectedFileRow(file: SendFileItem, onRemove: () -> Unit) {
                 "Cannot be read any more — it moved, or access was revoked",
                 style = MaterialTheme.typography.labelSmall,
                 color = c.danger,
-                modifier = Modifier.padding(start = 54.dp)
+                modifier = Modifier.padding(start = 52.dp)
             )
         }
     }

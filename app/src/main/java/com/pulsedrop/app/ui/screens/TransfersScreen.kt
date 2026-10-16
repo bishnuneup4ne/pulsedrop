@@ -531,7 +531,7 @@ private fun RowScope.CountFilterChip(
 private fun PendingPeekRow(pending: PendingUploadInfo, showDivider: Boolean) {
     val colors = LocalPulseColors.current
     Column(modifier = Modifier.fillMaxWidth().testTag("transfers_pending_${pending.id}")) {
-        if (showDivider) PulseRowDivider(insetStart = 54)
+        if (showDivider) PulseRowDivider(insetStart = 52)
         PulseRow(
             title = pending.fileName,
             subtitle = "From ${pending.fromDevice}",
@@ -562,7 +562,7 @@ private fun TransferListRow(
 ) {
     val colors = LocalPulseColors.current
     Column(modifier = Modifier.fillMaxWidth().testTag("transfers_row_${entry.id}")) {
-        if (showDivider) PulseRowDivider(insetStart = 54)
+        if (showDivider) PulseRowDivider(insetStart = 52)
 
         if (entry.category == TransferCategory.UNKNOWN || entry.category == TransferCategory.CANCELLED) {
             UnknownStateRow(entry, onDetails, onRemove)

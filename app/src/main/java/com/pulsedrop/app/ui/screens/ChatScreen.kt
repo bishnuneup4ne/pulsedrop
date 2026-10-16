@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -482,7 +483,7 @@ private fun InboxView(
                 contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp)
             ) {
                 itemsIndexed(visible, key = { _, t -> t.id ?: ROOM_ID }) { index, t ->
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 84)
                     ThreadRow(
                         thread = t,
                         typingUsers = typingUsers,
@@ -495,7 +496,7 @@ private fun InboxView(
         if (pairedDevices.isNotEmpty()) {
             PulseRowLabel("Quick channels")
             pairedDevices.forEachIndexed { index, p ->
-                if (index > 0) PulseRowDivider(insetStart = 54)
+                if (index > 0) PulseRowDivider(insetStart = 70)
                 PulseRow(
                     title = "Message ${p.name} privately",
                     leading = { PulseAvatar(name = p.name, size = 40) },
@@ -625,7 +626,7 @@ private fun GroupDialog(
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     PulseRowGroup {
                         pairedDevices.forEachIndexed { index, p ->
-                            if (index > 0) PulseRowDivider(insetStart = 54)
+                            if (index > 0) PulseRowDivider(insetStart = 70)
                             PulseRow(
                                 title = p.name,
                                 leading = { PulseAvatar(name = p.name, size = 40) },
@@ -688,7 +689,7 @@ private fun IpDialog(
                     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                         PulseRowGroup {
                             lanPeers.forEachIndexed { index, peer ->
-                                if (index > 0) PulseRowDivider(insetStart = 54)
+                                if (index > 0) PulseRowDivider(insetStart = 70)
                                 PulseRow(
                                     title = peer.name,
                                     subtitle = if (peer.port > 0) "${peer.ip}:${peer.port}"
@@ -1301,17 +1302,21 @@ private fun MessageRow(
                                     color = if (mine) c.onAccent else c.textPrimary
                                 )
                             }
+                            if (lastOfRun) {
+                                // Instagram tucks the time inside the corner of the last bubble
+                                // of a run; it belongs to the message, not to the page.
+                                Text(
+                                    text = shortTime(msg.timestamp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (mine) c.onAccent.copy(alpha = 0.75f) else c.textTertiary,
+                                    modifier = Modifier
+                                        .align(Alignment.End)
+                                        .offset(x = 8.dp, y = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
-            }
-            if (lastOfRun && !msg.deleted) {
-                Text(
-                    text = shortTime(msg.timestamp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = c.textTertiary,
-                    modifier = Modifier.padding(top = 2.dp, start = 14.dp, end = 14.dp)
-                )
             }
         }
 
@@ -1396,6 +1401,7 @@ private fun ReplyQuote(msg: ClipMessage, mine: Boolean) {
 
 @Composable
 private fun DaySeparator(label: String) {
+    val c = LocalPulseColors.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1403,13 +1409,13 @@ private fun DaySeparator(label: String) {
         contentAlignment = Alignment.Center
     ) {
         Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            color = c.surfaceSunken,
             shape = RoundedCornerShape(12.dp)
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = c.textSecondary,
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
             )
         }

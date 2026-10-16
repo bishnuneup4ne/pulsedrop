@@ -201,13 +201,13 @@ fun AboutScreen(
                     title = "One server, every device",
                     body = "Turn the server on; every device on your network uses this one address."
                 )
-                PulseRowDivider(insetStart = 54)
+                PulseRowDivider(insetStart = 52)
                 AboutFactRow(
                     icon = Icons.Default.Lock,
                     title = "Encrypted pairing",
                     body = "End-to-end encrypted, with a code you confirm on both devices."
                 )
-                PulseRowDivider(insetStart = 54)
+                PulseRowDivider(insetStart = 52)
                 AboutFactRow(
                     icon = Icons.Default.PhoneAndroid,
                     title = "No accounts, no cloud",
@@ -226,7 +226,7 @@ fun AboutScreen(
                     subtitle = updateStatus ?: latestReleaseLine(updateInfo),
                     showChevron = false
                 )
-                PulseRowDivider(insetStart = 54)
+                PulseRowDivider(insetStart = 52)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -255,7 +255,7 @@ fun AboutScreen(
                     text = "Free for noncommercial use — LICENSE file in the source repo.",
                     style = MaterialTheme.typography.bodySmall,
                     color = c.textSecondary,
-                    modifier = Modifier.padding(start = 54.dp, end = 16.dp, top = 2.dp, bottom = 10.dp)
+                    modifier = Modifier.padding(start = 52.dp, end = 16.dp, top = 2.dp, bottom = 10.dp)
                 )
             }
         }
@@ -286,7 +286,7 @@ fun AboutScreen(
         item {
             PulseRowGroup(modifier = Modifier.fillMaxWidth().testTag("about_links_card")) {
                 ABOUT_LINKS.forEachIndexed { index, link ->
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 52)
                     PulseRow(
                         title = link.label,
                         icon = Icons.Default.Link,

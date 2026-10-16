@@ -413,7 +413,7 @@ fun HotspotGuideScreen(
                     )
                 }
                 steps.forEachIndexed { index, (title, description) ->
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 56)
                     StepRow(number = index + 1, title = title, description = description)
                 }
             }

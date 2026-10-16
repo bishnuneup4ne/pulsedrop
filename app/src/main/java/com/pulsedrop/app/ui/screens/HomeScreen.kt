@@ -237,7 +237,7 @@ fun HomeScreen(
                     ) { Text("Manage all", style = MaterialTheme.typography.labelLarge) }
                 }
                 pairedDevices.take(3).forEachIndexed { index, device ->
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 52)
                     DeviceRow(device) { onNavigate(PulseSection.DEVICES) }
                 }
                 if (pairedDevices.size > 3) {
@@ -284,7 +284,7 @@ fun HomeScreen(
                 }
                 if (history.isNotEmpty()) {
                     history.take(3).forEachIndexed { index, item ->
-                        if (index > 0) PulseRowDivider(insetStart = 54)
+                        if (index > 0) PulseRowDivider(insetStart = 52)
                         ActivityRow(item, onClick = {
                             if (onOpenTransferDetails != null) onOpenTransferDetails(item.id)
                             else onNavigate(PulseSection.TRANSFERS)
@@ -323,18 +323,18 @@ fun HomeScreen(
                     )
                 } else {
                     sharedFiles.take(3).forEachIndexed { index, file ->
-                        if (index > 0) PulseRowDivider(insetStart = 54)
+                        if (index > 0) PulseRowDivider(insetStart = 52)
                         HostedFileRow(file = file, onRemove = { onRemoveFile(file.id) })
                     }
                     if (sharedFiles.size > 3) {
-                        PulseRowDivider(insetStart = 54)
+                        PulseRowDivider(insetStart = 52)
                         PulseRow(
                             title = "+${sharedFiles.size - 3} more on the server",
                             showChevron = false,
                             onClick = { onNavigate(PulseSection.RECEIVE_FILES) }
                         )
                     }
-                    PulseRowDivider(insetStart = 54)
+                    PulseRowDivider(insetStart = 52)
                     PulseRow(
                         title = "Clear all",
                         icon = Icons.Default.Delete,

@@ -443,7 +443,7 @@ fun DevicesScreen(
                 }
             } else {
                 itemsIndexed(visiblePeers, key = { _, peer -> peer.id }) { index, peer ->
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 52)
                     val paired = pairedByIp[peer.ip]
                     PeerDeviceRow(
                         peer = peer,
@@ -478,7 +478,7 @@ fun DevicesScreen(
                 }
             } else {
                 itemsIndexed(visiblePaired, key = { _, paired -> paired.pid }) { index, paired ->
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 52)
                     PairedDeviceRow(
                         paired = paired,
                         connected = connectedPeer?.peer?.ip == paired.originIp,

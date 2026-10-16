@@ -141,7 +141,10 @@ fun PulseRow(
     }
 }
 
-/** Hairline between rows; inset it to 54.dp when the rows carry a leading icon. */
+/**
+ * Hairline between rows, always ending where the row's text begins:
+ * 52 for 22.dp icons, 70 for 40.dp avatars, 84 for 54.dp avatars, 16 for plain rows.
+ */
 @Composable
 fun PulseRowDivider(insetStart: Int = 0, modifier: Modifier = Modifier) {
     val c = LocalPulseColors.current

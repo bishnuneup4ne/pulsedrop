@@ -172,7 +172,7 @@ fun HelpScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = c.textSecondary,
                             modifier = Modifier
-                                .padding(start = 54.dp, end = 16.dp, top = 2.dp, bottom = 12.dp)
+                                .padding(start = 52.dp, end = 16.dp, top = 2.dp, bottom = 12.dp)
                                 .testTag("help_answer_${faq.id}")
                         )
                     }
@@ -192,7 +192,7 @@ fun HelpScreen(
                     onClick = onOpenHotspotGuide,
                     modifier = Modifier.testTag("help_link_hotspot")
                 )
-                PulseRowDivider(insetStart = 54)
+                PulseRowDivider(insetStart = 52)
                 PulseRow(
                     title = "Notifications",
                     icon = Icons.Default.Notifications,
@@ -215,7 +215,7 @@ fun HelpScreen(
                     titleColor = c.accent,
                     modifier = Modifier.testTag("help_report")
                 )
-                PulseRowDivider(insetStart = 54)
+                PulseRowDivider(insetStart = 52)
                 PulseRow(
                     title = "Check for updates",
                     icon = Icons.Default.Refresh,
@@ -236,14 +236,14 @@ fun HelpScreen(
                     subtitle = "No one can reach your phone to fix it.",
                     showChevron = false
                 )
-                PulseRowDivider(insetStart = 54)
+                PulseRowDivider(insetStart = 52)
                 PulseRow(
                     title = "No deleted-file recovery",
                     icon = Icons.Default.Block,
                     subtitle = "Deleted files are gone; the app keeps no copy.",
                     showChevron = false
                 )
-                PulseRowDivider(insetStart = 54)
+                PulseRowDivider(insetStart = 52)
                 PulseRow(
                     title = "No live diagnostics",
                     icon = Icons.Default.Block,

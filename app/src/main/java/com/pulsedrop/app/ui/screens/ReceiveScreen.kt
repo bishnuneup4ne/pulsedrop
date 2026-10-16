@@ -195,7 +195,7 @@ fun ReceiveScreen(
         }
         itemsIndexed(pendingUploads, key = { _, upload -> "pending_" + upload.id }) { index, upload ->
             Column {
-                if (index > 0) PulseRowDivider(insetStart = 54)
+                if (index > 0) PulseRowDivider(insetStart = 52)
                 PendingUploadRow(upload = upload, onAccept = { onAccept(upload.id) }, onDecline = { onDecline(upload.id) })
             }
         }
@@ -205,7 +205,7 @@ fun ReceiveScreen(
             item { PulseRowLabel("Arriving right now") }
             itemsIndexed(incomingActive, key = { _, item -> "active_" + item.id }) { index, item ->
                 Column {
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 52)
                     PulseRow(
                         title = item.fileName,
                         subtitle = if (item.fileSize >= 0)
@@ -308,7 +308,7 @@ fun ReceiveScreen(
         }
         itemsIndexed(received.take(20), key = { _, row -> "recv_" + row.id }) { index, row ->
             Column {
-                if (index > 0) PulseRowDivider(insetStart = 54)
+                if (index > 0) PulseRowDivider(insetStart = 52)
                 Column(modifier = Modifier.testTag("receive_history_${row.id}")) {
                     PulseRow(
                         title = row.fileName,

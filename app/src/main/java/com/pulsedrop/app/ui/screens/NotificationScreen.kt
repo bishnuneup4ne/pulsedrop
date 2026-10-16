@@ -215,7 +215,7 @@ fun NotificationScreen(
         item {
             PulseRowGroup {
                 NOTIFICATION_FACTS.forEachIndexed { index, fact ->
-                    if (index > 0) PulseRowDivider(insetStart = 54)
+                    if (index > 0) PulseRowDivider(insetStart = 52)
                     val channel = channels[fact.id]
                     val turnedOff = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                         channel?.importance == NotificationManager.IMPORTANCE_NONE

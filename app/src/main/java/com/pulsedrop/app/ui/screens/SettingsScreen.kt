@@ -178,7 +178,7 @@ fun SettingsSheet(
                 },
                 modifier = Modifier.testTag("settings_pin_required")
             )
-            PulseRowDivider(insetStart = 54)
+            PulseRowDivider(insetStart = 52)
             PulseRow(
                 title = "New PIN",
                 icon = Icons.Default.Refresh,
@@ -186,7 +186,7 @@ fun SettingsSheet(
                 onClick = onRegeneratePin,
                 modifier = Modifier.testTag("settings_regenerate_pin")
             )
-            PulseRowDivider(insetStart = 54)
+            PulseRowDivider(insetStart = 52)
             PulseRow(
                 title = "Paired devices",
                 icon = Icons.Default.Security,
@@ -222,7 +222,7 @@ fun SettingsSheet(
                 showChevron = false
             )
             if (updateInfo != null) {
-                PulseRowDivider(insetStart = 54)
+                PulseRowDivider(insetStart = 52)
                 PulseRow(
                     title = "v${updateInfo.versionName} is available",
                     icon = Icons.Default.TrendingUp,
@@ -230,7 +230,7 @@ fun SettingsSheet(
                     showChevron = false
                 )
             }
-            PulseRowDivider(insetStart = 54)
+            PulseRowDivider(insetStart = 52)
             PulseRow(
                 title = "Check for updates",
                 icon = Icons.Default.Refresh,
