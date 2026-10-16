@@ -112,6 +112,9 @@ import com.pulsedrop.app.ui.screens.ProfileScreen
 import com.pulsedrop.app.ui.screens.WhatsNewScreen
 import com.pulsedrop.app.ui.screens.UpdateCenterScreen
 import com.pulsedrop.app.ui.screens.SearchScreen
+import com.pulsedrop.app.ui.screens.StorageScreen
+import com.pulsedrop.app.ui.screens.StorageSnapshot
+import com.pulsedrop.app.ui.screens.measureStorage
 import com.pulsedrop.app.ui.screens.ActivityScreen
 import com.pulsedrop.app.ui.screens.HelpScreen
 import com.pulsedrop.app.ui.screens.MediaScreen
@@ -963,6 +966,32 @@ fun MainScreen(viewModel: MainViewModel) {
                             transferDetailsId = id
                         }
                     )
+
+                    PulseSection.STORAGE -> {
+                        val extRoot = context.getExternalFilesDir(null) ?: context.filesDir
+                        var storageSnapshot by remember { mutableStateOf<StorageSnapshot?>(null) }
+                        var storageMeasuring by remember { mutableStateOf(false) }
+                        var storageTick by remember { mutableStateOf(0) }
+                        LaunchedEffect(storageTick) {
+                            storageMeasuring = true
+                            // Real disk walk — keep it off the composition thread.
+                            val snap = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                measureStorage(extRoot, context.filesDir, context.cacheDir, "webdrop_database")
+                            }
+                            storageSnapshot = snap
+                            storageMeasuring = false
+                        }
+                        StorageScreen(
+                            snapshot = storageSnapshot,
+                            measuring = storageMeasuring,
+                            history = historyList,
+                            onClearLog = { viewModel.clearHistory() },
+                            onRefresh = { storageTick++ },
+                            onOpenFileManager = { selectSection(PulseSection.FILE_MANAGER) },
+                            onOpenMyFiles = { selectSection(PulseSection.MY_FILES) },
+                            onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
+                        )
+                    }
 
                     PulseSection.NETWORK -> NetworkScreen(
                         serverRunning = serverState.isRunning,
