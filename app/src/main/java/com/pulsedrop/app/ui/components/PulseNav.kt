@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
@@ -99,6 +100,7 @@ enum class PulseSection(
     val shortcut: PulseSection? = null
 ) {
     HOME("Home", Icons.Filled.Home, "section_home"),
+    SEARCH("Search", Icons.Filled.Search, "section_search"),
     ONBOARDING("Get started", Icons.Filled.Checklist, "section_onboarding"),
     DEVICES("Devices", Icons.Filled.Radar, "section_devices"),
     SEND_FILES("Send files", Icons.AutoMirrored.Filled.Send, "section_send"),

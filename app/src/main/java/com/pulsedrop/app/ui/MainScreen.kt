@@ -111,6 +111,7 @@ import com.pulsedrop.app.ui.screens.OnboardingScreen
 import com.pulsedrop.app.ui.screens.ProfileScreen
 import com.pulsedrop.app.ui.screens.WhatsNewScreen
 import com.pulsedrop.app.ui.screens.UpdateCenterScreen
+import com.pulsedrop.app.ui.screens.SearchScreen
 import com.pulsedrop.app.ui.screens.ActivityScreen
 import com.pulsedrop.app.ui.screens.HelpScreen
 import com.pulsedrop.app.ui.screens.MediaScreen
@@ -457,6 +458,15 @@ fun MainScreen(viewModel: MainViewModel) {
                 ) {
             Crossfade(targetState = selectedSection, label = "tab_crossfade") { section ->
                 when (section) {
+                    PulseSection.SEARCH -> SearchScreen(
+                        activeTransfers = activeTransfersMap.values.toList(),
+                        history = historyList,
+                        nearbyPeers = nearbyPeers,
+                        pairedDevices = pairedDevices,
+                        messages = clipMessages,
+                        onOpenSection = { selectSection(it) }
+                    )
+
                     PulseSection.ONBOARDING -> OnboardingScreen(
                         serverRunning = serverState.isRunning,
                         serverUrl = serverState.serverUrl,
