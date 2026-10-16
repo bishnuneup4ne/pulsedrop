@@ -149,7 +149,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
     }
 
     fun secretKey(p: PairedDevice): SecretKeySpec = synchronized(secretCache) {
-        secretCache.getOrPut(p.pid) { Crypto.sharedKeyFor(context, p.pubB64) }
+        secretCache.getOrPut(p.pid) { Crypto.sharedKeyFor(context, p.pubB64, p.kdfVersion) }
     }
 
     fun pairForPeer(peer: PeerDevice): PairedDevice? =
@@ -162,12 +162,20 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
      * paired before versions were exchanged reports nothing, and nothing is treated honestly:
      * as older than anything we could ask of it.
      */
-    fun peerAtLeast(pairing: PairedDevice, major: Int, minor: Int): Boolean {
-        val parts = pairing.appVersion.trim().split('.')
+    fun peerAtLeast(pairing: PairedDevice, major: Int, minor: Int): Boolean =
+        versionAtLeast(pairing.appVersion, major, minor)
+
+    /** Same rule for a bare version string: unknown or missing counts as oldest. */
+    fun versionAtLeast(version: String, major: Int, minor: Int): Boolean {
+        val parts = version.trim().split('.')
         val a = parts.getOrNull(0)?.toIntOrNull() ?: return false
         val b = parts.getOrNull(1)?.toIntOrNull() ?: 0
         return a > major || (a == major && b >= minor)
     }
+
+    /** The acceptor picks the KDF for a new pair; both ends then keep it forever. */
+    private fun negotiateKdf(peerAppVersion: String): Int =
+        if (versionAtLeast(peerAppVersion, 2, 0) && versionAtLeast(versionProvider(), 2, 0)) Kdf.V2 else Kdf.V1
 
     fun myDeviceId(): String = Crypto.deviceId(myPubB64())
 
@@ -361,16 +369,22 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
             originIp = request.myIp,
             originPort = request.myPort,
             appVersion = request.appVersion,
+            kdfVersion = negotiateKdf(request.appVersion),
         )
         // Keep the key the user already confirmed; accepting again from the same device is a
-        // network hiccup far more often than it is a genuine rekey.
+        // network hiccup far more often than it is a genuine rekey. The stored KDF version is
+        // kept for the same reason: it was decided once and both ends must keep using it.
         val existing = _paired.value.firstOrNull { it.pid == paired.pid }
-        val device = if (existing != null) paired.copy(verified = existing.verified) else paired
+        val device = if (existing != null) {
+            paired.copy(verified = existing.verified, kdfVersion = existing.kdfVersion)
+        } else {
+            paired
+        }
         val replaced = addPairing(device)
         _incomingRequests.update { list -> list.filterNot { it.reqId == request.reqId } }
         _pairEvent.value = pairingOutcome(request.name, replaced)
         scope.launch(Dispatchers.IO) {
-            respondToPair(request.reqId, true, request.myIp, request.myPort, myIp, myPort, request.viaRelay)
+            respondToPair(request.reqId, true, request.myIp, request.myPort, myIp, myPort, request.viaRelay, device.kdfVersion)
         }
     }
 
@@ -390,7 +404,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         peerPort: Int,
         myIp: String,
         myPort: Int,
-        viaRelay: Boolean = false
+        viaRelay: Boolean = false,
+        kdfVersion: Int? = null
     ) {
         val body = JSONObject()
             .put("reqId", reqId)
@@ -401,6 +416,9 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
             .put("pub", myPubB64())
             .put("myIp", myIp)
             .put("myPort", myPort)
+        // Additive: old requesters never see this key (we only ever send V1 to them) and
+        // would ignore it anyway; v2 requesters store whatever we decided.
+        if (kdfVersion != null && kdfVersion != Kdf.V1) body.put("kdf", kdfVersion)
         // A phone with its server off cannot be handed this; it comes and takes it.
         if (viaRelay) {
             val sink = pairAnswerSink
@@ -572,10 +590,11 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
         // half of the pairing (missed response, reinstall of state) heals without a prompt.
         if (_paired.value.any { it.pid == Crypto.pairId(myPub, peerPub) }) {
             val (myIp, myPort) = endpointProvider()
+            val existingKdf = _paired.value.firstOrNull { it.pid == Crypto.pairId(myPub, peerPub) }?.kdfVersion
             scope.launch(Dispatchers.IO) {
                 respondToPair(
                     json.optString("reqId", ""), true, reachIp, reachPort, myIp, myPort,
-                    json.optBoolean("relay", false)
+                    json.optBoolean("relay", false), existingKdf
                 )
             }
             return
@@ -625,7 +644,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                 pubB64 = peerPub,
                 originIp = reachIp,
                 originPort = reachPort,
-                appVersion = json.optString("appVersion", "")
+                appVersion = json.optString("appVersion", ""),
+                kdfVersion = json.optInt("kdf", Kdf.V1)
             )
         )
         _pairEvent.value = pairingOutcome(pending.peer.name, replaced)
@@ -950,7 +970,8 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                     originPort = o.optInt("port", 8080),
                     createdAt = o.optLong("created", System.currentTimeMillis()),
                     verified = o.optBoolean("verified", false),
-                    appVersion = o.optString("appVersion", "")
+                    appVersion = o.optString("appVersion", ""),
+                    kdfVersion = o.optInt("kdf", Kdf.V1)
                 )
             }
         } catch (e: Exception) {
@@ -1006,6 +1027,7 @@ class PairManager(private val context: Context, private val scope: CoroutineScop
                     .put("created", p.createdAt)
                     .put("verified", p.verified)
                     .put("appVersion", p.appVersion)
+                    .put("kdf", p.kdfVersion)
             )
         }
         prefs.edit().putString("pairs", arr.toString()).apply()

@@ -82,7 +82,10 @@ data class PairedDevice(
     /** The user read the 6-digit safety code aloud on both devices and confirmed it matches. */
     val verified: Boolean = false,
     /** Release the peer ran when it paired; blank when an older app never said. */
-    val appVersion: String = ""
+    val appVersion: String = "",
+    /** Key derivation for this pair: 1 is the frozen v1 formula, 2 HKDF. Set at pairing time
+         *  by the acceptor, echoed to the requester, never renegotiated afterwards. */
+    val kdfVersion: Int = 1
 )
 
 data class IncomingPairRequest(
