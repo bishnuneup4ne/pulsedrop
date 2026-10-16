@@ -1,6 +1,8 @@
 package com.pulsedrop.app.ui
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
@@ -92,7 +94,6 @@ import com.pulsedrop.app.ui.components.PulseHeader
 import com.pulsedrop.app.ui.screens.CallOverlay
 import com.pulsedrop.app.ui.screens.ChatScreen
 import com.pulsedrop.app.ui.screens.CompactCallBar
-import com.pulsedrop.app.ui.screens.HistoryScreen
 import com.pulsedrop.app.ui.screens.HotspotGuideScreen
 import com.pulsedrop.app.ui.screens.IncomingCallCard
 import com.pulsedrop.app.ui.screens.IncomingCallStage
@@ -101,6 +102,9 @@ import com.pulsedrop.app.ui.screens.DevicesScreen
 import com.pulsedrop.app.ui.screens.ReceiveScreen
 import com.pulsedrop.app.ui.screens.SendScreen
 import com.pulsedrop.app.ui.screens.SettingsSheet
+import com.pulsedrop.app.ui.screens.TransfersScreen
+import com.pulsedrop.app.ui.screens.MyFilesScreen
+import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.HomeScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
@@ -153,6 +157,9 @@ fun MainScreen(viewModel: MainViewModel) {
     var sendSelectionUris by rememberSaveable { mutableStateOf(listOf<String>()) }
     var showSecurityDialog by remember { mutableStateOf(false) }
     var selectedThreadId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Which transfer's details page is open inside the Transfers section; survives process death
+    // so back-ing out of a killed app still lands on the same record, or its honest "missing" twin.
+    var transferDetailsId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showShareConsent by remember { mutableStateOf(false) }
     var dismissedUpdateVersion by remember { mutableStateOf<String?>(null) }
@@ -251,6 +258,13 @@ fun MainScreen(viewModel: MainViewModel) {
         viewModel.setChatVisible(selectedSection == PulseSection.MESSAGES)
     }
 
+    // A completed-receipt notification carries "my_files"; tapping it lands on that page.
+    LaunchedEffect(Unit) {
+        val target = (context as? android.app.Activity)?.intent
+            ?.getStringExtra("com.pulsedrop.app.SECTION")
+        if (target == "my_files") selectedSection = PulseSection.MY_FILES
+    }
+
     // Merge broadcast + scanned peers, dedupe by ip:port, prefer the PulseDrop app entry.
     val displayPeers = remember(nearbyPeers, scannedPeers, webClients) {
         val combined = mutableListOf<PeerDevice>()
@@ -304,6 +318,11 @@ fun MainScreen(viewModel: MainViewModel) {
         selectedThreadId = null
     }
 
+    // Back closes the details page before it leaves the Transfers section.
+    BackHandler(enabled = transferDetailsId != null && !callState.active) {
+        transferDetailsId = null
+    }
+
     // Badges carry real counts only: pending requests, unread threads, live transfers.
     val unreadThreads = remember(clipMessages, lastReadAt, serverState.deviceName) {
         clipMessages
@@ -313,12 +332,14 @@ fun MainScreen(viewModel: MainViewModel) {
                 (msgs.maxOfOrNull { it.timestamp } ?: 0L) > (lastReadAt[thread] ?: 0L)
             }
     }
+    val transfersInFlight = activeTransfersMap.values.count { it.status == TransferStatus.IN_PROGRESS }
     val navBadges = mapOf(
         PulseSection.DEVICES to incomingPairRequests.size,
         PulseSection.MESSAGES to unreadThreads,
-        PulseSection.TRANSFERS to activeTransfersMap.size
+        // Finished rows linger in the map for the session; the badge counts only real work.
+        PulseSection.TRANSFERS to transfersInFlight
     )
-    val transfersLive = activeTransfersMap.isNotEmpty()
+    val transfersLive = transfersInFlight > 0
 
     Box(modifier = Modifier.fillMaxSize()) {
       BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -328,6 +349,9 @@ fun MainScreen(viewModel: MainViewModel) {
         val navScope = rememberCoroutineScope()
         fun selectSection(section: PulseSection) {
             selectedSection = section
+            // Section taps go to the section's own front door, not to a record the user
+            // was reading last time. Callers that mean to open details set the id after this.
+            transferDetailsId = null
             if (!wide) navScope.launch { drawerState.close() }
         }
         fun toggleNav() {
@@ -430,7 +454,11 @@ fun MainScreen(viewModel: MainViewModel) {
                             dismissedUpdateVersion = null
                             viewModel.updateManager.check(auto = false)
                         },
-                        onNavigate = { selectSection(it) }
+                        onNavigate = { selectSection(it) },
+                        onOpenTransferDetails = { id ->
+                            selectSection(PulseSection.TRANSFERS)
+                            transferDetailsId = id
+                        }
                     )
 
                     PulseSection.DEVICES -> DevicesScreen(
@@ -500,7 +528,8 @@ fun MainScreen(viewModel: MainViewModel) {
                             onOpenFile = { viewModel.openFile(it) },
                             onRemoveHistory = { viewModel.deleteHistoryItem(it) },
                             onToggleServer = { viewModel.toggleServer() },
-                            onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
+                            onOpenTransfers = { selectSection(PulseSection.TRANSFERS) },
+                            onOpenMyFiles = { selectSection(PulseSection.MY_FILES) }
                         )
                     }
 
@@ -549,14 +578,48 @@ fun MainScreen(viewModel: MainViewModel) {
                         }
                     )
 
-                    PulseSection.TRANSFERS -> HistoryScreen(
-                        historyList = historyList,
-                        onOpenFile = { path -> viewModel.openFile(path) },
-                        onShareFile = { path -> viewModel.shareFile(path) },
-                        onSaveToDownloads = { path -> viewModel.saveToDownloads(path) },
-                        onDeleteItem = { id -> viewModel.deleteHistoryItem(id) },
-                        onClearAll = { viewModel.clearHistory() }
-                    )
+                    PulseSection.TRANSFERS -> {
+                        val detailsId = transferDetailsId
+                        if (detailsId != null) {
+                            TransferDetailsScreen(
+                                transferId = detailsId,
+                                activeTransfers = activeTransfersMap.values.toList(),
+                                history = historyList,
+                                pendingUploads = pendingUploads,
+                                pairedDevices = pairedDevices,
+                                nearbyPeers = displayPeers,
+                                onBack = { transferDetailsId = null },
+                                onOpenFile = { path -> viewModel.openFile(path) },
+                                onSaveToDownloads = { path -> viewModel.saveToDownloads(path) },
+                                onAcceptPending = { viewModel.acceptPendingUpload(it) },
+                                onDeclinePending = { viewModel.declinePendingUpload(it) },
+                                onDeleteHistory = { viewModel.deleteHistoryItem(it) },
+                                onDismissLive = { viewModel.dismissFinishedTransfer(it) },
+                                onOpenSend = {
+                                    selectSection(PulseSection.SEND_FILES)
+                                },
+                                onCopyText = { text ->
+                                    context.getSystemService(ClipboardManager::class.java)
+                                        ?.setPrimaryClip(ClipData.newPlainText("Transfer details", text))
+                                }
+                            )
+                        } else {
+                            TransfersScreen(
+                                activeTransfers = activeTransfersMap.values.toList(),
+                                history = historyList,
+                                pendingUploads = pendingUploads,
+                                onOpenFile = { path -> viewModel.openFile(path) },
+                                onShareFile = { path -> viewModel.shareFile(path) },
+                                onSaveToDownloads = { path -> viewModel.saveToDownloads(path) },
+                                onDeleteHistory = { id -> viewModel.deleteHistoryItem(id) },
+                                onDismissLive = { id -> viewModel.dismissFinishedTransfer(id) },
+                                onClearAll = { viewModel.clearHistory() },
+                                onOpenSend = { selectSection(PulseSection.SEND_FILES) },
+                                onOpenReceive = { selectSection(PulseSection.RECEIVE_FILES) },
+                                onOpenDetails = { id -> transferDetailsId = id }
+                            )
+                        }
+                    }
 
                     PulseSection.HELP -> HotspotGuideScreen(
                         serverState = serverState
@@ -585,6 +648,42 @@ fun MainScreen(viewModel: MainViewModel) {
                     )
 
                     PulseSection.ABOUT -> AboutScreen()
+
+                    PulseSection.MY_FILES -> {
+                        val receiveDir = viewModel.receiveDir
+                        val stats = remember(receiveDir) {
+                            val root = java.io.File(receiveDir).parentFile ?: java.io.File("/")
+                            try {
+                                val fs = android.os.StatFs(root.absolutePath)
+                                Pair(fs.availableBytes, fs.totalBytes)
+                            } catch (_: Exception) {
+                                Pair(-1L, -1L)
+                            }
+                        }
+                        MyFilesScreen(
+                            history = historyList,
+                            receiveDir = receiveDir,
+                            volumeFreeBytes = stats.first,
+                            volumeTotalBytes = stats.second,
+                            onOpenFile = { path, result -> viewModel.openFile(path, result) },
+                            onSaveToDownloads = { path -> viewModel.saveToDownloads(path) },
+                            onShareFile = { path -> viewModel.shareFile(path) },
+                            onRename = { id, name, result -> viewModel.renameReceivedFile(id, name, result) },
+                            onDeleteFile = { id, result -> viewModel.deleteReceivedFile(id, result) },
+                            onRemoveRecord = { id -> viewModel.deleteHistoryItem(id) },
+                            onOpenTransferDetails = { id ->
+                                selectSection(PulseSection.TRANSFERS)
+                                transferDetailsId = id
+                            },
+                            onCopyText = { text ->
+                                context.getSystemService(ClipboardManager::class.java)
+                                    ?.setPrimaryClip(ClipData.newPlainText("PulseDrop", text))
+                            },
+                            onMessage = { msg -> com.pulsedrop.app.ui.PulseEvents.post(msg) },
+                            onOpenReceive = { selectSection(PulseSection.RECEIVE_FILES) },
+                            onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
+                        )
+                    }
 
                     else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         PulseStatePanel(

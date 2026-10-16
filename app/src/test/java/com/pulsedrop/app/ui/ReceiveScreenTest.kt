@@ -93,7 +93,8 @@ class ReceiveScreenTest {
                     onOpenFile = { hooks.opened.add(it) },
                     onRemoveHistory = { hooks.removed.add(it) },
                     onToggleServer = { hooks.serverToggles++ },
-                    onOpenTransfers = {}
+                    onOpenTransfers = {},
+                    onOpenMyFiles = {}
                 )
             }
         }

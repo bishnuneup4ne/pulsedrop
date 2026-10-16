@@ -94,6 +94,7 @@ fun ReceiveScreen(
     onRemoveHistory: (String) -> Unit,
     onToggleServer: () -> Unit,
     onOpenTransfers: () -> Unit,
+    onOpenMyFiles: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val c = LocalPulseColors.current
@@ -112,12 +113,21 @@ fun ReceiveScreen(
                 title = "Receive files",
                 subtitle = "The queue, the folder and the policy — all of it is the real server state",
                 status = {
-                    PulseButton(
-                        label = "History",
-                        icon = Icons.Default.History,
-                        tone = PulseButtonTone.Quiet,
-                        onClick = onOpenTransfers
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(PulseSpacing.sm.dp)) {
+                        PulseButton(
+                            label = "My files",
+                            icon = Icons.Default.Folder,
+                            tone = PulseButtonTone.Quiet,
+                            onClick = onOpenMyFiles,
+                            modifier = Modifier.testTag("receive_open_myfiles")
+                        )
+                        PulseButton(
+                            label = "History",
+                            icon = Icons.Default.History,
+                            tone = PulseButtonTone.Quiet,
+                            onClick = onOpenTransfers
+                        )
+                    }
                 }
             )
         }

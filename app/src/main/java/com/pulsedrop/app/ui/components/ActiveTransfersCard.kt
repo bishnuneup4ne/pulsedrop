@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -44,7 +45,8 @@ import com.pulsedrop.app.util.NetworkUtils
 @Composable
 fun ActiveTransfersCard(
     activeTransfers: List<TransferItem>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onRowClick: ((String) -> Unit)? = null
 ) {
     if (activeTransfers.isEmpty()) return
     val colorScheme = MaterialTheme.colorScheme
@@ -89,14 +91,21 @@ fun ActiveTransfersCard(
             }
 
             activeTransfers.forEach { item ->
-                TransferProgressRow(item = item)
+                TransferProgressRow(
+                    item = item,
+                    onClick = onRowClick?.let { open -> { open(item.id) } }
+                )
             }
         }
     }
 }
 
 @Composable
-fun TransferProgressRow(item: TransferItem) {
+fun TransferProgressRow(
+    item: TransferItem,
+    onClick: (() -> Unit)? = null,
+    actions: (@Composable () -> Unit)? = null
+) {
     val colorScheme = MaterialTheme.colorScheme
     val isIncoming = item.direction == TransferDirection.INCOMING
     val isCompleted = item.status == TransferStatus.COMPLETED
@@ -113,6 +122,7 @@ fun TransferProgressRow(item: TransferItem) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(colorScheme.surface)
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(14.dp)
             .testTag("transfer_progress_${item.id}"),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -230,6 +240,16 @@ fun TransferProgressRow(item: TransferItem) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+
+        if (actions != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                actions()
+            }
         }
     }
 }

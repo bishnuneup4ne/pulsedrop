@@ -15,5 +15,7 @@ data class TransferHistoryEntity(
     val clientIp: String? = null,
     val localFilePath: String?,
     val mimeType: String?,
-    val timestamp: Long
+    val timestamp: Long,
+    /** Why a FAILED row failed; null on everything written before this column existed. */
+    val errorMessage: String? = null
 )

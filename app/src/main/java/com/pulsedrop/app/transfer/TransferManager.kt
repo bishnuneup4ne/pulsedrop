@@ -141,12 +141,37 @@ class TransferManager(
         direction: TransferDirection
     ) {
         ServerService.updateProgress(context, fileName, 0, "Error", isFailed = true)
+        var failedRow: TransferItem? = null
         _activeTransfers.update { map ->
             val current = map[transferId] ?: return@update map
-            map + (transferId to current.copy(
+            failedRow = current.copy(
                 status = TransferStatus.FAILED,
                 errorMessage = error
-            ))
+            )
+            map + (transferId to failedRow!!)
+        }
+        // A failure that only lives in memory is a failure the user cannot review after a
+        // restart; the Transfers page's Failed tab reads from history, so record it there.
+        val row = failedRow ?: return
+        scope.launch(Dispatchers.IO) {
+            val entity = TransferHistoryEntity(
+                id = transferId,
+                fileName = fileName,
+                fileSize = row.fileSize,
+                direction = direction.name,
+                status = TransferStatus.FAILED.name,
+                remoteDevice = row.remoteDevice,
+                clientIp = row.clientIp,
+                localFilePath = row.localFilePath,
+                mimeType = null,
+                timestamp = System.currentTimeMillis(),
+                errorMessage = error
+            )
+            try {
+                historyDao.insertTransfer(entity)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -154,6 +179,24 @@ class TransferManager(
         _activeTransfers.update { map ->
             map.filterValues { it.status == TransferStatus.IN_PROGRESS || it.status == TransferStatus.QUEUED }
         }
+    }
+
+    /**
+     * Drops one finished row from the live list. This is dismissal of the UI record only —
+     * running work is never touched, and no file on disk is deleted either way.
+     */
+    fun dismissFinished(transferId: String): Boolean {
+        var removed = false
+        _activeTransfers.update { map ->
+            val item = map[transferId]
+            if (item != null && item.status != TransferStatus.IN_PROGRESS && item.status != TransferStatus.QUEUED) {
+                removed = true
+                map - transferId
+            } else {
+                map
+            }
+        }
+        return removed
     }
 
     /**

@@ -35,6 +35,7 @@ import com.pulsedrop.app.model.ServerSettings
 import com.pulsedrop.app.model.SharedFile
 import com.pulsedrop.app.model.TransferDirection
 import com.pulsedrop.app.model.TransferItem
+import com.pulsedrop.app.model.TransferStatus
 import com.pulsedrop.app.security.PairManager
 import com.pulsedrop.app.server.PulseDropServer
 import com.pulsedrop.app.server.ServerService
@@ -57,6 +58,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -648,7 +650,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // The network only answers while the CPU does: hold the lock for the work in
                 // flight, and nothing at all once the phone is just sitting there serving.
                 val busy = _serverState.value.isRunning &&
-                    (activeTransfers.value.isNotEmpty() || callEngine.state.value.active)
+                    (activeTransfers.value.values.any { it.status == TransferStatus.IN_PROGRESS } ||
+                        callEngine.state.value.active)
                 if (busy != awakeRequested) {
                     awakeRequested = busy
                     ServerService.keepAwake(context, busy)
@@ -671,7 +674,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     continue
                 }
                 // Anything live keeps the server busy: an in-flight transfer or a call.
-                if (activeTransfers.value.isNotEmpty()) continue
+                if (activeTransfers.value.values.any { it.status == TransferStatus.IN_PROGRESS }) continue
                 if (callEngine.state.value.active) continue
             }
         }
@@ -1143,6 +1146,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         webClientJob = null
         _webClients.value = emptyList()
         _typingUsers.value = emptyList()
+        // The session's finished rows live in history now; the live sheet starts empty again.
+        transferManager.clearFinishedTransfers()
         // Signaling rides on this socket, so a live call cannot outlive it: end it here
         // instead of leaving the call sheet up over a dead connection.
         if (callEngine.state.value.active || callEngine.incomingCall.value != null) {
@@ -1628,10 +1633,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openFile(filePath: String?) {
-        if (filePath.isNullOrBlank()) return
+    /** Removes a finished row from the live list; cancels nothing and deletes no files. */
+    fun dismissFinishedTransfer(id: String): Boolean = transferManager.dismissFinished(id)
+
+    fun openFile(filePath: String?, onResult: ((Boolean, String?) -> Unit)? = null) {
+        if (filePath.isNullOrBlank()) {
+            onResult?.invoke(false, "No location was recorded for this file.")
+            return
+        }
         val file = File(filePath)
-        if (!file.exists()) return
+        if (!file.exists()) {
+            onResult?.invoke(false, "The file is no longer at its recorded location.")
+            return
+        }
 
         try {
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -1643,8 +1657,75 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
+            onResult?.invoke(true, null)
+        } catch (e: android.content.ActivityNotFoundException) {
+            onResult?.invoke(false, "No app on this phone opens this type of file.")
         } catch (e: Exception) {
             e.printStackTrace()
+            onResult?.invoke(false, e.message ?: "Android refused to open the file.")
+        }
+    }
+
+    /**
+     * Renames a received file inside the one folder the app owns. The DB record moves only after
+     * Android reports the rename succeeded, so the UI never shows a file at a path that is not real.
+     */
+    fun renameReceivedFile(id: String, newName: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val row = historyDao.getById(id)
+            val cleaned = newName.trim()
+            val failure = when {
+                row == null || row.localFilePath.isNullOrBlank() ->
+                    "No received-file record lives behind this id."
+                cleaned.isEmpty() || cleaned == "." || cleaned == ".." ||
+                    cleaned.contains('/') || cleaned.contains('\\') || cleaned.contains('\u0000') ->
+                    "That name is not usable: no path separators, no empty or dot-only names."
+                else -> null
+            }
+            if (failure != null) {
+                withContext(Dispatchers.Main) { onResult(false, failure) }
+                return@launch
+            }
+            val src = File(row!!.localFilePath!!)
+            if (!src.exists()) {
+                withContext(Dispatchers.Main) { onResult(false, "The file is no longer at its recorded location.") }
+                return@launch
+            }
+            val dest = File(src.parentFile, cleaned)
+            if (dest.exists()) {
+                withContext(Dispatchers.Main) { onResult(false, "A file named “$cleaned” already sits in the received folder.") }
+                return@launch
+            }
+            if (!src.renameTo(dest)) {
+                withContext(Dispatchers.Main) { onResult(false, "Android refused the rename — the file may be open in another app.") }
+                return@launch
+            }
+            historyDao.updateFileLocation(id, cleaned, dest.absolutePath)
+            withContext(Dispatchers.Main) { onResult(true, "Renamed to “$cleaned”.") }
+        }
+    }
+
+    /**
+     * Deletes the physical file only. The history record deliberately survives as a missing-file
+     * marker — file deletion and record removal are different operations and never conflated here.
+     */
+    fun deleteReceivedFile(id: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val row = historyDao.getById(id)
+            if (row == null || row.localFilePath.isNullOrBlank()) {
+                withContext(Dispatchers.Main) { onResult(false, "No received-file record lives behind this id.") }
+                return@launch
+            }
+            val file = File(row.localFilePath!!)
+            if (!file.exists()) {
+                withContext(Dispatchers.Main) { onResult(false, "The file was already gone — nothing was deleted.") }
+                return@launch
+            }
+            if (!file.delete()) {
+                withContext(Dispatchers.Main) { onResult(false, "Android refused the delete — the file may be open elsewhere.") }
+                return@launch
+            }
+            withContext(Dispatchers.Main) { onResult(true, "Deleted ${row.fileName}.") }
         }
     }
 

@@ -162,7 +162,10 @@ class ServerService : Service() {
         isFinished: Boolean,
         isFailed: Boolean
     ): Notification {
-        val openIntent = Intent(this, MainActivity::class.java)
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            // A completed receipt is a file: tapping the notification lands on My Files, where it lives.
+            if (isFinished && !isFailed) putExtra("com.pulsedrop.app.SECTION", "my_files")
+        }
         val openPendingIntent = PendingIntent.getActivity(
             this, 0, openIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT

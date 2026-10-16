@@ -94,9 +94,7 @@ enum class PulseSection(
     SEND_FILES("Send files", Icons.AutoMirrored.Filled.Send, "section_send"),
     RECEIVE_FILES("Receive files", Icons.Filled.Download, "section_receive"),
     TRANSFERS("Transfers", Icons.Filled.SwapHoriz, "section_transfers"),
-    MY_FILES("My files", Icons.Filled.Folder, "section_myfiles",
-        comingSoonNote = "A browser over everything this phone shares is on the way. " +
-                "Received files are listed under Transfers."),
+    MY_FILES("My files", Icons.Filled.Folder, "section_myfiles"),
     MESSAGES("Messages", Icons.AutoMirrored.Filled.Chat, "section_messages"),
     CALLS("Calls", Icons.Filled.Call, "section_calls",
         comingSoonNote = "Voice and video calls work today from Messages and Devices. " +

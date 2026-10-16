@@ -134,6 +134,7 @@ fun HomeScreen(
     onToggleScreenShare: () -> Unit,
     onUpdateCheck: () -> Unit,
     onNavigate: (PulseSection) -> Unit,
+    onOpenTransferDetails: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val c = LocalPulseColors.current
@@ -405,7 +406,10 @@ fun HomeScreen(
                         }
                     }
                 } else {
-                    ActiveTransfersCard(activeTransfers = inflight)
+                    ActiveTransfersCard(
+                        activeTransfers = inflight,
+                        onRowClick = onOpenTransferDetails
+                    )
                 }
             }
         }

@@ -14,6 +14,12 @@ interface TransferHistoryDao {
     @Query("SELECT * FROM transfer_history WHERE clientIp = :clientIp ORDER BY timestamp DESC")
     fun getTransfersByIp(clientIp: String): Flow<List<TransferHistoryEntity>>
 
+    @Query("SELECT * FROM transfer_history WHERE id = :id")
+    suspend fun getById(id: String): TransferHistoryEntity?
+
+    @Query("UPDATE transfer_history SET fileName = :fileName, localFilePath = :path WHERE id = :id")
+    suspend fun updateFileLocation(id: String, fileName: String, path: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransfer(transfer: TransferHistoryEntity)
 
