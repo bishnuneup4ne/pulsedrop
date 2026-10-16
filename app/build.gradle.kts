@@ -122,9 +122,11 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
 }
 
-// Robolectric keeps one JVM for the whole unit-test run, and every sandbox it builds stays
-// reachable. On Gradle's default 512 MB heap the tail of the suite GC-thrashes, and Compose's
-// busy-wait idle check livelocks under it (AppNotIdle with an empty idle-condition list).
+// Robolectric accumulates every sandbox it builds inside one test JVM; near the tail of the
+// suite that GC-thrashes and Compose's busy-wait idle check livelocks (AppNotIdle with an empty
+// idle-condition list — green standalone, red only late in a full run). A bigger heap delays it;
+// one JVM per test class prevents it — every Compose sandbox then dies with its class.
 tasks.withType<Test> {
   maxHeapSize = "2g"
+  setForkEvery(1L)
 }

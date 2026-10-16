@@ -209,7 +209,7 @@ class HomeScreenTest {
         compose.onNodeWithText("report.pdf").assertIsDisplayed()
         compose.onNodeWithText("Received · Laptop", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("home_recent_activity").performClick()
-        assertEquals(listOf(PulseSection.TRANSFERS), nav.visited)
+        assertEquals(listOf(PulseSection.ACTIVITY), nav.visited)
     }
 
     @Test

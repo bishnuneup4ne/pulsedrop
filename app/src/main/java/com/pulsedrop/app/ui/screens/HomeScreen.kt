@@ -496,7 +496,7 @@ fun HomeScreen(
                     "Recent activity",
                     action = {
                         TextButton(
-                            onClick = { onNavigate(PulseSection.TRANSFERS) },
+                            onClick = { onNavigate(PulseSection.ACTIVITY) },
                             modifier = Modifier.testTag("home_activity_more_btn")
                         ) { Text("See all", style = MaterialTheme.typography.labelLarge) }
                     }
@@ -514,7 +514,7 @@ fun HomeScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("home_recent_activity"),
-                        onClick = { onNavigate(PulseSection.TRANSFERS) }
+                        onClick = { onNavigate(PulseSection.ACTIVITY) }
                     ) {
                         Column {
                             history.take(5).forEachIndexed { index, item ->

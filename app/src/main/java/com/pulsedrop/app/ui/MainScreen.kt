@@ -106,6 +106,7 @@ import com.pulsedrop.app.ui.screens.TransfersScreen
 import com.pulsedrop.app.ui.screens.MyFilesScreen
 import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
+import com.pulsedrop.app.ui.screens.ActivityScreen
 import com.pulsedrop.app.ui.screens.HomeScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
 import kotlinx.coroutines.delay
@@ -684,6 +685,18 @@ fun MainScreen(viewModel: MainViewModel) {
                             onOpenTransfers = { selectSection(PulseSection.TRANSFERS) }
                         )
                     }
+
+                    PulseSection.ACTIVITY -> ActivityScreen(
+                        history = historyList,
+                        activeTransfers = activeTransfersMap.values.toList(),
+                        pairedDevices = pairedDevices,
+                        groups = chatGroups,
+                        onOpenTransferDetails = { id ->
+                            selectSection(PulseSection.TRANSFERS)
+                            transferDetailsId = id
+                        },
+                        onOpenDevices = { selectSection(PulseSection.DEVICES) }
+                    )
 
                     else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         PulseStatePanel(

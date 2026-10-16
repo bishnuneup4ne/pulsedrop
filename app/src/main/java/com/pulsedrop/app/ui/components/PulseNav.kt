@@ -104,10 +104,7 @@ enum class PulseSection(
         comingSoonNote = "Screen sharing works today inside a call — start one from Messages " +
                 "and tap Share screen.",
         shortcutLabel = "Open messages", shortcut = MESSAGES),
-    ACTIVITY("Activity", Icons.Filled.Notifications, "section_activity",
-        comingSoonNote = "One feed of transfers, joins, pairings and calls. Until it lands, " +
-                "completed transfers are kept under Transfers.",
-        shortcutLabel = "Open transfers", shortcut = TRANSFERS),
+    ACTIVITY("Activity", Icons.Filled.Notifications, "section_activity"),
     SECURITY("Security center", Icons.Filled.Security, "section_security",
         comingSoonNote = "PIN, pairing and verification are real today under Settings and " +
                 "Devices. This hub will gather them in one place.",
