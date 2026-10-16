@@ -105,10 +105,7 @@ enum class PulseSection(
                 "and tap Share screen.",
         shortcutLabel = "Open messages", shortcut = MESSAGES),
     ACTIVITY("Activity", Icons.Filled.Notifications, "section_activity"),
-    SECURITY("Security center", Icons.Filled.Security, "section_security",
-        comingSoonNote = "PIN, pairing and verification are real today under Settings and " +
-                "Devices. This hub will gather them in one place.",
-        shortcutLabel = "Open devices", shortcut = DEVICES),
+    SECURITY("Security center", Icons.Filled.Security, "section_security"),
     SETTINGS("Settings", Icons.Filled.Settings, "section_settings"),
     HELP("Help & support", Icons.Filled.HelpOutline, "section_help"),
     ABOUT("About PulseDrop", Icons.Filled.Info, "section_about");

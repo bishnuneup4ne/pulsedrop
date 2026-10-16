@@ -107,6 +107,7 @@ import com.pulsedrop.app.ui.screens.MyFilesScreen
 import com.pulsedrop.app.ui.screens.TransferDetailsScreen
 import com.pulsedrop.app.ui.screens.AboutScreen
 import com.pulsedrop.app.ui.screens.ActivityScreen
+import com.pulsedrop.app.ui.screens.SecurityScreen
 import com.pulsedrop.app.ui.screens.HomeScreen
 import com.pulsedrop.app.ui.screens.WebCallScreen
 import kotlinx.coroutines.delay
@@ -695,6 +696,20 @@ fun MainScreen(viewModel: MainViewModel) {
                             selectSection(PulseSection.TRANSFERS)
                             transferDetailsId = id
                         },
+                        onOpenDevices = { selectSection(PulseSection.DEVICES) }
+                    )
+
+                    PulseSection.SECURITY -> SecurityScreen(
+                        serverRunning = serverState.isRunning,
+                        pinRequired = serverState.isPinRequired,
+                        autoAccept = serverState.autoAcceptTransfers,
+                        pairedDevices = pairedDevices,
+                        webClients = webClients,
+                        onSetPinRequired = { viewModel.setPinRequired(it) },
+                        onRegeneratePin = { viewModel.regeneratePin() },
+                        onSetAutoAccept = { viewModel.setAutoAcceptTransfers(it) },
+                        onUnpair = { pid -> viewModel.unpair(pid) },
+                        safetyCode = { pid -> viewModel.pairSafetyCode(pid) },
                         onOpenDevices = { selectSection(PulseSection.DEVICES) }
                     )
 
