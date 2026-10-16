@@ -1,5 +1,6 @@
 package com.pulsedrop.app.discovery
 
+import com.pulsedrop.app.graph.AppGraph
 import com.pulsedrop.app.model.PeerDevice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -84,6 +85,11 @@ object LanScanner {
                     .ifBlank { json.optString("name") }
                     .ifBlank { return null }
                 val version = json.optString("version")
+                AppGraph.peerCaps.record(
+                    AppGraph.peerCaps.keyForIp(ip),
+                    version,
+                    PeerCapabilityRegistry.capsFromJson(json.optJSONArray("caps"))
+                )
                 PeerDevice(
                     id = "scan_${ip}_$SCAN_PORT",
                     name = name,

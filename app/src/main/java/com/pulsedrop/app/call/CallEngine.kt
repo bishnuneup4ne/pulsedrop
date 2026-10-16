@@ -18,6 +18,14 @@ import android.media.MediaRecorder
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import com.pulsedrop.app.media.protocol.FrameCodec
+import com.pulsedrop.app.media.protocol.TYPE_AUDIO
+import com.pulsedrop.app.media.protocol.TYPE_CAMERA
+import com.pulsedrop.app.media.protocol.TYPE_CONF_AUDIO
+import com.pulsedrop.app.media.protocol.TYPE_CONF_STATE
+import com.pulsedrop.app.media.protocol.TYPE_CONF_VIDEO
+import com.pulsedrop.app.media.protocol.TYPE_SCREEN
+import com.pulsedrop.app.media.protocol.TYPE_SCREEN_STATE
 import com.pulsedrop.app.model.PairedDevice
 import com.pulsedrop.app.security.PairManager
 import kotlinx.coroutines.CoroutineScope
@@ -187,7 +195,7 @@ class CallEngine(
     @Volatile private var webOnly = false
     private val webOut = java.util.concurrent.LinkedBlockingQueue<ByteArray>(96)
     /** A batch may end mid-frame, so the remainder waits here for the next one. */
-    private val pendingIn = java.io.ByteArrayOutputStream(64 * 1024)
+    private val webIn = FrameCodec.BatchParser()
 
     /**
      * A browser tab riding along in a hosted conference. The host is the bridge, so this is
@@ -220,17 +228,6 @@ class CallEngine(
     @Volatile private var confHostPid = ""
 
     companion object {
-        private const val TYPE_AUDIO = 1
-        private const val TYPE_CAMERA = 2
-        private const val TYPE_SCREEN = 3
-        /** In-band "I started/stopped sharing" notice; peers ignore unknown types. */
-        private const val TYPE_SCREEN_STATE = 4
-        /** Conference relay: [1b srcLen][src][pcm] - a member's single leg never needs this. */
-        private const val TYPE_CONF_AUDIO = 5
-        /** Conference relay: [1b srcLen][src][1b kind][jpeg], kind 2 = screen, else camera. */
-        private const val TYPE_CONF_VIDEO = 6
-        /** Conference roster as JSON, pushed by the host whenever it changes. */
-        private const val TYPE_CONF_STATE = 7
         /** Conference roster id for the bridge itself: pairwise ids are per-member, so they
          *  cannot name the host to everybody at once. */
         private const val HOST_SRC = "host"
@@ -507,7 +504,7 @@ class CallEngine(
         webOnly = true
         confHostPid = WEB_PID
         webOut.clear()
-        synchronized(pendingIn) { pendingIn.reset() }
+        webIn.reset()
         _state.value = CallState(
             active = true, video = video,
             peerName = peerName, peerPid = WEB_PID,
@@ -548,7 +545,7 @@ class CallEngine(
         running = true
         mediaStarted = true
         webOut.clear()
-        synchronized(pendingIn) { pendingIn.reset() }
+        webIn.reset()
         _state.value = CallState(
             active = true, video = video,
             peerName = webTabName, peerPid = WEB_PID,
@@ -644,39 +641,25 @@ class CallEngine(
      */
     fun ingestWebFrames(bytes: ByteArray) {
         if ((!webOnly && !webAttached) || !running) return
-        synchronized(pendingIn) {
-            if (bytes.isNotEmpty()) pendingIn.write(bytes)
-            val buf = pendingIn.toByteArray()
-            var i = 0
-            while (i + 5 <= buf.size) {
-                val type = buf[i].toInt() and 0xFF
-                val len = ((buf[i + 1].toInt() and 0xFF) shl 24) or
-                    ((buf[i + 2].toInt() and 0xFF) shl 16) or
-                    ((buf[i + 3].toInt() and 0xFF) shl 8) or
-                    (buf[i + 4].toInt() and 0xFF)
-                if (len <= 0 || len > 4 * 1024 * 1024) { i = buf.size; break }
-                if (i + 5 + len > buf.size) break
-                val payload = buf.copyOfRange(i + 5, i + 5 + len)
-                handleFrame(WEB_PID, type, payload)
-                // In a hosted conference the tab is a seat like any other member.
-                if (webAttached && !webOnly) {
-                    when (type) {
-                        TYPE_AUDIO, TYPE_CAMERA, TYPE_SCREEN ->
-                            relayToLegs(WEB_PID, null, type, payload)
-                        TYPE_SCREEN_STATE -> {
-                            val obj = try { JSONObject(String(payload, Charsets.UTF_8)) } catch (e: Exception) { null }
-                            if (obj != null) {
-                                webSharing = obj.optBoolean("sharing", false)
-                                webMuted = obj.optBoolean("muted", false)
-                                broadcastConfState()
-                            }
+        for (f in webIn.feed(bytes)) {
+            val type = f.type
+            val payload = f.payload
+            handleFrame(WEB_PID, type, payload)
+            // In a hosted conference the tab is a seat like any other member.
+            if (webAttached && !webOnly) {
+                when (type) {
+                    TYPE_AUDIO, TYPE_CAMERA, TYPE_SCREEN ->
+                        relayToLegs(WEB_PID, null, type, payload)
+                    TYPE_SCREEN_STATE -> {
+                        val obj = try { JSONObject(String(payload, Charsets.UTF_8)) } catch (e: Exception) { null }
+                        if (obj != null) {
+                            webSharing = obj.optBoolean("sharing", false)
+                            webMuted = obj.optBoolean("muted", false)
+                            broadcastConfState()
                         }
                     }
                 }
-                i += 5 + len
             }
-            pendingIn.reset()
-            if (i < buf.size) pendingIn.write(buf, i, buf.size - i)
         }
     }
 
@@ -735,31 +718,12 @@ class CallEngine(
      * backlog: live media only ever wants the newest frame.
      */
     private fun writeWebFrame(type: Int, payload: ByteArray) {
-        val n = payload.size
-        val frame = ByteArray(5 + n)
-        frame[0] = type.toByte()
-        frame[1] = (n ushr 24).toByte()
-        frame[2] = (n ushr 16).toByte()
-        frame[3] = (n ushr 8).toByte()
-        frame[4] = n.toByte()
-        System.arraycopy(payload, 0, frame, 5, n)
-        while (!webOut.offer(frame)) webOut.poll()
+        while (!webOut.offer(FrameCodec.encode(type, payload))) webOut.poll()
     }
 
     /** Returns false when the write failed, so the caller can drop just that connection. */
-    private fun writeTo(o: DataOutputStream, type: Int, payload: ByteArray): Boolean {
-        return try {
-            synchronized(o) {
-                o.write(type)
-                o.writeInt(payload.size)
-                o.write(payload)
-                o.flush()
-            }
-            true
-        } catch (e: Exception) {
-            false
-        }
-    }
+    private fun writeTo(o: DataOutputStream, type: Int, payload: ByteArray): Boolean =
+        FrameCodec.writeTo(o, type, payload)
 
     private fun reapLeg(pid: String) {
         legs.remove(pid)?.let { try { it.socket.close() } catch (e: Exception) { } }
@@ -1074,12 +1038,9 @@ class CallEngine(
             try {
                 val input = DataInputStream(java.io.BufferedInputStream(leg.socket.getInputStream()))
                 while (running) {
-                    val type = input.read()
-                    if (type == -1) break
-                    val len = input.readInt()
-                    if (len <= 0 || len > 4 * 1024 * 1024) break
-                    val payload = ByteArray(len)
-                    input.readFully(payload)
+                    val frame = FrameCodec.readFrame(input) ?: break
+                    val type = frame.type
+                    val payload = frame.payload
                     handleFrame(leg.pid, type, payload)
                     if (type == TYPE_AUDIO || type == TYPE_CAMERA || type == TYPE_SCREEN) {
                         relayToLegs(leg.pid, leg.out, type, payload)
@@ -1240,14 +1201,9 @@ class CallEngine(
             try {
                 val input = DataInputStream(java.io.BufferedInputStream(socket?.getInputStream()))
                 while (running) {
-                    val type = input.read()
-                    if (type == -1) break
-                    val len = input.readInt()
-                    if (len <= 0 || len > 4 * 1024 * 1024) break
-                    val payload = ByteArray(len)
-                    input.readFully(payload)
+                    val frame = FrameCodec.readFrame(input) ?: break
                     // confHostPid is the peer for a 1:1 call and the bridge for a group call.
-                    handleFrame(confHostPid, type, payload)
+                    handleFrame(confHostPid, frame.type, frame.payload)
                 }
             } catch (e: Exception) {
                 // socket closed
@@ -1586,7 +1542,7 @@ class CallEngine(
         webMixThread = null
         webAudioLatest.clear()
         webOut.clear()
-        synchronized(pendingIn) { pendingIn.reset() }
+        webIn.reset()
         ringExpiryJob?.cancel()
         ringExpiryJob = null
         legs.values.forEach { leg ->

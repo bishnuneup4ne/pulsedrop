@@ -3,6 +3,9 @@
 The phone is the server; browsers are clients. Everything is **polled, not pushed** —
 no WebSocket dependency, so the client works from any browser without a service worker.
 
+> v2.0 adds capabilities on top of this document without changing anything in it.
+> See [Protocol-V2](Protocol-V2.md) for the `caps` negotiation, control frames and H.264 types.
+
 Base: `http://<ip>:8080` (all endpoints) and `https://<ip>:8081` (same endpoints over TLS,
 required for browser media).
 
