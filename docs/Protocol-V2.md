@@ -6,25 +6,33 @@ redefines an old field.
 
 ## Version namespace
 
-`/api/info` keeps `"version"` starting with `"2"` (currently `"2.1.0"`). This is load-bearing:
-`LanScanner` classifies a peer as pair-capable only when the version starts with `"2"`.
-The MAJOR only moves when old phones are *expected* to stop pairing, which is never while an
-upgrade path exists.
+`/api/info` keeps `"version"` starting with `"2"` (currently `"2.0.0"`). This is load-bearing:
+`LanScanner` classifies a peer as pair-capable only when the version starts with `"2"`, and the
+KDF gate compares the same string. The MAJOR only moves when old phones are *expected* to stop
+pairing, which is never while an upgrade path exists. The value must come from
+`BuildConfig.VERSION_NAME` on both the network and the build-number side of any comparison —
+in 1.7 they disagreed, and the result was that no pairing could ever negotiate KDF v2.
 
 New builds read the additive `"caps"` array from `/api/info`, from the discovery UDP beacon,
 and from the `appVersion` already exchanged at pairing time. Absent = no caps.
-Every pre-"2.1.0" build ignores unknown keys by design.
+Every older build ignores unknown keys by design.
 
 ## Capability strings
 
+Three strings are actually sent by a shipped build. The rest of this table lists what is
+declared in code and **not** announced, because a spec that describes intentions gets
+implemented by someone who trusts it.
+
 | Cap | Meaning | Announced by |
 | --- | --- | --- |
-| `h264` | Media socket may carry types 9/10 | phone v2 with HW encoder, browser tab with WebCodecs |
-| `screen-h264` | Media socket may carry type 11 — this end owns a HW AVC **decoder** and a surface to present a shared screen onto | phone v2 with HW decoder |
-| `binary-uplink` | `/api/webcall/up` accepts raw `[type][len][payload]` batches (`?enc=binary`) | v2 web client |
-| `kdf-v2` | New pairings may negotiate HKDF key derivation (existing pairs stay v1 forever) | phone v2 |
-| `chat-ext1` | Chat JSON may carry `reaction`, `readUpTo`, `replyTo`, `voiceDur` keys | phone v2, web client |
-| `conf2` | Conference H.264 fan-out (type 10) | phone v2 host |
+| `h264` | Media socket may carry type 9 | phone with a **hardware** AVC encoder |
+| `screen-h264` | Media socket may carry type 11 — this end owns a HW AVC **decoder** and a surface to present a shared screen onto | phone with a hardware AVC decoder |
+| `chat-ext1` | Chat JSON may carry `reaction`, `readUpTo`, `replyTo`, `voiceDur` keys | every phone v2 or newer — unconditionally |
+| `binary-uplink` | `/api/webcall/up` accepts raw `[type][len][payload]` batches (`?enc=binary`) | *nobody* — not implemented in the web client |
+| `kdf-v2` | New pairings may negotiate HKDF key derivation | *nobody* — KDF is negotiated by **version string**, not by this cap |
+| `conf2` | Conference H.264 fan-out (type 10) | *nobody* — the conference grid draws bitmaps and has one surface per tile |
+
+A browser tab announces no capabilities at all, so every H.264 lane is phone-to-phone only.
 
 `h264` and `screen-h264` are independent promises about independent hardware, so a phone may
 advertise either, both, or neither. A viewer that can decode but not encode must not be asked to
@@ -55,8 +63,8 @@ Rules:
 | 6 | conf-video | `[1B srcLen][src][1B kind][jpeg]`, kind 2 = screen else camera | v1 |
 | 7 | conf-state | JSON roster | v1 |
 | 8 | control | JSON, see below | v2 |
-| 9 | h264 | one H.264 access unit (annex-B, no start codes needed — one AU per frame) | v2 |
-| 10 | conf-h264 | `[1B srcLen][src][access unit]` | v2 |
+| 9 | h264 | one H.264 access unit, annex-B with a 4-byte start code, one AU per frame | v2 |
+| 10 | conf-h264 | `[1B srcLen][src][access unit]` — defined, never sent (no `conf2` announcement) | v2 |
 | 11 | screen-h264 | one H.264 access unit of a **shared display**, same shape as type 9 | v2 |
 
 Type 11 exists rather than a flag on type 9 because a camera picture and a desktop picture are two
@@ -79,10 +87,14 @@ The single owner of this format in code is `media/protocol/FrameCodec.kt`;
 { "t": "keyframe-request" }                     // PLI: sender must emit an IDR now, on every lane it owns
 { "t": "keyframe-request", "lane": "screen" }   // or "camera": one lane only
 { "t": "caps", "caps": ["h264", ...] }          // post-hoc cap exchange at media start
-{ "t": "stats-ping" } / { "t": "stats", "fps": .., "bps": .., "tier": "hd" }
+{ "t": "stats-ping" } / { "t": "stats", "fps": .., "bps": .., "tier": "864x1920@30" }
 ```
 
 Unknown `"t"` values are ignored. Control frames never carry media.
+
+`"tier"` is the tier's *label*, which after a re-cast onto real geometry is a literal
+`<w>x<h>@<fps>` rather than a marketing name — a peer reporting `"1080p30"` for an 864×1920
+share would be describing a picture it never encoded.
 
 A `keyframe-request` without `"lane"` deliberately asks *both* lanes, because the requester's own
 loss of picture rarely names which one went stale, and an extra IDR costs one frame of bitrate.
@@ -98,7 +110,8 @@ lost beacon cannot downgrade a peer mid-call.
 
 The sender's ladder (see `media/ladder/`), from best:
 `1080p30@6M → 1080p30@4M → 1080p15@3M → 720p30@3M → 720p15@2M → 540p15@1.5M → 360p15@0.8M`.
-JPEG fallback lane (no `h264`, or no HW encoder): the v1 rates — ~10 fps max at 1080p.
+JPEG fallback lane (no `h264`, or no HW encoder): the v1 rates — 8 fps at quality 82 on a
+1920 px long edge for a share, 10 fps for a camera, which spends roughly 15 Mbps doing it.
 Conferences cap at 720p30 by default.
 
 The tier actually used is `QualityLadder.fitTo(BEST, width, height)` against the *real* geometry the
@@ -115,11 +128,19 @@ hears "make a keyframe".
 
 | New ↔ old | Signaling | Pairing | Media |
 | --- | --- | --- | --- |
-| v2 phone ↔ v1.7 phone | unchanged `/api/call/*` | unchanged ECDH + KDF v1 | types 1–7 JPEG lane |
+| v2 phone ↔ v1.x phone | unchanged `/api/call/*` | ECDH + **KDF v1** (the gate needs 2.0 on both ends) | types 1–7 JPEG lane |
+| v2 phone ↔ v2 phone, new pair | unchanged | ECDH + **KDF v2** | `h264` and `screen-h264` lanes when both ends have the hardware |
 | v2 phone ↔ old cached tab | unchanged | n/a | base64 uplink kept, JPEG both ways |
-| v2 phone ↔ v2 tab | +`caps` | n/a | H.264 + binary uplink when WebCodecs present |
+| v2 phone ↔ current tab | unchanged | n/a | **JPEG both ways** — a tab announces no caps and has no H.264 decoder |
 | v2 phone ↔ v2 phone, screen share | unchanged | n/a | type 11 when both ends have `screen-h264`, else type 3 JPEG |
+| v2 phone ↔ v2 phone, group call | unchanged | n/a | type 6 JPEG always; type 10 is never sent |
 | mixed-version conference | host runs lowest common format (JPEG 720p) with a UI warning | — | never transcode at the host |
 
 Proof strings `pulsedrop-upload-v1` / `pulsedrop-relay-v1`, the KDF v1 derivation,
 pairId/deviceId/safety-code formulas and every `/api/*` path are **frozen**.
+
+KDF choice is the one place a version string is load-bearing rather than advisory: the
+acceptor of a pair request compares both reported versions against 2.0 and records the answer
+with the pair, so a misreported version cannot be corrected later without re-pairing — and a
+phone that lies about its own build number silently downgrades every new pairing, which is
+exactly the 1.7 defect.

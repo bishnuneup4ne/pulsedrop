@@ -30,36 +30,56 @@ The phone hosting the room can be any one phone — nobody else has to start a s
 | Area | What it does |
 | --- | --- |
 | File drop | Drag-drop or pick files in the browser; multipart upload with live progress; thumbnails and inline previews |
-| Chat | Real-time chat between paired devices and browser tabs: an open room plus encrypted private and group threads, with attachments, replies, typing indicators and delete-for-everyone tombstones |
+| Chat | Real-time chat between paired devices and browser tabs: an open room plus encrypted private and group threads, with attachments, replies, typing indicators, reactions, edits, read receipts, full-text search and delete-for-everyone tombstones |
+| History | Chat and file transfers survive a restart — messages live in the app's Room database, searchable with SQLite FTS |
 | Calls | Voice and video calls, screen sharing that carries its sound, group calls of up to five devices, and a conference bridge mixing every participant |
+| Screen share | A 1:1 share to a phone that can display it is encoded by the hardware H.264 block instead of converted to JPEG per frame; everything else keeps the JPEG lane |
 | Browser client | Full responsive web UI served by the phone — upload, files, chats, history and details views |
-| Pairing | QR handshake with ECDH key agreement and an out-of-band safety code; works even when one side runs no server |
-| Versions | Devices exchange their release at pairing; features a peer is too old for say "needs PulseDrop 1.6 or newer on <name>" |
-| Security | Optional 4-digit PIN with per-IP lockout, AES-GCM upload proofs, self-signed LAN TLS |
+| Pairing | ECDH key agreement with a 6-digit safety code you compare out of band; works even when one side runs no server |
+| Versions | Devices exchange their release and capability list at pairing and discovery; features a peer is too old for say "needs PulseDrop 1.6 or newer on <name>" |
+| Security | Optional 4-digit PIN with per-IP lockout, AES-GCM upload proofs, self-signed LAN TLS, HKDF v2 key derivation for new pairings |
 
 ## Quick start
 
 1. Install the app — see [Installation](Installation.md).
 2. Start the server on **one** phone and connect the other devices to the same hotspot/Wi-Fi.
+   The server card lives on the **Home** screen.
 3. Open the address the card shows or scan the QR (browsers are bounced to the secure
    port automatically) — see [Browser Calls (HTTPS)](Browser-Calls-HTTPS.md).
-4. Pair the phones you trust; everything else works through the one hub.
+4. Pair the phones you trust from **Devices**; everything else works through the one hub —
+   see [Pairing and Devices](Pairing-and-Devices.md).
 5. Hit a problem? [Troubleshooting](Troubleshooting.md).
 
 ## Documentation
 
 - [Installation](Installation.md) — sideloading the APK, signing, Play Protect notes
-- [Usage](Usage.md) — server, one-hub relay, files, chat, radar, history, calls
-- [Browser Calls (HTTPS)](Browser-Calls-HTTPS.md) — why the secure address matters, cert warning
-- [Security Model](Security-Model.md) — PIN, pairing crypto, relay secrecy, upload proofs
+- [Usage](Usage.md) — the ten screens, server, one-hub relay, files, transfers
+- [Chat and History](Chat-and-History.md) — what is stored, what is searchable, what is not encrypted at rest
+- [Calls and Screen Share](Calls-and-Screen-Share.md) — lanes, quality tiers, when H.264 is used and when it is not
+- [Pairing and Devices](Pairing-and-Devices.md) — the handshake, the safety code, revoking trust
+- [Security Model](Security-Model.md) — PIN, pairing crypto, KDF v1/v2, relay secrecy, upload proofs, backups
+- [Capabilities and Versioning](Capabilities-and-Versioning.md) — the capability strings and how mixed-version rooms decide what to send
 - [HTTP API](HTTP-API.md) — every endpoint the phone serves, including the relay
+- [Protocol v2](Protocol-V2.md) — the wire spec: frame types, control messages, compatibility
+- [Browser Calls (HTTPS)](Browser-Calls-HTTPS.md) — why the secure address matters, cert warning
 - [Building from Source](Building-from-Source.md) — toolchain, Gradle, release signing
-- [Troubleshooting](Troubleshooting.md) — install errors, calls, dataSync quota
+- [Troubleshooting](Troubleshooting.md) — install errors, calls, shares, dataSync quota
 
 ## Project facts
 
-- Package: `com.pulsedrop.app` · current release: **v1.6** (versionName 1.6, versionCode 8)
+- Package: `com.pulsedrop.app` · current release: **v2.0.0** (versionName `2.0.0`, versionCode `10`)
 - minSdk 24 / targetSdk 36 · Kotlin + Jetpack Compose · NanoHTTPD embedded server
 - License: PolyForm Noncommercial 1.0.0 (see `LICENSE` in the repository)
 - Source: https://github.com/bishnuneup4ne/pulsedrop
 - Releases: https://github.com/bishnuneup4ne/pulsedrop/releases
+
+## What is not claimed
+
+Stated plainly because the app tries to be honest about itself:
+
+- Calls are **not** end-to-end encrypted. Pairing and paired chat are.
+- Chat text is stored **in plaintext** in the app's own database — see
+  [Chat and History](Chat-and-History.md) for what that does and does not expose.
+- The browser client never gets the H.264 lanes; a tab always receives JPEG.
+- There is no device-rename UI, and transfers cannot be paused, cancelled or retried —
+  the buttons exist and are deliberately disabled with the reason shown.
