@@ -42,8 +42,10 @@ import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Lock
@@ -113,6 +115,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
  * Instagram-style messaging: a thread inbox, then a full-screen conversation with
@@ -136,6 +139,12 @@ fun ChatScreen(
     onSend: (String, String?, ClipMessage?) -> Unit,
     /** Delete one bubble by id; `true` retracts it everywhere it was delivered, not just here. */
     onDelete: (String, Boolean) -> Unit,
+    /** Put a reaction on a bubble, or null to take this device's off it. */
+    onReact: (String, String?) -> Unit,
+    /** Rewrite one of this device's own bubbles. */
+    onEdit: (String, String) -> Unit,
+    /** Reaches back into history, past whatever window the thread list is showing. */
+    onSearchHistory: suspend (String) -> List<com.pulsedrop.app.data.SearchHit>,
     onTyping: (Boolean) -> Unit,
     onAttach: (String?) -> Unit,
     resolveAttachment: (ChatAttachment) -> File?,
@@ -176,6 +185,8 @@ fun ChatScreen(
             },
             onSend = { text, reply -> onSend(text, active.id, reply) },
             onDelete = { target, forEveryone -> onDelete(target.id, forEveryone) },
+            onReact = { target, reaction -> onReact(target.id, reaction) },
+            onEdit = { target, text -> onEdit(target.id, text) },
             onAttach = { onAttach(active.id) },
             onTyping = onTyping,
             resolveAttachment = resolveAttachment,
@@ -192,6 +203,7 @@ fun ChatScreen(
             lanPeers = lanPeers,
             onOpen = { onSelectThread(it) },
             onCreateGroup = onCreateGroup,
+            onSearchHistory = onSearchHistory,
             modifier = modifier
         )
     }
@@ -352,6 +364,7 @@ private fun InboxView(
     lanPeers: List<PeerDevice>,
     onOpen: (String?) -> Unit,
     onCreateGroup: (String, List<String>) -> Unit,
+    onSearchHistory: suspend (String) -> List<com.pulsedrop.app.data.SearchHit>,
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -360,6 +373,23 @@ private fun InboxView(
     var showIpDialog by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var showPrivateThreads by remember { mutableStateOf(false) }
+
+    /**
+     * History hits, which are not the same thing as the threads below.
+     *
+     * The thread list only knows the newest window of messages; this asks the index, so a word from
+     * a conversation last had last year is findable. Debounced because every keystroke would be a
+     * query, and run off the composition.
+     */
+    var historyHits by remember { mutableStateOf<List<com.pulsedrop.app.data.SearchHit>>(emptyList()) }
+    LaunchedEffect(query) {
+        if (query.trim().length < 2) {
+            historyHits = emptyList()
+        } else {
+            delay(280)
+            historyHits = onSearchHistory(query)
+        }
+    }
 
     // The inbox is for direct conversations: the open room, one-to-one IP threads, and
     // paired one-to-one channels - a pairing IS a direct chat, so it belongs here too.
@@ -458,12 +488,12 @@ private fun InboxView(
             }
         }
 
-        if (visible.isEmpty()) {
+        if (visible.isEmpty() && historyHits.isEmpty()) {
             if (query.isNotBlank()) {
                 PulseStatePanel(
                     icon = Icons.Outlined.SearchOff,
                     title = "Nothing matches \"$query\"",
-                    message = "Try a shorter word.",
+                    message = "No conversation and no message in the history on this phone.",
                     actionLabel = "Clear search",
                     onAction = { query = "" }
                 )
@@ -489,6 +519,33 @@ private fun InboxView(
                         typingUsers = typingUsers,
                         onClick = { onOpen(t.id) }
                     )
+                }
+                // Separate because the two answer different questions: the list above is "who am I
+                // talking to", this is "what was said". Opening a hit goes to the conversation, not
+                // to the message - the row is a pointer into a thread, not a scroll position.
+                if (historyHits.isNotEmpty()) {
+                    item(key = "history-label") {
+                        Column {
+                            if (visible.isNotEmpty()) PulseRowDivider(insetStart = 0)
+                            PulseRowLabel("In history")
+                        }
+                    }
+                    itemsIndexed(historyHits, key = { _, h -> "hit-${h.message.id}" }) { index, hit ->
+                        if (index > 0) PulseRowDivider(insetStart = 20)
+                        PulseRow(
+                            title = hit.message.sender,
+                            subtitle = hit.snippet,
+                            trailing = {
+                                Text(
+                                    text = shortTime(hit.message.timestamp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colorScheme.onSurfaceVariant
+                                )
+                            },
+                            onClick = { onOpen(hit.message.threadId) },
+                            modifier = Modifier.testTag("chat_history_hit")
+                        )
+                    }
                 }
             }
         }
@@ -763,6 +820,8 @@ private fun ConversationView(
     onSend: (String, ClipMessage?) -> Unit,
     /** A bubble the long-press menu asked about, and whether to retract it on every device. */
     onDelete: (ClipMessage, Boolean) -> Unit,
+    onReact: (ClipMessage, String?) -> Unit,
+    onEdit: (ClipMessage, String) -> Unit,
     onAttach: () -> Unit,
     onTyping: (Boolean) -> Unit,
     resolveAttachment: (ChatAttachment) -> File?,
@@ -773,6 +832,7 @@ private fun ConversationView(
     var input by remember { mutableStateOf("") }
     var emojiOpen by remember(thread.id) { mutableStateOf(false) }
     var replyingTo by remember(thread.id) { mutableStateOf<ClipMessage?>(null) }
+    var editing by remember(thread.id) { mutableStateOf<ClipMessage?>(null) }
     var lastTypingSent by remember { mutableLongStateOf(0L) }
     var previewAttachment by remember { mutableStateOf<ChatAttachment?>(null) }
     val listState = rememberLazyListState()
@@ -784,6 +844,17 @@ private fun ConversationView(
             attachment = att,
             file = resolveAttachment(att),
             onDismiss = { previewAttachment = null }
+        )
+    }
+
+    editing?.let { target ->
+        EditMessageDialog(
+            original = target.text,
+            onDismiss = { editing = null },
+            onSave = { text ->
+                editing = null
+                onEdit(target, text)
+            }
         )
     }
 
@@ -904,7 +975,10 @@ private fun ConversationView(
                                 onDelete = { forEveryone ->
                                     if (replyingTo?.id == row.msg.id) replyingTo = null
                                     onDelete(row.msg, forEveryone)
-                                }
+                                },
+                                onReact = { reaction -> onReact(row.msg, reaction) },
+                                onEdit = { editing = row.msg },
+                                canReact = thread.id?.startsWith("ip:") != true
                             )
                         }
                     }
@@ -1224,7 +1298,11 @@ private fun MessageRow(
     grouped: Boolean,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onReply: () -> Unit,
-    onDelete: (Boolean) -> Unit
+    onDelete: (Boolean) -> Unit,
+    onReact: (String?) -> Unit,
+    onEdit: () -> Unit,
+    /** False on a browser-tab thread, where a signal has no channel to travel on. */
+    canReact: Boolean
 ) {
     val c = LocalPulseColors.current
     var menuOpen by remember { mutableStateOf(false) }
@@ -1305,22 +1383,83 @@ private fun MessageRow(
                             if (lastOfRun) {
                                 // Instagram tucks the time inside the corner of the last bubble
                                 // of a run; it belongs to the message, not to the page.
-                                Text(
-                                    text = shortTime(msg.timestamp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (mine) c.onAccent.copy(alpha = 0.75f) else c.textTertiary,
-                                    modifier = Modifier
-                                        .align(Alignment.End)
-                                        .offset(x = 8.dp, y = 4.dp)
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (msg.editedAt != null) {
+                                        Text(
+                                            text = "edited",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontStyle = FontStyle.Italic,
+                                            color = if (mine) c.onAccent.copy(alpha = 0.75f) else c.textTertiary
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                    }
+                                    Text(
+                                        text = shortTime(msg.timestamp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (mine) c.onAccent.copy(alpha = 0.75f) else c.textTertiary,
+                                        modifier = Modifier.offset(x = 8.dp, y = 4.dp)
+                                    )
+                                    if (mine && msg.readAt != null) {
+                                        // Only ever a peer's own word that it read this: the tick is
+                                        // set by a sealed receipt, never by this device guessing.
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = "Read",
+                                            tint = c.onAccent.copy(alpha = 0.85f),
+                                            modifier = Modifier
+                                                .padding(start = 4.dp)
+                                                .size(12.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
+                    }
+                }
+            }
+            // Outside the bubble, so a reaction survives a delete and does not inherit the
+            // sender's background colour.
+            if (msg.reaction != null && !msg.deleted) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(c.highlight)
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                ) {
+                    Text(text = msg.reaction, style = MaterialTheme.typography.labelSmall)
+                    if (msg.reactionBy != null) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = msg.reactionBy,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = c.textTertiary,
+                            maxLines = 1
+                        )
                     }
                 }
             }
         }
 
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            if (canReact && !msg.deleted) {
+                REACTIONS.forEach { emoji ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                // Tapping the one already on the bubble takes it off, which is what
+                                // "react" means everywhere else.
+                                if (msg.reaction == emoji) "Remove $emoji" else emoji
+                            )
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onReact(if (msg.reaction == emoji) null else emoji)
+                        }
+                    )
+                }
+            }
             DropdownMenuItem(
                 text = { Text("Reply") },
                 leadingIcon = { Icon(Icons.AutoMirrored.Filled.Reply, null) },
@@ -1329,6 +1468,16 @@ private fun MessageRow(
                     onReply()
                 }
             )
+            if (mine && !msg.deleted && msg.attachment == null) {
+                DropdownMenuItem(
+                    text = { Text("Edit") },
+                    leadingIcon = { Icon(Icons.Default.Edit, null) },
+                    onClick = {
+                        menuOpen = false
+                        onEdit()
+                    }
+                )
+            }
             DropdownMenuItem(
                 text = { Text(if (mine) "Delete for me" else "Delete here") },
                 leadingIcon = { Icon(Icons.Default.Delete, null, tint = c.danger) },
@@ -1349,6 +1498,35 @@ private fun MessageRow(
             }
         }
     }
+}
+
+/** The reaction set offered on a bubble. Few enough to fit the menu without a picker. */
+private val REACTIONS = listOf("\u2764\uFE0F", "\uD83D\uDC4D", "\uD83D\uDE42", "\uD83C\uDF89", "\uD83D\uDD25")
+
+/** Rewrite of a bubble this device wrote. Text only: an attachment is bytes, not a caption. */
+@Composable
+private fun EditMessageDialog(original: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf(original) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit message") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                maxLines = 6
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (text.isNotBlank()) onSave(text.trim()) },
+                enabled = text.isNotBlank() && text.trim() != original
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 /**

@@ -101,13 +101,17 @@ internal fun importanceLabel(importance: Int): String = when (importance) {
 /**
  * A channel that has never been created is not "off" — it just has not existed yet, because
  * its event never happened. Saying otherwise would invent a state.
+ *
+ * Below API 26 there are no channels at all, and `name`/`importance` are methods the platform
+ * does not have: the same sentence would promise a channel that never arrives, and calling it
+ * would crash an Android 7 device on the way to the screen.
  */
-internal fun channelStateLine(fact: NotificationFact, channel: NotificationChannel?): String =
-    if (channel == null) {
-        "Not created yet — it appears the first time this happens."
-    } else {
-        "${channel.name}: ${importanceLabel(channel.importance)}"
-    }
+internal fun channelStateLine(fact: NotificationFact, channel: NotificationChannel?): String = when {
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.O ->
+        "This Android version has no channels — control is per app in system settings."
+    channel == null -> "Not created yet — it appears the first time this happens."
+    else -> "${channel.name}: ${importanceLabel(channel.importance)}"
+}
 
 /** The leading icon for a channel, chosen from what that channel actually announces. */
 internal fun channelIcon(id: String): ImageVector = when (id) {
@@ -134,9 +138,12 @@ fun NotificationScreen(
     // the app knowing, so the screen re-reads when asked rather than caching at startup.
     var readTick by remember { mutableIntStateOf(0) }
     val channels = remember(readTick, context) {
-        val manager = context.getSystemService(NotificationManager::class.java)
-        NOTIFICATION_FACTS.associate { fact ->
-            fact.id to runCatching { manager?.getNotificationChannel(fact.id) }.getOrNull()
+        // `getNotificationChannel` is API 26: on Android 7 the method does not exist, so the answer
+        // here is "nothing to report per channel", not an exception caught on the way past.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) emptyMap()
+        else {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            NOTIFICATION_FACTS.associate { fact -> fact.id to manager?.getNotificationChannel(fact.id) }
         }
     }
 

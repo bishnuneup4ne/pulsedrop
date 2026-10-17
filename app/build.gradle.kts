@@ -6,6 +6,14 @@ plugins {
   alias(libs.plugins.google.devtools.ksp)
 }
 
+// Room writes one JSON per schema version here, and they are committed. A migration is written from
+// the generated createSql rather than typed by hand, and `sqlDelimiter` keeps the test that replays
+// an old database honest: if the checked-in schema and the code disagree, the build says so instead
+// of silently handing back the destructive-migration behaviour this replaced.
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 android {
   namespace = "com.pulsedrop.app"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -14,8 +22,8 @@ android {
     applicationId = "com.pulsedrop.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 9
-    versionName = "1.7"
+    versionCode = 10
+    versionName = "2.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

@@ -1,6 +1,7 @@
 package com.pulsedrop.app.ui.screens
 
 import android.graphics.Bitmap
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.compose.foundation.Image
@@ -42,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,11 +55,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.call.CallParticipant
 import com.pulsedrop.app.call.CallState
+import com.pulsedrop.app.call.CallStats
 import com.pulsedrop.app.call.formatCallLength
 import com.pulsedrop.app.ui.theme.PulseStageColors
 
@@ -72,12 +76,43 @@ fun CallOverlay(
     onHangUp: () -> Unit,
     /** Hands the local camera the SurfaceView below, or null when it goes away. */
     onAttachPreview: (SurfaceHolder?) -> Unit = {},
+    /**
+     * Hands the peer's H.264 decoder the tile below, with the size it is drawn at. Called with null
+     * when the tile leaves composition, which is also the signal that the lane has come down.
+     */
+    onAttachRemoteSurface: (Surface?, Int, Int) -> Unit = { _, _, _ -> },
+    /**
+     * Hands the peer's *shared screen* the tile below, when it arrives encoded.
+     *
+     * A second surface on purpose: the peer's camera and the peer's desktop are two reference chains, and
+     * a decoder presents onto whatever it was configured with. One tile between them paints a face out of
+     * a spreadsheet and reads as a codec failure rather than as a surface-count failure.
+     */
+    onAttachPeerScreenSurface: (Surface?, Int, Int) -> Unit = { _, _, _ -> },
+    /**
+     * True while the peer's video arrives as encoded frames rather than JPEGs. It changes the feed's
+     * owner: on this lane nothing ever becomes a Bitmap, so `remoteFrame` stays null for the whole call
+     * and the surface view is the only thing that can show the picture.
+     */
+    h264Lane: Boolean = false,
+    /** Measured once a second by the engine. Nothing here is the number the encoder was asked for. */
+    stats: CallStats = CallStats(),
     onSwitchCamera: () -> Unit = {},
     onMinimize: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // The clock the user asks for the moment a call ends, shown while it is still up.
     val stage = PulseStageColors
+    // On the encoded lane the picture is on a surface, not in a Bitmap, so "is there a feed" cannot be
+    // answered by remoteFrame alone — it stays null for the whole call.
+    // A shared screen has its own answer to the same question, negotiated separately from both the
+    // peer's camera lane and this device's own: a peer whose screen encoder dies mid-share goes back to
+    // JPEG on the screen while keeping H.264 on its camera.
+    val peerScreenEncoded = state.peerSharing && stats.remoteScreenH264
+    val showingFeed = h264Lane || peerScreenEncoded || remoteFrame != null
+    // On by default: a call's real frame rate is the first thing worth knowing about it, and hiding it
+    // behind a setting is how it stays unknown. The status line is the switch.
+    var showStats by remember { mutableStateOf(true) }
     val anchor = state.connectedAt
     var seconds by remember(anchor) { mutableLongStateOf(0L) }
     LaunchedEffect(anchor) {
@@ -104,6 +139,24 @@ fun CallOverlay(
                     .fillMaxSize()
                     .testTag("conference_grid")
             )
+        } else if (peerScreenEncoded) {
+            // The peer's desktop, already on a surface: their camera keeps its own decoder and waits for
+            // the tile back, exactly as the shared screen used to wait for the JPEG pump.
+            RemoteSurface(
+                onAttach = onAttachPeerScreenSurface,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("call_peer_screen_surface")
+            )
+        } else if (h264Lane && !state.peerSharing) {
+            // Everything else — the peer's camera when they are not sharing, or either picture when the
+            // lane is JPEG — comes down as a Bitmap and is drawn from `remoteFrame` below.
+            RemoteSurface(
+                onAttach = onAttachRemoteSurface,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("call_remote_surface")
+            )
         } else if (remoteFrame != null) {
             Image(
                 bitmap = remoteFrame.asImageBitmap(),
@@ -114,7 +167,7 @@ fun CallOverlay(
             )
         }
 
-        if (!state.conference && (remoteFrame != null || state.cameraOn)) {
+        if (!state.conference && (showingFeed || state.cameraOn)) {
             // The name and status sit over live video, so fade the top of the stage to black.
             Box(
                 modifier = Modifier
@@ -190,7 +243,7 @@ fun CallOverlay(
         }
 
         if (state.cameraOn) {
-            if (!state.conference && remoteFrame == null) {
+            if (!state.conference && !showingFeed) {
                 // Nothing from the other side yet: your own lens fills the stage so a video
                 // call opens as a video screen, not a black avatar with a spinner.
                 SelfPreview(
@@ -222,7 +275,7 @@ fun CallOverlay(
         ) {
             Spacer(modifier = Modifier.height(48.dp))
 
-            if (!state.conference && remoteFrame == null && !state.cameraOn) {
+            if (!state.conference && !showingFeed && !state.cameraOn) {
                 Box(
                     modifier = Modifier
                         .size(112.dp)
@@ -291,8 +344,20 @@ fun CallOverlay(
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = stage.textSecondary,
-                    modifier = Modifier.testTag("call_status_line")
+                    modifier = Modifier
+                        .testTag("call_status_line")
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Button,
+                            onClick = { showStats = !showStats }
+                        )
                 )
+            }
+
+            if (stats.available && showStats) {
+                Spacer(modifier = Modifier.height(10.dp))
+                CallStatsReadout(stats = stats, modifier = Modifier.testTag("call_stats_overlay"))
             }
 
             Spacer(modifier = Modifier.weight(1f))
@@ -483,6 +548,91 @@ internal fun SelfPreview(
             }
         }
     )
+}
+
+/**
+ * The tile the peer's H.264 is decoded into.
+ *
+ * A hardware decoder writes frames straight to a surface and never produces a Bitmap, so this lane has
+ * to own a real surface view — the JPEG feed's `Image(remoteFrame)` cannot show it. The size is reported
+ * with the surface because the decoder is configured against it before the first frame's SPS arrives.
+ */
+@Composable
+internal fun RemoteSurface(
+    onAttach: (Surface?, Int, Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val stage = PulseStageColors
+    AndroidView(
+        modifier = modifier.background(stage.surfaceElevated),
+        factory = { context ->
+            SurfaceView(context).apply {
+                holder.addCallback(object : SurfaceHolder.Callback {
+                    // Created with no size: the platform reports the real one in the callback right
+                    // after, and the decoder holds its units until then rather than guessing.
+                    override fun surfaceCreated(holder: SurfaceHolder) = onAttach(holder.surface, 0, 0)
+
+                    override fun surfaceChanged(
+                        holder: SurfaceHolder,
+                        format: Int,
+                        width: Int,
+                        height: Int
+                    ) = onAttach(holder.surface, width, height)
+
+                    override fun surfaceDestroyed(holder: SurfaceHolder) = onAttach(null, 0, 0)
+                })
+            }
+        }
+    )
+}
+
+/**
+ * What this call is actually doing, as one line.
+ *
+ * Every number here is measured over the last second by the engine — frames written out, bytes written
+ * out, frames received — rather than the tier the ladder was asked to start at. A tier name with no
+ * measurement next to it would let the screen claim 1080p30 on a link delivering ten, which is exactly
+ * the failure this whole lane is meant to make visible instead of felt.
+ */
+@Composable
+internal fun CallStatsReadout(stats: CallStats, modifier: Modifier = Modifier) {
+    val stage = PulseStageColors
+    // Anything the link is not currently producing is left out rather than shown as a zero: a call with
+    // the camera off has no uplink, and "0 fps up" reads as a fault rather than as an absent camera.
+    // A still desktop is the same story on the share's side — one frame a second is what a screen that
+    // has not changed is supposed to do — so its own line names the tier it is running at and lets the
+    // bitrate say whether the air is keeping up.
+    val share = stats.screenLane.takeIf { it.isNotBlank() }?.let { lane ->
+        "share " + stats.screenTier.ifBlank { lane }
+    }
+    val parts = listOfNotNull(
+        stats.tier.takeIf { it.isNotBlank() },
+        stats.fpsOut.takeIf { it > 0 }?.let { "$it fps up" },
+        stats.kbpsOut.takeIf { it > 0 }?.let { "${mbits(it)} Mbps" },
+        stats.fpsIn.takeIf { it > 0 }?.let { "$it fps down" },
+        stats.dropped.takeIf { it > 0 }?.let { "$it dropped" },
+        share,
+        stats.screenFpsOut.takeIf { it > 0 }?.let { "$it fps share" },
+        stats.screenKbpsOut.takeIf { it > 0 }?.let { "${mbits(it)} Mbps share" }
+    )
+    if (parts.isEmpty()) return
+    Text(
+        text = parts.joinToString("  ·  "),
+        style = MaterialTheme.typography.labelMedium,
+        fontFamily = FontFamily.Monospace,
+        color = stage.textSecondary,
+        textAlign = TextAlign.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(stage.scrim)
+            .padding(horizontal = 11.dp, vertical = 6.dp)
+    )
+}
+
+/** Kilobits per second as megabits, to one decimal, without a locale-dependent format call. */
+private fun mbits(kbps: Int): String {
+    val tenthMbps = kbps / 100
+    return "${tenthMbps / 10}.${tenthMbps % 10}"
 }
 
 @Composable

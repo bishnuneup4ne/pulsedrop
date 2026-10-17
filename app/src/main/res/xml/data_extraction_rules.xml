@@ -10,6 +10,11 @@
         <exclude domain="sharedpref" path="localdrop_settings.xml" />
         <exclude domain="external" path="WebDrop_Received" />
         <exclude domain="external" path="WebDrop_Chat" />
+        <!-- The Room database now holds chat message bodies. Backing it up would carry text that
+             is private between two peers into cloud storage the peer never agreed to. -->
+        <exclude domain="database" path="webdrop_database.db" />
+        <exclude domain="database" path="webdrop_database.db-wal" />
+        <exclude domain="database" path="webdrop_database.db-shm" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="localdrop_identity.xml" />
@@ -17,5 +22,10 @@
         <exclude domain="sharedpref" path="localdrop_settings.xml" />
         <exclude domain="external" path="WebDrop_Received" />
         <exclude domain="external" path="WebDrop_Chat" />
+        <!-- Repeated for device-transfer: a new phone should not receive the old phone's chat
+             database either, since the pairing secrets that decrypt it do not move with it. -->
+        <exclude domain="database" path="webdrop_database.db" />
+        <exclude domain="database" path="webdrop_database.db-wal" />
+        <exclude domain="database" path="webdrop_database.db-shm" />
     </device-transfer>
 </data-extraction-rules>

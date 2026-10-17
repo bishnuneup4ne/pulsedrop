@@ -27,6 +27,16 @@ const val TYPE_CONTROL = 8
 const val TYPE_H264 = 9
 /** v2: conference-relayed H.264: `[1B srcLen][src][access unit]`. */
 const val TYPE_CONF_H264 = 10
+/**
+ * v2: a shared screen as H.264 rather than as JPEG, one access unit per frame.
+ *
+ * Its own type instead of a flag on [TYPE_H264] because the two lanes are different pictures with
+ * different owners: one decoder per chain is a rule the reference frames enforce, and a peer that
+ * received both on type 9 would feed a face and a desktop into one chain and call the result garbage.
+ * It is also the only way an older peer can be *seen* to ignore it — types it does not know are
+ * skipped, so a build from before this one keeps receiving JPEG and never hears about the lane.
+ */
+const val TYPE_SCREEN_H264 = 11
 
 /**
  * Sole owner of the media wire format: `[1B type][4B BE payload length][payload]`.

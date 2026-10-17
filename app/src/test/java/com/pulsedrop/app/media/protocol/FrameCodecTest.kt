@@ -42,6 +42,29 @@ class FrameCodecTest {
         assertEquals(8, TYPE_CONTROL)
         assertEquals(9, TYPE_H264)
         assertEquals(10, TYPE_CONF_H264)
+        assertEquals(11, TYPE_SCREEN_H264)
+    }
+
+    /**
+     * The whole promise the shared-screen lane is built on: a peer that has never heard of type 11
+     * consumes it by length and finds the frame behind it unshifted. Anything wrong in the header
+     * would not just lose the encoded share, it would tear the JPEG frames that follow it on the same
+     * socket — so the bytes are written out here rather than derived from the encoder.
+     */
+    @Test
+    fun anOldPeerReadsPastAnUnknownTypeIntact() {
+        val wire = FrameCodec.encode(TYPE_SCREEN_H264, byteArrayOf(0x67, 0x01, 0x02)) +
+            FrameCodec.encode(TYPE_SCREEN, byteArrayOf(0x11, 0x22))
+        assertArrayEquals(hex("0B 00 00 00 03 67 01 02 03 00 00 00 02 11 22"), wire)
+
+        val input = DataInputStream(ByteArrayInputStream(wire))
+        val unknown = FrameCodec.readFrame(input)!!
+        assertEquals(11, unknown.type)
+
+        val jpeg = FrameCodec.readFrame(input)!!
+        assertEquals(TYPE_SCREEN, jpeg.type)
+        assertArrayEquals(byteArrayOf(0x11, 0x22), jpeg.payload)
+        assertNull(FrameCodec.readFrame(input))
     }
 
     @Test

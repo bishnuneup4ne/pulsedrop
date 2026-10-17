@@ -2,7 +2,9 @@ package com.pulsedrop.app.server
 
 import android.content.Context
 import android.net.Uri
+import com.pulsedrop.app.BuildConfig
 import com.pulsedrop.app.R
+import com.pulsedrop.app.discovery.PeerCapabilityRegistry
 import com.pulsedrop.app.model.ChatAttachment
 import com.pulsedrop.app.model.ClipMessage
 import com.pulsedrop.app.model.SharedFile
@@ -1104,7 +1106,11 @@ class PulseDropServer(
                 put("requiresPin", isPinRequired && !pinCode.isNullOrBlank())
                 put("port", port)
                 put("clientIp", clientIp)
-                put("version", "2.0.0")
+                // The same string the pairing handshake announces, not a literal: `negotiateKdf` asks
+                // whether BOTH ends are >= 2.0, and it reads one answer from here and the other from
+                // `BuildConfig.VERSION_NAME`. A hardcoded value lets one half of a build claim 2.0.0
+                // while the other admits 1.7, and HKDF v2 then silently never gets negotiated.
+                put("version", BuildConfig.VERSION_NAME)
                 put("secure", secureOrigin.get())
                 put("tlsUp", tlsUp())
                 put("tlsPort", tlsPort)
@@ -1112,6 +1118,10 @@ class PulseDropServer(
                 // an older build that this host will carry mail for devices with no server.
                 put("deviceId", pairManager?.myDeviceId() ?: "")
                 put("relay", true)
+                // What this phone can really do on the media wire. A peer uses a cap only when both
+                // ends list it, so this is a hardware claim: `LanScanner` records it by address and a
+                // call consults it before putting H.264 on the socket.
+                put("caps", JSONArray(PeerCapabilityRegistry.localCaps()))
             }
             val res = newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
             addCorsHeaders(res)

@@ -148,7 +148,14 @@ data class ClipMessage(
     val replySender: String? = null,
     val replyText: String? = null,
     /** Soft delete. The bubble stays as a marked placeholder so a thread does not renumber. */
-    val deleted: Boolean = false
+    val deleted: Boolean = false,
+    /** One reaction, and who put it there. The store holds a single reaction per message. */
+    val reaction: String? = null,
+    val reactionBy: String? = null,
+    /** When this message's text was rewritten, or null if it never was. */
+    val editedAt: Long? = null,
+    /** When the peer read this, for a message this device sent. Null until it says so. */
+    val readAt: Long? = null
 )
 
 /** A named cluster of paired devices that share one end-to-end encrypted room. */

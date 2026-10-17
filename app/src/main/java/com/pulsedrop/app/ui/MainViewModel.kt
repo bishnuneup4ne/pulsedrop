@@ -92,6 +92,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val context = application.applicationContext
     private val database = AppDatabase.getDatabase(context)
     private val historyDao = database.transferHistoryDao()
+    private val chatStore = com.pulsedrop.app.data.ChatStore(database.chatMessageDao())
 
     val transferHistory = historyDao.getAllTransfers()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -117,8 +118,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _sharedFiles = MutableStateFlow<List<SharedFile>>(emptyList())
     val sharedFiles: StateFlow<List<SharedFile>> = _sharedFiles.asStateFlow()
 
-    private val _clipMessages = MutableStateFlow<List<ClipMessage>>(emptyList())
-    val clipMessages: StateFlow<List<ClipMessage>> = _clipMessages.asStateFlow()
+    /**
+     * Chat history as the inbox sees it, straight off the file.
+     *
+     * This used to be a `MutableStateFlow` that every arrival appended to, which meant two things
+     * nobody intended: a restart lost the conversation, and the list was capped at
+     * [CHAT_RETENTION] so a long-running room silently forgot its own history. The row set is the
+     * store now, and this is a window onto it.
+     */
+    val clipMessages: StateFlow<List<ClipMessage>> = chatStore.recent(CHAT_RETENTION)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Writes one message into history.
+     *
+     * [fromPeer] decides whether it badges: the thread's display name and the writer's device id are
+     * both resolved here rather than passed in, because a message arrives named by whoever wrote it
+     * while the thread is named by the pairing - and only this side can tell the two apart.
+     */
+    private fun rememberChat(message: ClipMessage, fromPeer: Boolean) {
+        val senderDeviceId = if (fromPeer) peerDeviceIdFor(message.threadId) else pairManager.myDeviceId()
+        val displayName = threadDisplayName(message.threadId)
+        viewModelScope.launch(Dispatchers.IO) {
+            chatStore.record(message, displayName, countsAsUnread = fromPeer)
+        }
+    }
+
+    /**
+     * The name a thread is filed under.
+     *
+     * The same rule the inbox draws with, kept in one place so a conversation list and the bubbles
+     * inside it cannot disagree about who a thread belongs to.
+     */
+    private fun threadDisplayName(threadId: String?): String = when {
+        threadId == null -> "Everyone"
+        threadId.startsWith("pair:") ->
+            pairManager.findPairing(threadId.removePrefix("pair:"))?.name ?: threadId.removePrefix("pair:")
+        threadId.startsWith("group:") ->
+            pairManager.findGroup(threadId.removePrefix("group:"))?.name ?: threadId.removePrefix("group:")
+        threadId.startsWith("ip:") -> {
+            val ip = threadId.removePrefix("ip:")
+            nearbyPeers.value.firstOrNull { it.ip == ip }?.name ?: ip
+        }
+        else -> threadId
+    }
+
+    private fun peerDeviceIdFor(threadId: String?): String {
+        if (threadId == null || !threadId.startsWith("pair:")) return ""
+        val pairing = pairManager.findPairing(threadId.removePrefix("pair:")) ?: return ""
+        return pairManager.deviceIdOf(pairing)
+    }
 
     private val _qrBitmap = MutableStateFlow<Bitmap?>(null)
     val qrBitmap: StateFlow<Bitmap?> = _qrBitmap.asStateFlow()
@@ -184,6 +233,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val incomingCall = callEngine.incomingCall
     val remoteFrame = callEngine.remoteFrame
     val remoteFrames = callEngine.remoteFrames
+    val callStats = callEngine.stats
 
     val updateManager = com.pulsedrop.app.update.UpdateManager(context, viewModelScope)
     private val installReporter = com.pulsedrop.app.stats.InstallReporter(context, viewModelScope)
@@ -417,16 +467,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // A room message from a paired phone goes into the shared room as well, or the
             // browsers pointed at this phone would never see what another phone said.
             if (msg.threadId == null) serverInstance?.ingestRoomMessage(msg)
-            _clipMessages.update { list ->
-                if (list.any { it.id == msg.id }) list else (list + msg).takeLast(CHAT_RETENTION)
-            }
+            rememberChat(msg, fromPeer = true)
         }
         pairManager.acceptsInbound = { serverInstance != null }
         // A retraction names a message id, and we do not know which store it lives in, so mark
         // both: a missing id is a no-op in either.
         pairManager.onPairedDelete = { id ->
-            markLocalDeleted(id)
+            strikeOutLocally(id)
             serverInstance?.markMessageDeleted(id)
+        }
+        pairManager.onPairedReaction = { id, reaction, byName ->
+            viewModelScope.launch(Dispatchers.IO) { chatStore.react(id, reaction, byName) }
+        }
+        pairManager.onPairedEdit = { id, text, at, byDeviceId ->
+            viewModelScope.launch(Dispatchers.IO) { chatStore.editIfMine(id, text, at, byDeviceId) }
+        }
+        // The peer says how far it has read; our own sent rows in that thread get their ticks.
+        pairManager.onPairedRead = { threadId, through ->
+            viewModelScope.launch(Dispatchers.IO) {
+                chatStore.acknowledgeRead(threadId, through, pairManager.myDeviceId(), System.currentTimeMillis())
+            }
         }
         pairManager.relaySender = { pairing, iv, ct -> relayClient.send(pairing, iv, ct) }
         // A phone reading mail from our own mailbox is a local drop, not a remote post:
@@ -677,6 +737,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun switchCallCamera() = callEngine.switchCamera()
 
     fun attachCallPreview(holder: android.view.SurfaceHolder?) = callEngine.attachPreview(holder)
+
+    /** The peer's H.264 tile. Nothing is decoded onto a surface the call view never handed over. */
+    fun attachCallRemoteSurface(surface: android.view.Surface?, width: Int, height: Int) =
+        callEngine.attachRemoteSurface(surface, width, height)
+
+    /** The tile the peer's shared screen is decoded into, when their share arrives encoded. */
+    fun attachCallPeerScreenSurface(surface: android.view.Surface?, width: Int, height: Int) =
+        callEngine.attachPeerScreenSurface(surface, width, height)
 
     fun stopScreenShare() = callEngine.stopScreenShare()
 
@@ -1107,12 +1175,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             override fun onNewMessage(message: ClipMessage) {
-                _clipMessages.update { list ->
-                    if (list.any { it.id == message.id }) list else (list + message).takeLast(CHAT_RETENTION)
-                }
+                // The server notifies for browser posts and for our own addMessage calls alike, so
+                // "is this somebody else's" is decided the way the bubbles decide it - by author.
+                // A message this screen already echoed lands twice and is deduped by id in the store.
+                rememberChat(message, fromPeer = message.sender != _serverState.value.deviceName)
             }
 
-            override fun onMessageDeleted(id: String) = markLocalDeleted(id)
+            override fun onMessageDeleted(id: String) = strikeOutLocally(id)
 
             override fun onPendingUpload(id: String, fileName: String, fileSize: Long, fromDevice: String) {
                 refreshPendingUploads()
@@ -1419,17 +1488,80 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         syncWebThreads()
     }
 
-    private val _lastReadAt = MutableStateFlow<Map<String, Long>>(emptyMap())
-    val lastReadAt: StateFlow<Map<String, Long>> = _lastReadAt.asStateFlow()
+    /**
+     * Per-thread read watermarks, read off the conversation table.
+     *
+     * These used to be a map held in memory, which meant a restart un-read every thread the user had
+     * already opened. Keyed by thread id, with `room` standing in for the shared room - the same keys
+     * the inbox looks up and the same `lastReadAt` the store writes.
+     */
+    val lastReadAt: StateFlow<Map<String, Long>> = chatStore.conversations()
+        .map { rows -> rows.associate { it.threadId to it.lastReadAt } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
-    /** Marks the newest message of a thread as read so the inbox can show an unread badge. */
+    /** Marks everything in a thread seen up to its newest message, so the badge clears for good. */
     fun markThreadRead(threadId: String?) {
-        val key = threadId ?: "room"
-        val newest = _clipMessages.value
-            .filter { it.threadId == threadId }
-            .maxOfOrNull { it.timestamp } ?: return
-        if ((_lastReadAt.value[key] ?: 0L) >= newest) return
-        _lastReadAt.update { it + (key to newest) }
+        val key = threadId ?: com.pulsedrop.app.data.ChatMessageDao.ROOM_KEY
+        val already = lastReadAt.value[key] ?: 0L
+        viewModelScope.launch(Dispatchers.IO) {
+            val newest = chatStore.newestIn(threadId) ?: return@launch
+            if (newest <= already) return@launch
+            chatStore.markThreadRead(threadId, newest)
+            // Only a paired thread has a peer to tell. An older one ignores the signal rather than
+            // mis-rendering it, so there is nothing to check first.
+            if (threadId != null && threadId.startsWith("pair:")) {
+                pairManager.noteRead(threadId, newest)
+            }
+        }
+    }
+
+    /**
+     * Full-text search over every message this device has kept, not the inbox window.
+     *
+     * The list the screen draws is the newest [CHAT_RETENTION]; a substring scan over it finds
+     * nothing older than that, which is the whole reason the FTS table exists.
+     */
+    suspend fun searchHistory(query: String): List<com.pulsedrop.app.data.SearchHit> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) { chatStore.search(query) }
+
+    /**
+     * Puts, or clears, one reaction on a message.
+     *
+     * Applied here first and sent after, so the tap is instant on the device that made it. A null
+     * [reaction] takes it off. Paired, group and room threads all fan out along the paths the message
+     * itself took; a build old enough to lack reactions reads the signal as neither a retraction nor
+     * a message and ignores it, which is why no version check guards this.
+     *
+     * An `ip:` thread is a single browser tab, and the tab has no channel for a signal - the reaction
+     * stays on this phone.
+     */
+    fun reactToMessage(id: String, reaction: String?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val target = chatStore.find(id) ?: return@launch
+            chatStore.react(id, reaction, _serverState.value.deviceName)
+            if (target.threadId != null && !target.threadId.startsWith("ip:")) {
+                pairManager.reactEverywhere(id, reaction, target.threadId)
+            }
+        }
+    }
+
+    /** Replaces the text of one of this device's own messages. */
+    fun editMessage(id: String, text: String) {
+        val replacement = text.trim()
+        if (replacement.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val target = chatStore.find(id) ?: return@launch
+            if (target.sender != _serverState.value.deviceName) {
+                postEvent("Only ${target.sender} can edit their own message")
+                return@launch
+            }
+            chatStore.editIfMine(id, replacement, System.currentTimeMillis(), pairManager.myDeviceId())
+            val threadId = target.threadId
+            if (threadId != null && !threadId.startsWith("ip:")) {
+                val reached = pairManager.editEverywhere(id, replacement, threadId)
+                if (reached == 0) postEvent("Nobody online to edit for — the change shows on your side only")
+            }
+        }
     }
 
     /**
@@ -1464,9 +1596,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         text = "", sender = sender, clientIp = clientIp,
                         threadId = threadId, attachment = attachment
                     )
-                    _clipMessages.update { list ->
-                        if (list.any { it.id == msg.id }) list else (list + msg).takeLast(CHAT_RETENTION)
-                    }
+                    rememberChat(msg, fromPeer = false)
                 }
 
                 threadId.startsWith("pair:") -> {
@@ -1530,9 +1660,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val sender = _serverState.value.deviceName
 
         fun echo(msg: ClipMessage) {
-            _clipMessages.update { list ->
-                if (list.any { it.id == msg.id }) list else (list + msg).takeLast(CHAT_RETENTION)
-            }
+            rememberChat(msg, fromPeer = false)
         }
 
         when {
@@ -1654,8 +1782,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteMessage(id: String, forEveryone: Boolean) {
-        val target = _clipMessages.value.firstOrNull { it.id == id } ?: return
         viewModelScope.launch(Dispatchers.IO) {
+            val target = chatStore.find(id) ?: return@launch
             markLocalDeleted(id)
             if (target.threadId == null || target.threadId.startsWith("ip:")) {
                 serverInstance?.markMessageDeleted(id)
@@ -1676,10 +1804,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun markLocalDeleted(id: String) {
-        _clipMessages.update { list ->
-            list.map { if (it.id == id) it.copy(deleted = true, text = "") else it }
-        }
+    /**
+     * Strikes a message out here.
+     *
+     * A tombstone rather than a row delete, so the thread keeps its shape and a reply quoting the
+     * message still shows what it answered - and the words leave the search index with them, or a
+     * retracted message stays findable by the text it no longer has.
+     */
+    private suspend fun markLocalDeleted(id: String) = chatStore.strikeOut(id)
+
+    /** The callback-shaped form: a retraction arrives on a listener thread and must not block it. */
+    private fun strikeOutLocally(id: String) {
+        viewModelScope.launch(Dispatchers.IO) { markLocalDeleted(id) }
     }
 
     fun deleteHistoryItem(id: String) {

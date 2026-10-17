@@ -22,6 +22,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.view.Surface
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import java.io.ByteArrayOutputStream
@@ -90,11 +91,21 @@ class ProjectionCaptureService : Service() {
         private const val CHANNEL_ID = "localdrop_screen_share"
         private const val NOTIF_ID = 4455
 
-        // JPEG over a LAN socket: 1920 on the long edge at q82 costs ~180-260 KB a frame, so at
-        // 8 fps the uplink stays near 15 Mbps - inside hotspot capacity, and far above the
-        // 1280/q78 budget that read as 480p once the call view was maximised.
+        // The long edge both lanes are captured at. For the encoded lane this is only the geometry the
+        // display is asked to render, and the encoder's tier is re-cast onto it, so a 1080x2400 panel
+        // comes out labeled 864x1920 rather than as a resolution no frame ever had. For the JPEG
+        // fallback it is a budget: 1920 on the long edge at q82 costs ~180-260 KB a frame, so at 8 fps
+        // the uplink stays near 15 Mbps — inside hotspot capacity, and far above the 1280/q78 budget
+        // that read as 480p once the call view was maximised.
         private const val MAX_EDGE = 1920
         private const val FRAME_QUALITY = 82
+
+        /**
+         * The pump's tick. On the encoded lane this is a poll for a lane that may have just come up or
+         * just died, and costs nothing — the frames themselves are presented by the display server at the
+         * panel's own rate, not by this loop. On the JPEG lane it is the frame throttle, and 8 fps of
+         * 1080p JPEG is as far as a CPU encode reaches.
+         */
         private const val FRAME_INTERVAL_MS = 125L
 
         /** What the system hands over for playback capture, and one 100 ms window of it. */
@@ -104,8 +115,10 @@ class ProjectionCaptureService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var projection: MediaProjection? = null
-    private var reader: ImageReader? = null
-    private var display: VirtualDisplay? = null
+    // Read from the grab thread and rebuilt on the main one when the device turns, so both have to be
+    // seen as they change rather than as they were when the thread started.
+    @Volatile private var reader: ImageReader? = null
+    @Volatile private var display: VirtualDisplay? = null
     private var grabThread: Thread? = null
     private var audioThread: Thread? = null
     @Volatile private var audioGrabbing = false
@@ -179,61 +192,36 @@ class ProjectionCaptureService : Service() {
 
             grabbing = true
             grabThread = Thread {
-                // The plane is already RGBA in memory, which is exactly what an ARGB_8888 bitmap
-                // holds, so a frame is a bulk copy rather than two million hand-packed ints. The
-                // per-pixel loop cost more than the JPEG did, and it allocated a fresh 8 MB array
-                // every frame; both are why a share arrived late and looked like a slideshow.
-                var bufCols = 0
-                var bufRows = 0
-                var pixels = ByteArray(0)
-                var bmp: Bitmap? = null
+                val pump = JpegPump()
+                var bound: Surface? = reader?.surface
                 while (grabbing) {
-                    val image = try { reader?.acquireLatestImage() } catch (e: Exception) { null }
-                    if (image != null) {
-                        try {
-                            val plane = image.planes[0]
-                            val buffer = plane.buffer
-                            val rowStride = plane.rowStride
-                            val pw = minOf(rowStride / 4, image.width)
-                            val ph = image.height
-                            val lineBytes = pw * 4
-                            if (bufCols != pw || bufRows != ph) {
-                                bufCols = pw; bufRows = ph
-                                pixels = ByteArray(lineBytes * ph)
-                                try { bmp?.recycle() } catch (e: Exception) { }
-                                bmp = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+                    val r = reader
+                    if (r != null) {
+                        // One tick, two jobs. The encoded lane wants the display's own output: the display
+                        // server writes each frame where the encoder reads it, so nothing in this process
+                        // touches a pixel, and a 1080p30 share costs the share app nothing. The fallback
+                        // wants the ImageReader. Whichever the engine is offering is what the display has
+                        // to be pointed at, and re-pointing it is cheap enough to settle on the same timer
+                        // that paces the JPEG pump — which is also how a lane that comes up late, or dies
+                        // mid-share, converges without either half owning the other's lifecycle.
+                        val want = engine?.screenCaptureSurface(capW, capH) ?: r.surface
+                        if (want !== bound) {
+                            try {
+                                display?.setSurface(want)
+                                bound = want
+                            } catch (e: Exception) {
+                                // Unbound rather than wrong: the next tick asks again, which is what leaves
+                                // the share running instead of silently parked.
+                                bound = null
                             }
-                            if (rowStride == lineBytes) {
-                                buffer.get(pixels, 0, pixels.size)
-                            } else {
-                                // A padded plane: lift one row at a time into a packed bitmap.
-                                var from = 0
-                                var to = 0
-                                val limit = buffer.limit()
-                                for (y in 0 until ph) {
-                                    if (from + lineBytes > limit) break
-                                    buffer.position(from)
-                                    buffer.get(pixels, to, lineBytes)
-                                    from += rowStride
-                                    to += lineBytes
-                                }
-                            }
-                            val full = bmp ?: error("no frame bitmap")
-                            full.copyPixelsFromBuffer(ByteBuffer.wrap(pixels))
-                            val scaled = if (full.width == capW && full.height == capH) full
-                            else Bitmap.createScaledBitmap(full, capW, capH, true)
-                            val bos = ByteArrayOutputStream()
-                            scaled.compress(Bitmap.CompressFormat.JPEG, FRAME_QUALITY, bos)
-                            engine?.pushScreenFrame(bos.toByteArray())
-                            if (scaled !== full) scaled.recycle()
-                        } catch (e: Exception) {
-                            // skip frame
                         }
-                        image.close()
+                        if (want === r.surface) {
+                            pump.grab(r, capW, capH)?.let { engine?.pushScreenFrame(it) }
+                        }
                     }
                     Thread.sleep(FRAME_INTERVAL_MS)
                 }
-                try { bmp?.recycle() } catch (e: Exception) { }
+                pump.close()
             }.apply { isDaemon = true; start() }
         } catch (e: Exception) {
             teardown()
@@ -358,5 +346,74 @@ class ProjectionCaptureService : Service() {
         reader = null
         try { projection?.stop() } catch (e: Exception) { }
         projection = null
+    }
+
+    /**
+     * The JPEG fallback's scratch space: one bitmap and one packed plane, kept for the whole share and
+     * rebuilt only when the display changes size under it.
+     *
+     * The plane is already RGBA in memory, which is exactly what an ARGB_8888 bitmap holds, so a frame
+     * is a bulk copy rather than two million hand-packed ints. The per-pixel loop cost more than the JPEG
+     * did, and it allocated a fresh 8 MB array every frame; both are why a share arrived late and looked
+     * like a slideshow.
+     */
+    private class JpegPump {
+
+        private var cols = 0
+        private var rows = 0
+        private var pixels = ByteArray(0)
+        private var bmp: Bitmap? = null
+
+        /** @return the frame as JPEG, or null when there was no frame to take or it came out unusable. */
+        fun grab(reader: ImageReader, capW: Int, capH: Int): ByteArray? {
+            val image = try { reader.acquireLatestImage() } catch (e: Exception) { return null }
+            if (image == null) return null
+            try {
+                val plane = image.planes[0]
+                val buffer = plane.buffer
+                val rowStride = plane.rowStride
+                val pw = minOf(rowStride / 4, image.width)
+                val ph = image.height
+                val lineBytes = pw * 4
+                if (cols != pw || rows != ph) {
+                    cols = pw; rows = ph
+                    pixels = ByteArray(lineBytes * ph)
+                    try { bmp?.recycle() } catch (e: Exception) { }
+                    bmp = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+                }
+                if (rowStride == lineBytes) {
+                    buffer.get(pixels, 0, pixels.size)
+                } else {
+                    // A padded plane: lift one row at a time into a packed bitmap.
+                    var from = 0
+                    var to = 0
+                    val limit = buffer.limit()
+                    for (y in 0 until ph) {
+                        if (from + lineBytes > limit) break
+                        buffer.position(from)
+                        buffer.get(pixels, to, lineBytes)
+                        from += rowStride
+                        to += lineBytes
+                    }
+                }
+                val full = bmp ?: return null
+                full.copyPixelsFromBuffer(ByteBuffer.wrap(pixels))
+                val scaled = if (full.width == capW && full.height == capH) full
+                else Bitmap.createScaledBitmap(full, capW, capH, true)
+                val bos = ByteArrayOutputStream()
+                scaled.compress(Bitmap.CompressFormat.JPEG, FRAME_QUALITY, bos)
+                if (scaled !== full) scaled.recycle()
+                return bos.toByteArray()
+            } catch (e: Exception) {
+                return null
+            } finally {
+                try { image.close() } catch (e: Exception) { }
+            }
+        }
+
+        fun close() {
+            try { bmp?.recycle() } catch (e: Exception) { }
+            bmp = null
+        }
     }
 }

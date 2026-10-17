@@ -13,4 +13,10 @@
     <!-- Received and chat files are user payloads, not app state. -->
     <exclude domain="external" path="WebDrop_Received" />
     <exclude domain="external" path="WebDrop_Chat" />
+    <!-- Chat message bodies and the conversation roster are the same class of payload as those
+         folders, and they now live in the Room database. Backing it up would carry end-to-end
+         private text to cloud storage the peer never agreed to, past a file the user never chose. -->
+    <exclude domain="database" path="webdrop_database.db" />
+    <exclude domain="database" path="webdrop_database.db-wal" />
+    <exclude domain="database" path="webdrop_database.db-shm" />
 </full-backup-content>

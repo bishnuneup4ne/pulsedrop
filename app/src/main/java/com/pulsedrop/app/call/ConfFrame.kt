@@ -34,6 +34,25 @@ internal object ConfFrame {
         return body
     }
 
+    /**
+     * H.264 relay: `[1b srcLen][src][access unit]`.
+     *
+     * Same envelope as audio and no kind byte, because the codec is already named by the frame type
+     * — a kind would be a second answer to a question the type byte settled.
+     */
+    fun h264(srcPid: String, accessUnit: ByteArray): ByteArray? {
+        val src = srcPid.toByteArray(Charsets.UTF_8)
+        if (src.isEmpty() || src.size > 255) return null
+        return tag(src, accessUnit, 0)
+    }
+
+    /** Origin id and access unit. */
+    fun readH264(payload: ByteArray): Pair<String, ByteArray>? {
+        val (src, off) = readSrc(payload) ?: return null
+        if (payload.size <= off) return null
+        return Pair(src, payload.copyOfRange(off, payload.size))
+    }
+
     /** The origin id and the offset just past it, or null if the frame is truncated. */
     private fun readSrc(payload: ByteArray): Pair<String, Int>? {
         if (payload.isEmpty()) return null

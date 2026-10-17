@@ -136,6 +136,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val incomingCall by viewModel.incomingCall.collectAsState()
     val remoteFrame by viewModel.remoteFrame.collectAsState()
     val remoteFrames by viewModel.remoteFrames.collectAsState()
+    val callStats by viewModel.callStats.collectAsState()
     val chatGroups by viewModel.groups.collectAsState()
     val webCall by viewModel.webCall.collectAsState()
     val webClients by viewModel.webClients.collectAsState()
@@ -572,6 +573,9 @@ fun MainScreen(viewModel: MainViewModel) {
                             )
                         },
                         onDelete = { id, forEveryone -> viewModel.deleteMessage(id, forEveryone) },
+                        onReact = { id, reaction -> viewModel.reactToMessage(id, reaction) },
+                        onEdit = { id, text -> viewModel.editMessage(id, text) },
+                        onSearchHistory = { query -> viewModel.searchHistory(query) },
                         onTyping = { active -> viewModel.sendTyping(active) },
                         onAttach = { threadId ->
                             pendingChatAttachThread = threadId
@@ -750,6 +754,10 @@ fun MainScreen(viewModel: MainViewModel) {
                     onToggleScreenShare = { requestScreenShare() },
                     onHangUp = { viewModel.hangUpCall() },
                     onAttachPreview = { viewModel.attachCallPreview(it) },
+                    onAttachRemoteSurface = { s, w, h -> viewModel.attachCallRemoteSurface(s, w, h) },
+                    onAttachPeerScreenSurface = { s, w, h -> viewModel.attachCallPeerScreenSurface(s, w, h) },
+                    h264Lane = callStats.remoteH264,
+                    stats = callStats,
                     onSwitchCamera = { viewModel.switchCallCamera() },
                     onMinimize = { callMinimized = true }
                 )
