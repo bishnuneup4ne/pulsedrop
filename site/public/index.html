@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,8 +9,10 @@
 <link rel="icon" href="logo.svg">
 <link rel="stylesheet" href="styles.css">
 <script>
-/* Painted before first frame so the page never flashes the wrong theme. Same contract as the
-   web client: read the stored preference, fall back to the system one, set data-theme. */
+/* Painted before first frame so the page never flashes the wrong theme. The page is public, so it
+   still follows a visitor's own setting; the app and the browser client on the LAN do not - they are
+   light and only light. Light is also the attribute this document starts with, so a system-dark
+   visitor gets one bright frame rather than one dark one. */
 (function () {
   var stored = null;
   try { stored = localStorage.getItem("pulsedrop-theme"); } catch (e) { stored = null; }
