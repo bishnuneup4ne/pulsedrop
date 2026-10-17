@@ -1,6 +1,7 @@
 package com.pulsedrop.app.media.h264
 
 import android.media.MediaCodecList
+import android.os.Build
 import android.media.MediaFormat
 import java.nio.ByteBuffer
 
@@ -282,10 +283,22 @@ object HardwareCodec {
         return true
     }
 
+    /**
+     * The platform's own answer where it has one (`isHardwareAccelerated`), the name guess where it
+     * does not.
+     *
+     * This matters because `screen-h264` is a claim about the *peer*: a vendor block whose component
+     * name reads like software makes this device refuse to announce the capability, and the sharer
+     * then spends the whole call pushing JPEG to a phone that could have decoded H.264 natively. The
+     * name heuristic is a floor for old releases, never an override of a real answer.
+     */
+    fun isHardware(entry: MediaCodecListSnapshot.Entry): Boolean =
+        entry.isHardware ?: isProbablyHardware(entry.name)
+
     /** Hardware `video/avc` encoders, in the order they were enumerated. */
     fun avcEncoders(): List<String> {
         return try {
-            MediaCodecListSnapshot.list().filter { it.isAvcEncoder && isProbablyHardware(it.name) }
+            MediaCodecListSnapshot.list().filter { it.isAvcEncoder && isHardware(it) }
                 .map { it.name }
         } catch (e: Exception) {
             emptyList()
@@ -304,7 +317,7 @@ object HardwareCodec {
 
     /** Hardware `video/avc` decoders, in the order they were enumerated. */
     fun avcDecoders(): List<String> = try {
-        MediaCodecListSnapshot.list().filter { it.isAvcDecoder && isProbablyHardware(it.name) }
+        MediaCodecListSnapshot.list().filter { it.isAvcDecoder && isHardware(it) }
             .map { it.name }
     } catch (e: Exception) {
         emptyList()
@@ -321,7 +334,9 @@ object MediaCodecListSnapshot {
         val name: String,
         val isAvcEncoder: Boolean,
         /** Defaulted because most fixtures only ever cared about the encoder half. */
-        val isAvcDecoder: Boolean = false
+        val isAvcDecoder: Boolean = false,
+        /** null means "the platform did not say", which is when the name heuristic is used. */
+        val isHardware: Boolean? = null
     )
 
     /** Overridable so codec selection is testable without a device. */
@@ -333,10 +348,17 @@ object MediaCodecListSnapshot {
     private fun readPlatform(): List<Entry> = try {
         MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
             .filter { it.supportedTypes.any { t -> t == AVC_MIME } }
-            .map { Entry(it.name, it.isEncoder, !it.isEncoder) }
+            .map { Entry(it.name, it.isEncoder, !it.isEncoder, hardwareFlag(it)) }
     } catch (e: Exception) {
         emptyList()
     }
+
+    /**
+     * `MediaCodecInfo.isHardwareAccelerated` is API 29; below it there is no answer, which is not the
+     * same thing as "no" — so the name heuristic stays as the fallback rather than as the rule.
+     */
+    private fun hardwareFlag(info: android.media.MediaCodecInfo): Boolean? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info.isHardwareAccelerated else null
 
     private const val AVC_MIME = "video/avc"
 }

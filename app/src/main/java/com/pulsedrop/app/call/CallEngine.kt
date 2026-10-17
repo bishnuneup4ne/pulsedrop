@@ -1732,6 +1732,15 @@ class CallEngine(
                 // A peer that only just declared the cap can still be given the lane: this is the
                 // post-hoc exchange the spec allows at media start, not a reconnect.
                 if (h264Out == null && announced != null) startH264Lane()
+                // The same grace for the share. `screenLaneFaulted` exists to stop a block that died
+                // mid-stream from being rebuilt every tick; it must not also mean "this call is JPEG
+                // because the caps frame arrived after the first share tick asked".
+                if (announced?.contains(PeerCapabilityRegistry.CAP_SCREEN_H264) == true &&
+                    screenOut == null && screenLaneFaulted
+                ) {
+                    screenLaneFaulted = false
+                    Log.i("PulseDropCall", "peer now promises a screen decoder; the share lane will ask again")
+                }
             }
             // Unknown control text is ignored, per the spec. Nothing here is fatal to a call.
         }

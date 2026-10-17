@@ -26,22 +26,31 @@ capture service asks for a surface:
 
 1. A call is live and its media socket has started.
 2. The peer announced the `screen-h264` capability — a promise about its **decoder and
-   display**, not its encoder. It is checked on both registry keys (by IP and by pairing id),
-   and either answer counts.
-3. This device has a **hardware** AVC encoder. Software codecs are refused by name: anything
-   matching `OMX.google…` or `c2.android…` does not count. Encoding a desktop in software
-   costs more CPU than the JPEG it would replace.
+   display**, not its encoder. Only two paths actually deliver it: the `caps` control frame sent
+   in band when media starts, and the scanner's `/api/info` probe. The check also looks the peer
+   up by pairing id, which is the right shape but finds nothing today — no path records caps
+   under an id — so the address the call socket is talking to is the key that counts.
+3. This device has a **hardware** AVC encoder. On Android 10 and newer that is the platform's
+   own `isHardwareAccelerated` answer for each codec; on older releases there is no such answer,
+   so it falls back to refusing by name — anything matching `OMX.google…` or `c2.android…` does
+   not count. Encoding a desktop in software costs more CPU than the JPEG it would replace.
 4. It is a **one-to-one call**. A group call stays on JPEG, because the conference grid draws
    one bitmap per tile and has nowhere to present a second decode chain.
 5. The geometry is non-zero and **even** in both dimensions — 4:2:0 has no odd sizes.
-6. The encoder actually started. If every candidate codec throws during
-   create/configure/`createInputSurface`/start, the answer is "no surface" and JPEG continues.
+6. The encoder actually started. A codec is asked whether it has a **surface input** before it
+   is configured, because a block can list `video/avc`, be hardware, and still refuse
+   `createInputSurface()` — the one failure that used to leave a share on JPEG with nothing
+   printed anywhere. If every candidate is refused, logcat's `PulseDropH264` says which codec
+   and why.
 
 If the encoder dies mid-share, a fault is latched so the capture loop stops rebuilding a
 hardware block that already refused once, and the JPEG pump — which was never closed —
-carries on. The share degrades; it does not go black.
+carries on. The share degrades; it does not go black. The latch is for a dead block only: a
+`screen-h264` announcement that arrives after the first share tick asked clears it, so a call
+that started before either end knew what the other could do is not condemned to JPEG for its
+whole life.
 
-**None of these refusals are announced to the user.** They are all ordinary hardware
+**None of these refusals are announced to the user in the interface.** They are all ordinary hardware
 variation, and the only thing you can read is the truth in the stats line: it says
 `share … 864x1920@30` when encoded and `share jpeg` when not.
 

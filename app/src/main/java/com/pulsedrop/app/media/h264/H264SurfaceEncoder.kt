@@ -32,6 +32,8 @@ class H264SurfaceEncoder(
 ) {
 
     @Volatile private var running = false
+    /** Why the last candidate was refused, for the one line printed when all of them were. */
+    private var lastFailure: String? = null
     private var codec: MediaCodec? = null
     private var worker: Thread? = null
     private var input: Surface? = null
@@ -62,14 +64,18 @@ class H264SurfaceEncoder(
             Log.i(TAG, "no hardware AVC encoder here; JPEG share only")
             return false
         }
+        var lastFailure: String? = null
         for (name in names) {
-            val created = tryCreate(name) ?: continue
+            val created = tryCreate(name)?.also { lastFailure = null } ?: continue
             codec = created
             running = true
             worker = Thread({ pump(created) }, "h264-surf").apply { isDaemon = true; start() }
             Log.i(TAG, "screen encoder $name at ${tier.describe()}, ${tier.bitrateBps / 1000} kbps")
             return true
         }
+        // Every candidate refused, and the caller silently keeps JPEG. Without this line the only
+        // evidence that a share went soft is a stats chip, and a chip does not say why.
+        Log.w(TAG, "no hardware AVC encoder would take ${tier.describe()}: ${lastFailure ?: "none listed"}")
         return false
     }
 
@@ -89,7 +95,28 @@ class H264SurfaceEncoder(
     }
 
     private fun attempt(name: String, format: MediaFormat): MediaCodec? {
-        val created = try { MediaCodec.createByCodecName(name) } catch (e: Exception) { return null }
+        val created = try {
+            MediaCodec.createByCodecName(name)
+        } catch (e: Exception) {
+            lastFailure = "create $name: ${e.message}"
+            return null
+        }
+        // A block can list video/avc, be hardware, and still have no surface input — which is the
+        // combination that made this lane fail with nothing printed: `createInputSurface()` throws on
+        // it, the catch swallows it, and the share is JPEG for the rest of the call.
+        val caps = try {
+            created.codecInfo.getCapabilitiesForType(AvcEncode.MIME)
+        } catch (e: Exception) {
+            lastFailure = "capabilities $name: ${e.message}"
+            null
+        }
+        if (caps == null ||
+            !caps.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+        ) {
+            lastFailure = "$name has no surface input"
+            try { created.release() } catch (ignored: Exception) { }
+            return null
+        }
         return try {
             created.configure(format, null, null, 0)
             // Between configure and start, which is where the platform wants it: the buffer queue this
@@ -98,6 +125,7 @@ class H264SurfaceEncoder(
             created.start()
             created
         } catch (e: Exception) {
+            lastFailure = "configure $name: ${e.message}"
             // A surface handed out and then refused still holds the display server's buffers, and
             // releasing the codec alone does not take them back.
             try { input?.release() } catch (ignored: Exception) { }
