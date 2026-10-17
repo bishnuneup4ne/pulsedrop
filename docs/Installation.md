@@ -14,7 +14,7 @@
 
 ## You do not have to uninstall first
 
-Official releases are all signed with the same upload key, so **2.0.0 installs straight over
+Official releases are all signed with the same upload key, so **a new release installs straight over
 1.7** and keeps its data — the database upgrade is a real migration, not a wipe. An
 app-scoped Room upgrade from version 2 or 3 to 4 runs on first launch; there is no
 destructive fallback, so a migration that failed would be a bug worth reporting rather than
@@ -39,9 +39,11 @@ The hash doubles as a permanent VirusTotal link:
 `https://www.virustotal.com/gui/file/<sha256>` — the permalink always points at that exact
 file, so it cannot be quietly swapped later.
 
-For reference, the 2.0.0 APK is 16,545,351 bytes with SHA-256
-`0389647c84dec72e8e06bac2cf03e93f940932ea7d4a010e98245046eed684c2`, and its VirusTotal
-report is https://www.virustotal.com/gui/file/0389647c84dec72e8e06bac2cf03e93f940932ea7d4a010e98245046eed684c2
+For reference, the current release **2.0.1** APK is 16,545,120 bytes with SHA-256
+`f51c3ca7c7551945fe0433f3e19da5268c7e622e5d50be78cacd2329da69c06a`, and its VirusTotal report is
+https://www.virustotal.com/gui/file/f51c3ca7c7551945fe0433f3e19da5268c7e622e5d50be78cacd2329da69c06a —
+which CI files as an issue on the release too. The previous release, 2.0.0, was 16,545,351 bytes
+with SHA-256 `0389647c84dec72e8e06bac2cf03e93f940932ea7d4a010e98245046eed684c2`.
 
 The APK is signed with APK Signature Scheme v2 + v3:
 `CN=PulseDrop, OU=App, O=PulseDrop, L=Dhaka, ST=Dhaka, C=BD`.
