@@ -3,6 +3,7 @@ package com.pulsedrop.app.ui.theme
 import androidx.compose.ui.graphics.Color
 import com.pulsedrop.app.server.WebClientHtml
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.roundToInt
@@ -136,18 +137,17 @@ class WebThemeParityTest {
     }
 
     @Test
-    fun `the browser chrome and the page background are the same colour`() {
-        val lightBg = declarations("bg")[0].uppercase()
-        val darkBg = declarations("bg")[1].uppercase()
-        assertEquals("light --bg", LightColors.background.toHex(), lightBg)
-        assertEquals("dark --bg", DarkColors.background.toHex(), darkBg)
-        // The meta tag is what paints the URL bar, so it has to carry those two values and no others.
+    fun `the page has one theme and the browser chrome matches it`() {
+        val bg = declarations("bg")
+        assertEquals("a second --bg table would be a theme the page can still fall into", 1, bg.size)
+        assertEquals(LightColors.background.toHex(), bg[0].uppercase())
+        // The meta tag is what paints the URL bar, so it carries that one colour and nothing else.
         val meta = Regex("<meta name=\"theme-color\"[^>]*content=\"(#[0-9A-Fa-f]+)\"").find(html)
             ?: throw AssertionError("the page never declares a theme-color")
-        assertEquals(darkBg, meta.groupValues[1].uppercase())
-        val js = Regex("tc\\.setAttribute\\('content', dark \\? '(#[0-9A-Fa-f]+)' : '(#[0-9A-Fa-f]+)'\\)")
-            .find(html) ?: throw AssertionError("the theme switch does not move the browser chrome")
-        assertEquals(darkBg, js.groupValues[1].uppercase())
-        assertEquals(lightBg, js.groupValues[2].uppercase())
+        assertEquals(bg[0].uppercase(), meta.groupValues[1].uppercase())
+        // The complaint this replaces was real: a tab that went dark because the *visitor's* OS said
+        // so, with no way in the app to make it stop. Nothing may resolve darkness again.
+        assertFalse("the page reads the system dark preference", "prefers-color-scheme" in html)
+        assertFalse("the page can still select a dark table", "[data-theme=\"dark\"]" in html)
     }
 }

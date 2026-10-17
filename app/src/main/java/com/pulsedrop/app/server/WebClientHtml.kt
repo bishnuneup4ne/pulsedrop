@@ -18,29 +18,18 @@ object WebClientHtml {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
-  <meta name="theme-color" id="themeColor" content="#0B0B0C">
+  <meta name="theme-color" id="themeColor" content="#FFFFFF">
   <title>PulseDrop - Private Local File Share</title>
   <script>
     /*
-      Runs before the first paint on purpose. Reading the saved choice - or the browser's own
-      preference when nothing is saved - after the body has already painted light is what makes a
-      theme switch look like a flicker, so the attribute is set here, on the html element, in the
-      head, with nothing else able to run first.
+      One theme, and it is named here rather than left to the stylesheet: a tab that paints a dark
+      frame for one frame while it works out what it should be is a flicker the user sees, and there
+      is no longer any preference to read. The browser's own bar carries the same colour as --bg.
     */
-    (function () {
-      var mode = "system";
-      try { mode = localStorage.getItem("pulsedrop-theme") || "system"; } catch (e) {}
-      var dark = mode === "dark" ||
-        (mode !== "light" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-      /* The browser's own bar (URL strip on a phone) has to change with the page, or a light theme
-         still wears a dark frame. These are --bg for each table; the parity test keeps them true. */
-      var tc = document.getElementById("themeColor");
-      if (tc) tc.setAttribute("content", dark ? "#0B0B0C" : "#FFFFFF");
-    })();
+    document.documentElement.setAttribute("data-theme", "light");
   </script>
   <style>
-    /* ===== PulseDrop design tokens. Two themes, one vocabulary, no CDN, no gradients-as-decoration. ===== */
+    /* ===== PulseDrop design tokens. One vocabulary, no CDN, no gradients-as-decoration. ===== */
     /* Google Sans is served by this device (same subset the app bundles), so the browser
        client types identically to the phone with no upstream available. */
     @font-face { font-family: "Google Sans"; font-weight: 400; font-display: swap; src: url("/fonts/google-sans-regular.ttf") format("truetype"); }
@@ -49,9 +38,9 @@ object WebClientHtml {
     @font-face { font-family: "Google Sans"; font-weight: 700; font-display: swap; src: url("/fonts/google-sans-bold.ttf") format("truetype"); }
 
     /*
-      The light table. Everything below this point is written against these names, so a rule that
-      hardcodes a hex is a rule that will be wrong in the other theme - which is why the dark block
-      re-declares exactly this set and nothing else.
+      The table. Everything below this point is written against these names, so a rule that hardcodes
+      a hex is a rule nothing will ever re-theme - which is why the test that reads this file fails on
+      any colour written outside it.
     */
     :root, [data-theme="light"] {
       --bg: #FFFFFF;              /* app background */
@@ -98,33 +87,34 @@ object WebClientHtml {
       --focus-ring: rgba(79,70,229,0.45);
 
       /*
-        The media stage - the call surface and the full-screen attachment viewer - deliberately does
-        not follow the theme. A dark video feed framed by light chrome inverts every label beside it,
-        so these hold the phone's PulseStageColors and the dark block below re-declares none of them.
+        The media stage - the call surface and the full-screen attachment viewer. These are the
+        phone's PulseStageColors, role for role, and the parity test holds them there: a scrim is
+        --bg with alpha, a line or chip is --muted with alpha, a panel is the elevated surface. The
+        feed itself stays black (--stage-black) whatever is painted around it.
       */
-      --stage-bg: #0B0B0C;
-      --stage-surface: #121214;
-      --stage-panel: rgba(26, 26, 29, .86);
-      --stage-line: rgba(161, 161, 170, .3);
-      --stage-line-soft: rgba(161, 161, 170, .2);
-      --stage-line-faint: rgba(161, 161, 170, .14);
-      --stage-wash: rgba(161, 161, 170, .06);
-      --stage-wash-hover: rgba(161, 161, 170, .16);
-      --stage-chip: rgba(161, 161, 170, .18);
-      --stage-scrim: rgba(11, 11, 12, .74);
-      --stage-scrim-soft: rgba(11, 11, 12, .62);
-      --stage-scrim-strong: rgba(11, 11, 12, .92);
-      --stage-scrim-mid: rgba(11, 11, 12, .4);
-      --stage-clear: rgba(11, 11, 12, 0);
-      --stage-text: #F5F5F5;
-      --stage-muted: #A1A1AA;
-      --stage-accent: #C4C6FA;
-      --stage-good: #22C55E;
-      --stage-on-good: #052010;
-      --stage-good-tint: #12291B;
-      --stage-on-good-tint: #22C55E;
-      --stage-bad: #F87171;
-      --stage-on-bad: #2A0B0B;
+      --stage-bg: #FFFFFF;
+      --stage-surface: #F8F8F8;
+      --stage-panel: rgba(255, 255, 255, .86);
+      --stage-line: rgba(113, 113, 122, .3);
+      --stage-line-soft: rgba(113, 113, 122, .2);
+      --stage-line-faint: rgba(113, 113, 122, .14);
+      --stage-wash: rgba(113, 113, 122, .06);
+      --stage-wash-hover: rgba(113, 113, 122, .16);
+      --stage-chip: rgba(113, 113, 122, .18);
+      --stage-scrim: rgba(255, 255, 255, .74);
+      --stage-scrim-soft: rgba(255, 255, 255, .62);
+      --stage-scrim-strong: rgba(255, 255, 255, .92);
+      --stage-scrim-mid: rgba(255, 255, 255, .4);
+      --stage-clear: rgba(255, 255, 255, 0);
+      --stage-text: #171717;
+      --stage-muted: #71717A;
+      --stage-accent: #312C8C;
+      --stage-good: #16A34A;
+      --stage-on-good: #FFFFFF;
+      --stage-good-tint: #DCFCE8;
+      --stage-on-good-tint: #166534;
+      --stage-bad: #DC2626;
+      --stage-on-bad: #FFFFFF;
       --stage-black: #000000;
       /* Initials sit on a per-contact identity colour, not a theme colour - see PulseAvatarPalette. */
       --avatar-ink: #FFFFFF;
@@ -132,50 +122,6 @@ object WebClientHtml {
       --radius: 16px;
       --topbar-h: 56px;
       --tabbar-h: 60px;
-    }
-
-    /* The dark table - the default the app itself opens with. */
-    [data-theme="dark"] {
-      --bg: #0B0B0C;
-      --surface: #121214;
-      --surface-2: #1A1A1D;
-      --sunken: #08080A;
-      --highlight: #232329;
-
-      --text: #F5F5F5;
-      --muted: #A1A1AA;
-      --faint: #71717A;
-      --text-inverse: #0B0B0C;    /* ink for a surface painted with --text */
-
-      --hairline: #29292D;
-      --hairline-strong: #3A3A40;
-
-      --accent: #5E63F0;
-      --accent-hover: #6E73F4;
-      --accent-tint: #24244A;
-      --accent-tint-fg: #C4C6FA;
-      --on-accent: #FFFFFF;
-
-      --success: #22C55E;
-      --success-text: #22C55E;
-      --success-tint: #12291B;
-      --warn: #F59E0B;
-      --warn-text: #F59E0B;
-      --warn-tint: #2A2011;
-      --error: #F87171;
-      --error-text: #F87171;
-      --error-tint: #2D1617;
-
-      --t-blue-bg: #24244A;   --t-blue-fg: #C4C6FA;
-      --t-green-bg: #12291B;  --t-green-fg: #6EE7B7;
-      --t-violet-bg: #241B38; --t-violet-fg: #C4B5FD;
-      --t-amber-bg: #2A2011;  --t-amber-fg: #FCD34D;
-      --t-slate-bg: #1F1F23;  --t-slate-fg: #A1A1AA;
-
-      --scrim: rgba(0,0,0,0.66);
-      --shadow-1: 0 1px 2px rgba(0,0,0,0.5);
-      --shadow-2: 0 8px 26px rgba(0,0,0,0.6);
-      --focus-ring: rgba(90,84,232,0.7);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1145,10 +1091,6 @@ object WebClientHtml {
       <button class="topbar-act" id="refreshBtn" aria-label="Refresh" title="Refresh" onclick="manualRefresh()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
       </button>
-      <button class="topbar-act theme" id="themeBtn" aria-label="Appearance" title="Appearance" onclick="cycleTheme()">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>
-        <span id="themeBtnLabel">Auto</span>
-      </button>
     </header>
 
     <div class="shell">
@@ -1835,47 +1777,6 @@ object WebClientHtml {
       applyRailMode(currentView);
     }
 
-    /*
-      Appearance. Three choices, same as the app: follow the browser, force light, force dark.
-      The stored value is the intent, not the resolved theme, so a phone that goes dark at sunset
-      takes the tab with it while "light" means light forever. The head script applies the same
-      value before paint; this only has to keep the two in step from then on.
-    */
-    var THEME_MODES = ['system', 'light', 'dark'];
-    var THEME_NAMES = { system: 'Auto', light: 'Light', dark: 'Dark' };
-    function themeMode() {
-      var m = 'system';
-      try { m = localStorage.getItem('pulsedrop-theme') || 'system'; } catch (e) {}
-      return THEME_MODES.indexOf(m) >= 0 ? m : 'system';
-    }
-    function applyThemeMode(mode) {
-      var dark = mode === 'dark' ||
-        (mode !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-      var tc = document.getElementById('themeColor');
-      if (tc) tc.setAttribute('content', dark ? '#0B0B0C' : '#FFFFFF');
-      var btn = el('themeBtn');
-      if (btn) {
-        var lab = el('themeBtnLabel');
-        if (lab) lab.textContent = THEME_NAMES[mode];
-        btn.setAttribute('aria-label', 'Appearance: ' + THEME_NAMES[mode] + '. Tap to change.');
-        btn.title = 'Appearance: ' + THEME_NAMES[mode];
-        btn.setAttribute('aria-haspopup', 'menu');
-      }
-    }
-    function cycleTheme() {
-      var next = THEME_MODES[(THEME_MODES.indexOf(themeMode()) + 1) % THEME_MODES.length];
-      try { localStorage.setItem('pulsedrop-theme', next); } catch (e) {}
-      applyThemeMode(next);
-    }
-    if (window.matchMedia) {
-      try {
-        /* Only meaningful while the intent is "follow the browser" - a forced theme must not move. */
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
-          applyThemeMode(themeMode());
-        });
-      } catch (e) {}
-    }
     function setView(view, fromHash) {
       if (!VIEW_IDS[view]) view = 'files';
       currentView = view;
@@ -4521,7 +4422,16 @@ object WebClientHtml {
     function toggleCallCamera() {
       if (!live.camStream) {
         var md = navigator.mediaDevices;
-        if (!md || !md.getUserMedia) { callHint('This origin cannot use the camera'); return; }
+        if (!md || !md.getUserMedia || !window.isSecureContext) {
+          /* The same way the microphone and the screen get across: say why, show the button, and
+             move the tab over once the phone's https port answers. A hint alone leaves the user to
+             work out that "this origin cannot" actually means "you opened the wrong address". */
+          needsSecure = true;
+          callHint('The camera is only offered on https. Tap "Secure mode" above and try again.');
+          el('secureBtn').style.display = 'inline-flex';
+          fetchInfo();
+          return;
+        }
         md.getUserMedia({ video: camConstraints() })
           .then(function (s) {
             live.camStream = s;
@@ -4709,7 +4619,6 @@ object WebClientHtml {
     el('serverUrl').textContent = location.host;
     // The head script already chose the palette; this only syncs the button's word to the intent
     // ("Auto" and a resolved dark look the same on screen but mean different things to keep).
-    applyThemeMode(themeMode());
     // Some browsers have no colour-emoji font, so the tray would post empty boxes.
     if (!browserHasColorEmoji()) el('emojiBtn').style.display = 'none';
     setView(viewFromHash());

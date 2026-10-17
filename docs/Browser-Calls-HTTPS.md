@@ -25,6 +25,12 @@ open `http://…:8080` in a browser and you land on `https://…:8081`. If the s
 is not up yet, the page tells you, keeps working in receive-only mode, and shows a
 **Secure mode** button that appears the moment the port starts listening.
 
+Tapping the camera, the microphone or screen share on a plain-http tab does the same thing:
+it names the reason, forces the **Secure mode** button visible and, once the https port
+answers and nothing is mid-call or mid-upload, moves the tab across by itself. A refusal is
+never a dead end any more, because "this origin cannot use the camera" was not a sentence
+anyone could act on.
+
 ## First visit
 
 1. Start the server on the phone (the card is on **Home**).
