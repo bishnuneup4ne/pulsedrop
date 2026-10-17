@@ -25,6 +25,12 @@ android {
     versionCode = 11
     versionName = "2.0.1"
 
+    // The version is part of the launcher name rather than a screen to dig through: two builds
+    // installed side by side are otherwise indistinguishable, and a beta next to the release is
+    // exactly when you need to know which one you are looking at. Generated from `versionName`
+    // above instead of typed into strings.xml, so the name cannot lag the version it reports.
+    resValue("string", "app_name", "PulseDrop ${checkNotNull(versionName)}")
+
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     // Where a first install is announced, and where the public install count is shown. Both belong
@@ -81,6 +87,8 @@ android {
   buildFeatures {
     compose = true
     buildConfig = true
+    // AGP 9 will not accept a generated resource (`app_name` below) until it is asked for.
+    resValues = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {

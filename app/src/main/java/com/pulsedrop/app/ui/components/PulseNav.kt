@@ -175,7 +175,14 @@ fun PulseDrawerContent(
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("PulseDrop", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
+                // Read from the resource rather than typed: it is the same name the launcher shows,
+                // version and all, so the two cannot disagree about which build this is.
+                Text(
+                    androidx.compose.ui.res.stringResource(R.string.app_name),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = c.textPrimary
+                )
+
                 PulseStatus(
                     text = if (isRunning) "Serving" else "Idle",
                     tone = if (isRunning) PulseStatusTone.Positive else PulseStatusTone.Neutral,

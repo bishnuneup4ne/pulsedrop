@@ -13,8 +13,10 @@ import org.robolectric.annotation.Config
 class AppResourceTest {
 
     @Test
-    fun `launcher label is PulseDrop`() {
+    fun `launcher label is the app name with the version it is running`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        assertEquals("PulseDrop", context.getString(R.string.app_name))
+        // The name is generated from versionName, so this fails the moment the two stop agreeing —
+        // which is the point of putting the version where it cannot be forgotten.
+        assertEquals("PulseDrop ${BuildConfig.VERSION_NAME}", context.getString(R.string.app_name))
     }
 }

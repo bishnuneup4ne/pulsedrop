@@ -39,11 +39,16 @@ The hash doubles as a permanent VirusTotal link:
 `https://www.virustotal.com/gui/file/<sha256>` — the permalink always points at that exact
 file, so it cannot be quietly swapped later.
 
-For reference, the current release **2.0.1** APK is 16,545,120 bytes with SHA-256
-`f51c3ca7c7551945fe0433f3e19da5268c7e622e5d50be78cacd2329da69c06a`, and its VirusTotal report is
-https://www.virustotal.com/gui/file/f51c3ca7c7551945fe0433f3e19da5268c7e622e5d50be78cacd2329da69c06a —
+For reference, the current release **2.0.1** APK is 16,545,119 bytes with SHA-256
+`9eaea8564572656b45da061decf3b43d08d5c11c4dfc060a172ac42ffaf8441e`, and its VirusTotal report is
+https://www.virustotal.com/gui/file/9eaea8564572656b45da061decf3b43d08d5c11c4dfc060a172ac42ffaf8441e —
 which CI files as an issue on the release too. The previous release, 2.0.0, was 16,545,351 bytes
 with SHA-256 `0389647c84dec72e8e06bac2cf03e93f940932ea7d4a010e98245046eed684c2`.
+
+From 2.0.1 the app's name is `PulseDrop <version>` in the launcher and in the drawer header,
+generated from the build's own `versionName`. Two installs side by side — this one and an older
+APK you kept — are then distinguishable without opening either, and the name cannot fall behind
+the version it is supposed to report.
 
 The APK is signed with APK Signature Scheme v2 + v3:
 `CN=PulseDrop, OU=App, O=PulseDrop, L=Dhaka, ST=Dhaka, C=BD`.
