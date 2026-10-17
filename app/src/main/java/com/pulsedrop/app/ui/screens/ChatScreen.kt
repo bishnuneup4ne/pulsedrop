@@ -158,6 +158,7 @@ fun ChatScreen(
     }
 
     val active = threads.firstOrNull { it.id == selectedThreadId }
+        ?: coldIpThread(selectedThreadId, lanPeers)
 
     LaunchedEffect(selectedThreadId, threads.size) {
         if (selectedThreadId != null && active == null) onSelectThread(null)
@@ -214,7 +215,7 @@ fun ChatScreen(
 private const val ROOM_ID = "room"
 private const val TWO_MINUTES = 120_000L
 
-private data class ChatThread(
+internal data class ChatThread(
     val id: String?,
     val title: String,
     val hint: String,
@@ -351,6 +352,36 @@ private fun buildThreads(
         compareByDescending<ChatThread> { it.lastActivity }
             .thenBy { if (it.id == ROOM_ID) 0 else 1 }
             .thenBy { it.title.lowercase(Locale.getDefault()) }
+    )
+}
+
+/**
+ * The thread a user just asked to open, when nothing has ever been said in it.
+ *
+ * [buildThreads] derives its list from stored messages, so an address chosen in the
+ * "message an IP directly" dialog had no thread to open until the far side happened to speak
+ * first. The selection was then bounced straight back to the inbox, which made the feature
+ * look broken from the phone's side and undiagnosable from the tab's.
+ */
+internal fun coldIpThread(threadId: String?, lanPeers: List<PeerDevice>): ChatThread? {
+    val id = threadId ?: return null
+    if (!id.startsWith("ip:")) return null
+    val ip = id.removePrefix("ip:")
+    if (ip.isBlank()) return null
+    val peer = lanPeers.firstOrNull { it.ip == ip }
+    return ChatThread(
+        id = id,
+        title = peer?.name ?: ip,
+        hint = "Direct thread \u00b7 nothing said yet",
+        encrypted = false,
+        isGroup = false,
+        memberNames = emptyList(),
+        memberPids = emptyList(),
+        pid = null,
+        browserIp = ip,
+        browserName = peer?.name,
+        messages = emptyList(),
+        unread = 0
     )
 }
 

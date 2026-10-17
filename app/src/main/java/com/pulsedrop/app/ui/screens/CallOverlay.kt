@@ -134,7 +134,6 @@ fun CallOverlay(
             ConferenceGrid(
                 participants = state.participants,
                 frames = remoteFrames,
-                showVideo = state.video || state.participants.any { it.sharing },
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("conference_grid")
@@ -426,7 +425,6 @@ fun CallOverlay(
 private fun ConferenceGrid(
     participants: List<CallParticipant>,
     frames: Map<String, Bitmap>,
-    showVideo: Boolean,
     modifier: Modifier = Modifier
 ) {
     val stage = PulseStageColors
@@ -451,7 +449,11 @@ private fun ConferenceGrid(
                             .testTag("conf_tile_${p.pid}"),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (frame != null && showVideo) {
+                        // A tile shows its picture when it has one. Whose camera is running is the
+                        // remote's business, not this device's: the gate used to read the *local*
+                        // video flag, so an audio-only joiner watched letter avatars while a peer
+                        // streamed video straight past them.
+                        if (frame != null) {
                             Image(
                                 bitmap = frame,
                                 contentDescription = "${p.name} video",
