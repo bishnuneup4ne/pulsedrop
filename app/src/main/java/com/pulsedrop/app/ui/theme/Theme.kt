@@ -1,13 +1,10 @@
 package com.pulsedrop.app.ui.theme
 
-import android.content.Context
-import android.content.res.Configuration
 import android.provider.Settings
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -16,48 +13,9 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ProvidableCompositionLocal
-import androidx.compose.runtime.State
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-
-/** What the user picked in Appearance. SYSTEM follows the platform and still offers both tables. */
-enum class PulseTheme(val label: String) {
-    SYSTEM("System default"),
-    LIGHT("Light"),
-    DARK("Dark")
-}
-
-/**
- * The theme preference is process-wide state, not ViewModel state.
- *
- * A ViewModel is created and destroyed with the host; a theme outlives that and has to be readable
- * before the first frame or the app paints light for a beat and then flips. Keeping a second copy
- * in a UI model would be a synchronisation problem, and a theme is the one setting where being a
- * frame late is visible.
- */
-object ThemePreference {
-    private const val PREFS = "localdrop_settings"
-    private const val KEY = "themeMode"
-
-    private val _mode = mutableStateOf(PulseTheme.LIGHT)
-    val mode: State<PulseTheme> = _mode
-
-    /** Called once from Application creation, before any Activity composes. */
-    fun load(context: Context) {
-        val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, null)
-        _mode.value = stored?.let { name -> PulseTheme.entries.firstOrNull { it.name == name } }
-            ?: PulseTheme.LIGHT
-    }
-
-    fun save(context: Context, theme: PulseTheme) {
-        _mode.value = theme
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY, theme.name).apply()
-    }
-}
 
 /**
  * Motion scale, driven by the platform's "remove animations" switch (animation duration scale 0).
@@ -135,7 +93,7 @@ internal fun schemeOf(c: PulseColors): ColorScheme = if (c.isDark) {
         surfaceContainerHigh = c.surfaceOverlay,
         surfaceContainerHighest = c.surfaceOverlay,
 
-        scrim = androidx.compose.ui.graphics.Color(0xB3000000),
+        scrim = Color(0xB3000000),
     )
 } else {
     lightColorScheme(
@@ -179,38 +137,18 @@ internal fun schemeOf(c: PulseColors): ColorScheme = if (c.isDark) {
         surfaceContainerHigh = c.surfaceElevated,
         surfaceContainerHighest = c.surfaceOverlay,
 
-        scrim = androidx.compose.ui.graphics.Color(0xB3000000),
+        scrim = Color(0xB3000000),
     )
 }
 
 /**
- * The palette the app actually composes against.
+ * The single palette the app composes against.
  *
- * [isDark] is the resolved answer, so the status-bar styling in the Activity can be driven from
- * the same decision the colours came from — two places reading the theme differently is how an app
- * ends up with dark text on a dark bar.
+ * Kept a function so screens ask for the theme rather than naming a table: the day a second theme
+ * comes back, it comes back here and in [schemeOf], and no screen has to be hunted down.
  */
 @Composable
-fun rememberPulsePalette(): PulseColors =
-    resolvePulsePalette(ThemePreference.mode.value, isSystemInDarkTheme())
-
-/**
- * Which table to paint, given what the user picked and what the platform is doing.
- *
- * This is the theme's only real decision, so the pre-Compose window background, the Compose
- * palette and the tests all read it. Two places resolving darkness their own way is how an app
- * ends up with dark icons on a dark bar.
- */
-fun resolvePulsePalette(mode: PulseTheme, systemIsDark: Boolean): PulseColors = when (mode) {
-    PulseTheme.SYSTEM -> if (systemIsDark) DarkColors else LightColors
-    PulseTheme.LIGHT -> LightColors
-    PulseTheme.DARK -> DarkColors
-}
-
-/** The platform answer without a composable in sight — read from resources, as the Activity must. */
-fun systemUiIsDark(context: Context): Boolean =
-    context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-        Configuration.UI_MODE_NIGHT_YES
+fun rememberPulsePalette(): PulseColors = LightColors
 
 /**
  * The single theme entry point. Screens get colour, typography, the semantic palette and the
@@ -220,8 +158,8 @@ fun systemUiIsDark(context: Context): Boolean =
 fun PulseDropTheme(content: @Composable () -> Unit) {
     val colors = rememberPulsePalette()
     val context = LocalContext.current
-    // Read live: the developer option and the system dark-mode toggle both change without a
-    // restart, and a theme that only applies after a reboot is a theme people think is broken.
+    // Read live rather than at start-up: the developer option flips without a restart, and motion
+    // that only stops after a reboot is motion people think is broken.
     val reduced = Settings.Global.getFloat(
         context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f
     ) <= 0.0001f
@@ -246,20 +184,16 @@ fun PulseDropTheme(content: @Composable () -> Unit) {
     }
 }
 
-/** The palette outside the composable call stack — status-bar styling reads the same answer. */
-@Composable
-fun isPulseDark(): Boolean = LocalPulseColors.current.isDark
-
 /**
  * The palette media surfaces read: the call stage and the full-screen attachment viewer.
  *
- * Those two stay on the dark table in both themes. A video feed is dark content by nature, and a
- * light theme would otherwise put a bright page beside it — every white label in the call sheet
- * would need inverting by hand. Keeping one table means the stage reads real tokens instead of
- * hex literals, and a contact's initials are legible in the stage's colours whatever the app theme
- * is set to.
+ * One table on purpose, so the stage composes against named roles like everything else and the
+ * browser client can be held to the same numbers (WebThemeParityTest). The video itself is still
+ * black inside it — [com.pulsedrop.app.ui.theme.PulseColors.stage] is a deliberate black in both
+ * tables, because a frame must not pick up the theme's grey; what went light around it is the
+ * chrome, the chips and the controls.
  */
-val PulseStageColors: PulseColors get() = DarkColors
+val PulseStageColors: PulseColors = LightColors
 
 /** The point where text stops being legible on a tinted background in either theme. */
 internal val disabledContentAlpha = 0.42f

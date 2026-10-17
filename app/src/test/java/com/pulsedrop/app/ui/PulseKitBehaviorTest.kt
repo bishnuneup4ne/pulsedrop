@@ -13,8 +13,6 @@ import com.pulsedrop.app.ui.components.PulseButton
 import com.pulsedrop.app.ui.components.PulseChip
 import com.pulsedrop.app.ui.components.PulseSwitch
 import com.pulsedrop.app.ui.theme.PulseDropTheme
-import com.pulsedrop.app.ui.theme.PulseTheme
-import com.pulsedrop.app.ui.theme.ThemePreference
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -103,19 +101,6 @@ class SettingsPersistenceTest {
     fun clear() {
         context.getSharedPreferences("localdrop_settings", Context.MODE_PRIVATE)
             .edit().clear().apply()
-    }
-
-    @Test
-    fun themeChoiceSurvivesAReload() {
-        ThemePreference.save(context, PulseTheme.LIGHT)
-        ThemePreference.load(context)
-        assertEquals(PulseTheme.LIGHT, ThemePreference.mode.value)
-    }
-
-    @Test
-    fun anUnsetThemeDefaultsToLight() {
-        ThemePreference.load(context)
-        assertEquals(PulseTheme.LIGHT, ThemePreference.mode.value)
     }
 
     @Test

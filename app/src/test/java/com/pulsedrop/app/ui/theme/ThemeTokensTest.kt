@@ -3,6 +3,7 @@ package com.pulsedrop.app.ui.theme
 import android.content.Context
 import androidx.compose.ui.graphics.Color
 import androidx.test.core.app.ApplicationProvider
+import com.pulsedrop.app.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -106,38 +107,23 @@ class ThemeTokensTest {
     }
 
     @Test
-    fun `one function decides which table to paint`() {
-        // The window background has to answer this before Compose exists, so the rule cannot live
-        // inside a composable: both readers must reach the same table from the same inputs.
-        assertEquals(DarkColors, resolvePulsePalette(PulseTheme.DARK, systemIsDark = false))
-        assertEquals(LightColors, resolvePulsePalette(PulseTheme.LIGHT, systemIsDark = true))
-        assertEquals(DarkColors, resolvePulsePalette(PulseTheme.SYSTEM, systemIsDark = true))
-        assertEquals(LightColors, resolvePulsePalette(PulseTheme.SYSTEM, systemIsDark = false))
-
+    fun `the window behind the first frame is the palette the app paints`() {
+        // One theme means the pre-Compose window background can no longer disagree with Compose,
+        // but it can still be stale: this resource is what a user sees for the moment before the
+        // first frame, so it has to be the same white the palette calls `background`.
         val context = ApplicationProvider.getApplicationContext<Context>()
-        assertFalse("a day-mode test device is not read as dark", systemUiIsDark(context))
+        val window = context.getColor(R.color.pulse_window_bg_light)
+        assertEquals("window background vs LightColors.background", LightColors.background, Color(window))
     }
 
     @Test
-    fun `theme choice survives a restart`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        ThemePreference.save(context, PulseTheme.LIGHT)
-        assertEquals(PulseTheme.LIGHT, ThemePreference.mode.value)
-        ThemePreference.load(context)
-        assertEquals("a reload reads the stored choice, not the default", PulseTheme.LIGHT, ThemePreference.mode.value)
-        ThemePreference.save(context, PulseTheme.DARK)
-        ThemePreference.load(context)
-        assertEquals(PulseTheme.DARK, ThemePreference.mode.value)
-        ThemePreference.save(context, PulseTheme.SYSTEM)
-        assertEquals(PulseTheme.SYSTEM, ThemePreference.mode.value)
-    }
-
-    @Test
-    fun `the media stage keeps its own readable palette in either theme`() {
-        // Call sheets and the attachment viewer always compose against the stage table, so a
-        // light theme cannot leave white labels sitting on a dark video feed.
+    fun `the media stage composes against the app's own palette`() {
+        // Call sheets and the attachment viewer read the stage table rather than hardcoding black
+        // panels and white labels. It is the light table now, and the video keeps its own black
+        // letterbox inside it via `stage`, so the two clients (phone and browser) stay one design.
         val stage = PulseStageColors
-        assertEquals("the stage is the dark table", DarkColors.background, stage.background)
+        assertEquals("the stage is the app table", LightColors.background, stage.background)
+        assertEquals("the feed stays letterbox black", Color(0xFF000000), stage.stage)
         assertPair("stage title", stage.textPrimary, stage.background)
         assertPair("stage detail text", stage.textSecondary, stage.background)
         assertPair("stage initials", stage.onAccentTint, stage.surfaceElevated)

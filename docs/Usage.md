@@ -112,6 +112,11 @@ Full detail, including revoking trust and what a changed code means:
 
 ## Calls
 
+PulseDrop has one theme: light. The phone, the browser client and the in-call stage all paint from
+the same palette, so a tab is never dark because the visitor's operating system happened to be.
+Video keeps its own black letterbox inside that light stage — a frame must not pick up the theme's
+grey — and `WebThemeParityTest` fails the build if the browser's numbers drift from the phone's.
+
 Voice or video, phone-to-phone, phone-to-browser, or mixed. Controls: mute, camera toggle,
 screen share, end, and minimise to a bar. One ringing screen serves every caller — a paired
 phone and a browser tab both ring on the same stage. Reloading the browser page rejoins the

@@ -1,26 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      Window chrome only. Colour lives in the Compose tokens (ui/theme/Tokens.kt); these two
-      variants exist so the background behind the first frame matches the theme the user saved,
-      which is what prevents a light flash when the app opens dark and the other way round.
-      MainActivity picks the variant from ThemePreference before setContent().
+      Window chrome only. Colour lives in the Compose tokens (ui/theme/Tokens.kt); this exists so the
+      background behind the first frame is already the colour the app paints, which is what prevents
+      a flash of the wrong colour when the app opens. One theme, so one variant — and it is the Light
+      DeviceDefault, so even the platform's own drawings (the text-selection toolbar, a system dialog)
+      stay light on a phone whose system setting is dark.
     -->
-    <style name="Theme.PulseDrop.Base" parent="android:Theme.DeviceDefault.NoActionBar">
+    <style name="Theme.PulseDrop" parent="android:Theme.DeviceDefault.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-    </style>
-
-    <style name="Theme.PulseDrop.Dark" parent="Theme.PulseDrop.Base">
-        <item name="android:windowBackground">@color/pulse_window_bg_dark</item>
-        <item name="android:windowLightStatusBar">false</item>
-    </style>
-
-    <style name="Theme.PulseDrop.Light" parent="Theme.PulseDrop.Base">
         <item name="android:windowBackground">@color/pulse_window_bg_light</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
-
-    <!-- The manifest default; applyWindowTheme() replaces it per launch. -->
-    <style name="Theme.PulseDrop" parent="Theme.PulseDrop.Dark" />
 </resources>

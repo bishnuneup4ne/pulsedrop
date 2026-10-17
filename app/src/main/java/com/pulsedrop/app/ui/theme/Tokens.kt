@@ -149,6 +149,7 @@ internal val LightColors = PulseColors(
     dangerTint = Color(0xFFFEE2E2),
     onDangerTint = Color(0xFF991B1B),
 
+    /** Letterbox black, deliberately: see [PulseColors.stage]. */
     stage = Color(0xFF000000),
     scrim = Color(0x99000000),
     disabled = Color(0xFFB6B6BD),
@@ -156,7 +157,7 @@ internal val LightColors = PulseColors(
     isDark = false
 )
 
-internal val LocalPulseColors = staticCompositionLocalOf { DarkColors }
+internal val LocalPulseColors = staticCompositionLocalOf { LightColors }
 
 /**
  * Identity colours for avatars — the one place a contact may be a colour rather than a token.

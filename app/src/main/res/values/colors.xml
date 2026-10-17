@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The window background the Activity paints before Compose takes over. Kept in step with
-         the design tokens in ui/theme/Tokens.kt; the Activity selects one of the two themes below
-         from the saved preference so the first frame is already the right colour. -->
-    <color name="pulse_window_bg_dark">#FF0B0B0C</color>
+    <!-- The window background the Activity paints before Compose takes over: the same white as
+         LightColors.background in ui/theme/Tokens.kt, so the first frame is already the right
+         colour rather than a flash of something else. -->
     <color name="pulse_window_bg_light">#FFFFFFFF</color>
 </resources>
