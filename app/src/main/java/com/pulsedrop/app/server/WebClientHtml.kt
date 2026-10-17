@@ -1840,12 +1840,28 @@ object WebClientHtml {
        A tab on plain can see and hear but cannot send a mic, camera or screen, and the phone's
        https port may bind a moment after the page loaded. So the port's arrival is polled, and the
        tab offers the jump rather than only explaining the limitation. */
-    var tlsPortInfo = 0, secureOffered = false, needsSecure = false;
+    var tlsPortInfo = 0, tlsUpInfo = false, tlsDownReason = '', tlsSaid = false, tlsProbed = false;
+    var secureOffered = false, needsSecure = false;
 
     function noteSecureAvailability(info) {
       if (info.tlsPort) tlsPortInfo = info.tlsPort;
+      tlsProbed = true;
+      tlsUpInfo = !!info.tlsUp;
+      tlsDownReason = info.tlsError || '';
       if (info.secure) { el('secureBtn').style.display = 'none'; return; }
-      if (!info.tlsUp) return;
+      if (!info.tlsUp) {
+        // The phone could not start its secure port at all. Polling on silently, with a tab that
+        // cannot send a camera and no explanation anywhere, is how "the browser just says not
+        // secure" becomes a dead end. Say it once, then keep asking in the background — the port
+        // can come up on a later retry, and `secureOffered` must stay false so this tab's poll
+        // keeps running.
+        if (!tlsSaid && tlsDownReason) {
+          tlsSaid = true;
+          toast('This phone\'s secure port is not running: ' + tlsDownReason +
+                ' - calls can still be received here');
+        }
+        return;
+      }
       if (!secureOffered) {
         secureOffered = true;
         el('secureBtn').style.display = 'inline-flex';
@@ -1854,6 +1870,19 @@ object WebClientHtml {
       // Someone already tried to use the camera or screen and was refused: move them across
       // on their own, but never yank a tab that is mid-call or mid-upload.
       if (needsSecure && !live.busy && !uploading) goSecure();
+    }
+
+    /* A refused camera has two opposite causes - this tab has not moved to the phone's https
+       port, or that port never started - so name which one before advising anything. */
+    function secureAdvice() {
+      if (!tlsProbed) return 'Checking whether this phone has a secure port…';
+      if (tlsUpInfo) return 'Tap "Secure mode" above, then accept the certificate warning once.';
+      var reason = tlsDownReason ? ' (' + tlsDownReason + ')' : '';
+      return 'This phone\'s https port is not running' + reason + '. Chat and file transfer work ' +
+             'here, but a browser will not hand over a camera to an http page. To send video from ' +
+             'Chrome or Edge anyway: tap the address button above to copy ' + location.origin +
+             ', open chrome://flags, set "Unsafely treat insecure origin as secure" to that ' +
+             'address, restart the browser and reload this page.';
     }
 
     function goSecure() {
@@ -2806,9 +2835,12 @@ object WebClientHtml {
       var list = el('beamList');
       var disp = currentThreadMsgs();
       var lastId = disp.length ? String(disp[disp.length - 1].id || '') : '';
-      // chatRev is what a deletion changes: the count and the last id can both stay identical when
-      // a message in the middle turns into a tombstone.
-      var fp = disp.length + '|' + lastId + '|' + currentThread + '|' + chatRev;
+      // A delete changes neither the count nor the last id — the row stays and only its words leave.
+      // chatRev covers the tab that did the deleting, but a tab that learns about it from the poll
+      // (its event stream dropped) has nothing to notice, so the tombstones are counted too.
+      var tombstones = 0;
+      for (var i = 0; i < disp.length; i++) if (disp[i].deleted) tombstones++;
+      var fp = disp.length + '|' + lastId + '|' + currentThread + '|' + chatRev + '|' + tombstones;
       if (!forceScroll && fp === list._fp) return;
       var stuck = nearBottom();
       list._fp = fp;
@@ -2992,8 +3024,8 @@ object WebClientHtml {
         return;
       }
       var headers = authHeaders();
-      headers['Content-Type'] = 'application/json; charset=utf-8';
-      fetch('/api/messages', { method: 'DELETE', headers: headers, body: JSON.stringify({ id: m.id }) })
+      // The id goes in the query: the phone's server discards a DELETE body before its handler runs.
+      fetch('/api/messages?id=' + encodeURIComponent(m.id), { method: 'DELETE', headers: headers })
         .then(function (res) {
           if (res.status === 401) { lockOut(); return; }
           chatRev++;
@@ -3708,7 +3740,9 @@ object WebClientHtml {
           'Secure mode',
           window.isSecureContext
             ? 'On - camera, mic and screen sharing available'
-            : 'Off - this tab can receive calls but not send camera or mic'
+            : 'Off - this tab can receive calls but not send camera or mic' +
+              (tlsUpInfo ? ' (tap "Secure mode")'
+                         : tlsDownReason ? ' (' + tlsDownReason + ')' : '')
         ],
         ['Access', REQUIRES_PIN ? 'PIN protected' : 'Open to this network'],
         ['Files hosted', String(allFiles.length)],
@@ -3761,7 +3795,10 @@ object WebClientHtml {
       ac: null, cap: null, sp: null, srcNode: null, micGain: null, shareSrc: null,
       micStream: null, camStream: null,
       shareStream: null, next: 0, inRate: 48000, camOn: false, sharing: false,
-      gotFrame: false, lastUrl: '', canvas: null, busy: false
+      gotFrame: false, lastUrl: '', canvas: null, busy: false,
+      // One capture attempt in flight, and why the last one failed: 'insecure' can be fixed by
+      // the page moving to the https port, so it is worth trying again; a denial is not.
+      capturing: false, upFail: '', resumeTick: null, upErr: 0
     };
     var pdMuted = false;
     var peerMuted = false;
@@ -4039,8 +4076,9 @@ object WebClientHtml {
            is not, and the browser refuses the mic without saying why. Say so before the tap. */
         if (!window.isSecureContext) {
           var sb = el('secureBtn');
-          if (sb) sb.style.display = 'inline-flex';
-          callHint('This tab is on http. Answering lets them see and hear the phone, but the browser will not release your mic or camera. Tap "Secure mode" above, then answer.');
+          if (sb && tlsUpInfo) sb.style.display = 'inline-flex';
+          callHint('This tab is on http, so answering lets them see and hear the phone but the ' +
+                   'browser will not release your mic or camera. ' + secureAdvice());
         }
         browserNotify((video ? 'Video call' : 'Call') + ' from ' + peerName(),
           'Open this tab to answer', 'pulse-call');
@@ -4070,6 +4108,9 @@ object WebClientHtml {
       if (!j.success) { toast(j.error || 'A call is already up'); return; }
       if (inGroup) toast('Group call — the phones join when the owner answers');
       showCall(j.cid, video, 'out', 'ringing', 0);
+      // Ask for the devices under this tap. Waiting for the answer means the prompt opens off a
+      // timer, which is the case a browser is most likely to answer with a suspended context.
+      startCallMedia(true);
     }
 
     async function pollCall() {
@@ -4119,7 +4160,9 @@ object WebClientHtml {
     function acceptCall() {
       call.state = 'accepted'; call.startedAt = Date.now(); paintCall();
       callAction('accept');
-      startCallMedia();
+      // A tap is the only moment a browser reliably treats as user activation, which is what lets
+      // the microphone prompt open and the audio context start un-suspended.
+      startCallMedia(true);
     }
 
     function declineCall() { callAction('decline'); closeCall(false); }
@@ -4148,7 +4191,11 @@ object WebClientHtml {
     }
 
     function flushUp() {
-      if (!live.up.length || !call.cid) return;
+      if (!call.cid) return;
+      // The phone drops a batch for a call it has not opened yet, so there is no point queueing
+      // anything while it is still ringing: the buffer would only grow and then arrive late.
+      if (call.state !== 'accepted') { live.up = []; return; }
+      if (!live.up.length) return;
       var parts = live.up; live.up = [];
       var total = 0;
       parts.forEach(function (p) { total += p.length; });
@@ -4159,7 +4206,19 @@ object WebClientHtml {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, authHeaders()),
         body: JSON.stringify({ cid: call.cid, frames: b64(all) })
-      }).then(function () { live.sending--; }, function () { live.sending--; });
+      }).then(function (res) {
+        live.sending--;
+        // A rejected batch used to vanish: the tab looked connected, the meter moved, and the other
+        // side heard nothing. One failure is the usual race with the answer landing, so only a run
+        // of them is worth saying out loud.
+        if (!res.ok) {
+          if (++live.upErr === 8) {
+            callHint('The phone is refusing this tab’s voice - it does not have the call open.');
+          }
+        } else if (live.upErr) {
+          live.upErr = 0;
+        }
+      }, function () { live.sending--; });
     }
 
     function attachMic(stream) {
@@ -4199,6 +4258,14 @@ object WebClientHtml {
       live.micGain.connect(live.sp);
       live.sp.connect(live.cap.destination);
       if (live.cap.state === 'suspended') live.cap.resume();
+      // An AudioContext raised off a timer rather than a tap can stay suspended, and a suspended one
+      // never fires onaudioprocess - the tab looks connected and sends nothing. The downlink already
+      // re-resumes on every chunk it plays; the uplink needs the same patience.
+      if (!live.resumeTick) {
+        live.resumeTick = setInterval(function () {
+          try { if (live.cap && live.cap.state === 'suspended') live.cap.resume(); } catch (e) {}
+        }, 1000);
+      }
     }
 
     function startFrameLoop() {
@@ -4314,25 +4381,40 @@ object WebClientHtml {
 
     /* ---- bring the leg up and down ---- */
 
-    async function startCallMedia() {
-      if (live.upTimer) return;
-      live.gotFrame = false;
-      callHint('');
-      live.upTimer = setInterval(flushUp, 100);
-      live.downAbort = new AbortController();
-      pumpDown(live.downAbort.signal);
+    async function startCallMedia(fromGesture) {
+      // The transport is set up once and never torn down by a failed capture: it is the downlink
+      // that keeps a tab hearing the call, and it has to survive the mic being refused.
+      if (!live.upTimer) {
+        live.gotFrame = false;
+        callHint('');
+        live.upTimer = setInterval(flushUp, 100);
+      }
+      // The downlink is asked for only once the phone has the call open. A pump started while the
+      // phone is still ringing is refused and returns, and a refused pump does not restart itself.
+      if (call.state === 'accepted' && !live.downAbort) {
+        live.downAbort = new AbortController();
+        pumpDown(live.downAbort.signal);
+      }
+      // Capture is the half that can fail, so capture is the half that gets retried. Guarding this
+      // on `upTimer` instead meant one declined prompt left the tab deaf for the rest of the call
+      // with no way back short of a reload.
+      if (live.micStream || live.capturing) return;
+      if (live.upFail && live.upFail !== 'insecure' && !fromGesture) return;
       var md = navigator.mediaDevices;
       if (!md || !md.getUserMedia) {
         needsSecure = true;
-        callHint('Browsers only hand over the mic and camera on https - tap "Secure mode" above, then answer the call again.');
+        live.upFail = 'insecure';
+        callHint('Browsers only hand over the mic and camera on a secure origin. ' + secureAdvice());
         fetchInfo();
         return;
       }
+      live.capturing = true;
       try {
         var stream = await md.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           video: call.video ? camConstraints() : false
         });
+        live.upFail = '';
         attachMic(stream);
         if (call.video) {
           live.camStream = stream;
@@ -4342,13 +4424,22 @@ object WebClientHtml {
           syncSelfView();
         }
       } catch (e) {
+        var name = (e && e.name) || '';
         if (!window.isSecureContext) {
           needsSecure = true;
-          callHint('This page is on http, so the browser will not release the mic or camera. Tap "Secure mode" above and answer again.');
+          live.upFail = 'insecure';
+          callHint('This page is on http, so the browser will not release the mic or camera. ' +
+                   secureAdvice());
           fetchInfo();
+        } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+          live.upFail = 'missing';
+          callHint('No microphone the browser could use - the call still receives voice and video.');
         } else {
+          live.upFail = 'denied';
           callHint('Microphone or camera was blocked - the call still receives voice and video.');
         }
+      } finally {
+        live.capturing = false;
       }
     }
 
@@ -4423,12 +4514,13 @@ object WebClientHtml {
       if (!live.camStream) {
         var md = navigator.mediaDevices;
         if (!md || !md.getUserMedia || !window.isSecureContext) {
-          /* The same way the microphone and the screen get across: say why, show the button, and
-             move the tab over once the phone's https port answers. A hint alone leaves the user to
-             work out that "this origin cannot" actually means "you opened the wrong address". */
+          /* The same way the microphone and the screen get across: say why, and only offer the jump
+             when the phone's https port is actually listening. Pointing at a "Secure mode" button
+             that is not there — or one that leads to a port nobody answers — leaves the user with a
+             dead end and no reason. */
           needsSecure = true;
-          callHint('The camera is only offered on https. Tap "Secure mode" above and try again.');
-          el('secureBtn').style.display = 'inline-flex';
+          callHint('The camera is only offered on a secure origin. ' + secureAdvice());
+          if (tlsUpInfo) el('secureBtn').style.display = 'inline-flex';
           fetchInfo();
           return;
         }
@@ -4456,8 +4548,8 @@ object WebClientHtml {
         // The picker is hidden outright on an insecure origin, so this is the usual reason a
         // visitor "cannot share" - point them at the fix instead of at a dead end.
         needsSecure = true;
-        callHint('Screen sharing is only offered on https. Tap "Secure mode" above and try again.');
-        el('secureBtn').style.display = 'inline-flex';
+        callHint('Screen sharing is only offered on a secure origin. ' + secureAdvice());
+        if (tlsUpInfo) el('secureBtn').style.display = 'inline-flex';
         fetchInfo();
         return;
       }
@@ -4522,8 +4614,10 @@ object WebClientHtml {
       if (live.shareSrc) { try { live.shareSrc.disconnect(); } catch (e) {} live.shareSrc = null; }
       if (live.cap) { try { live.cap.close(); } catch (e) {} live.cap = null; }
       if (live.ac) { try { live.ac.close(); } catch (e) {} live.ac = null; }
+      if (live.resumeTick) { clearInterval(live.resumeTick); live.resumeTick = null; }
       live.micStream = live.camStream = live.shareStream = null;
       live.up = []; live.sending = 0; live.gotFrame = false;
+      live.capturing = false; live.upFail = ''; live.upErr = 0;
       live.sharing = false; live.camOn = false; live.next = 0;
       camFacing = 'user';
       pdMuted = false;
@@ -4643,7 +4737,7 @@ object WebClientHtml {
     // coming up, so keep asking until it is and offer the jump instead of reciting an address.
     if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
       setTimeout(function () {
-        toast('This page is on http, so calls can ring and receive but not send. "Secure mode" appears here once the phone opens its https port.');
+        toast('This page is on http, so calls can ring and receive but not send. ' + secureAdvice());
       }, 1400);
       var secureWatch = setInterval(function () {
         if (secureOffered) { clearInterval(secureWatch); return; }

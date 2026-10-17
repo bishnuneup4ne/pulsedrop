@@ -562,7 +562,10 @@ fun MainScreen(viewModel: MainViewModel) {
                         },
                         onCallEveryone = { pids, ip, name, video ->
                             withCallPermissions(video) {
-                                viewModel.callEveryone(pids, ip, name, video)
+                                // An app on the network that never paired is the one thing a room call
+                                // cannot reach, and the user should hear that rather than wonder.
+                                val apps = displayPeers.filter { it.appKind != "Browser" }.map { it.ip }
+                                viewModel.callEveryone(pids, ip, name, video, apps)
                             }
                         },
                         onSend = { text, threadId, reply ->

@@ -116,7 +116,16 @@ data class CallState(
     val conference: Boolean = false,
     val isHost: Boolean = false,
     val confId: String = "",
-    val participants: List<CallParticipant> = emptyList()
+    val participants: List<CallParticipant> = emptyList(),
+    /**
+     * Which of [participants] is this device.
+     *
+     * The grid needs it to put the local camera in the right seat: a phone never receives its own
+     * frames back, so without this its own tile is a letter while everyone else has a picture.
+     * The bridge names itself `host`; a member is listed under the pair id it shares with the
+     * bridge, which both ends of that pair compute identically.
+     */
+    val selfPid: String = ""
 )
 
 /**
@@ -391,7 +400,7 @@ class CallEngine(
     companion object {
         /** Conference roster id for the bridge itself: pairwise ids are per-member, so they
          *  cannot name the host to everybody at once. */
-        private const val HOST_SRC = "host"
+        const val HOST_SRC = "host"
         /** The synthetic peer id a browser tab gets: it has no pairing and no TCP media socket. */
         const val WEB_PID = "web"
         private const val MAX_CONF_MEMBERS = 5
@@ -714,7 +723,8 @@ class CallEngine(
             status = "Group call from $webTabName…",
             participants = members.map { CallParticipant(it.pid, it.name, false) } +
                 CallParticipant(HOST_SRC, nameProvider(), true) +
-                CallParticipant(WEB_PID, webTabName, true)
+                CallParticipant(WEB_PID, webTabName, true),
+            selfPid = HOST_SRC
         )
 
         val (myIp, myPort) = endpointProvider()
@@ -832,6 +842,9 @@ class CallEngine(
         _state.value = _state.value.copy(
             outgoing = false, connected = true, video = video,
             connectedAt = System.currentTimeMillis(),
+            // A member's seat in the roster is the pair id it shares with the bridge, which is the
+            // same string the bridge keys its leg under: `pairId` is symmetric by construction.
+            selfPid = if (_state.value.conference) peer.pid else _state.value.selfPid,
             status = if (_state.value.conference) "Group call · ${peer.name}’s call"
             else "In call with ${peer.name}"
         )
@@ -1173,7 +1186,8 @@ class CallEngine(
             peerName = nameProvider(), peerPid = "",
             conference = true, isHost = true, confId = newCid,
             status = "Calling ${members.size} devices…",
-            participants = members.map { CallParticipant(it.pid, it.name, false) }
+            participants = members.map { CallParticipant(it.pid, it.name, false) },
+            selfPid = HOST_SRC
         )
         _state.value = _state.value.copy(
             participants = _state.value.participants +

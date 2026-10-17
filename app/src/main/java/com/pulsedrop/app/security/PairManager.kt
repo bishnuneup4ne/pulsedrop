@@ -243,7 +243,10 @@ class PairManager(context: Context, scope: CoroutineScope) {
 
     fun createGroup(name: String, memberPids: List<String>): ChatGroup? {
         val trimmed = name.trim()
-        if (trimmed.isBlank() || memberPids.size < 2) return null
+        // One other device is already a group: this is a phone, a tablet and a browser tab on one
+        // LAN, and a two-person group is the first case anybody actually tries to make. Requiring
+        // three participants made the feature unreachable for most setups.
+        if (trimmed.isBlank() || memberPids.isEmpty()) return null
         val group = ChatGroup(id = UUID.randomUUID().toString().take(8), name = trimmed, memberPids = memberPids)
         repo.addGroup(group)
         return group

@@ -145,15 +145,6 @@ fun ServerCard(
                     color = c.textPrimary,
                     modifier = Modifier.testTag("server_status_line")
                 )
-                if (running && !serverState.networkName.isNullOrBlank()) {
-                    Text(
-                        text = " · ${serverState.networkName}",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = c.textTertiary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
             }
 
             // The address, big enough to read across a room.

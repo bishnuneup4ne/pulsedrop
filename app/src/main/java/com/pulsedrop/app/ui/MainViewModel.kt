@@ -77,7 +77,6 @@ data class UiServerState(
     val pin: String = "1234",
     val deviceName: String = "PulseDrop Phone",
     val autoAcceptTransfers: Boolean = true,
-    val networkName: String = "Checking...",
     val startedAt: Long = 0L
 )
 
@@ -1431,7 +1430,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * With a tab in the list it rings first and the devices join through it as one conference,
      * so the caller never has to know which audience a button was for.
      */
-    fun callEveryone(memberPids: List<String>, browserIp: String?, browserName: String?, video: Boolean) {
+    fun callEveryone(
+        memberPids: List<String>,
+        browserIp: String?,
+        browserName: String?,
+        video: Boolean,
+        activeAppIps: List<String> = emptyList()
+    ) {
         if (!_serverState.value.isRunning) {
             postEvent("Turn your server on first - calls signal over it")
             return
@@ -1439,6 +1444,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_webCall.value != null || callEngine.state.value.active || callEngine.incomingCall.value != null) {
             postEvent("Another call is already up")
             return
+        }
+        // "Everyone" means everyone a call is allowed to reach, and an app with no pairing has no key
+        // to ring it with. A room that quietly skips one reads as a dropped call, so name it.
+        val pairedIps = pairManager.paired.value.map { it.originIp }.toSet()
+        val skipped = activeAppIps.filter { it.isNotBlank() && it !in pairedIps }
+        if (skipped.isNotEmpty()) {
+            postEvent("Not paired, so not rung: ${skipped.joinToString(", ")}")
         }
         if (browserIp == null) {
             startGroupCall(memberPids, video)
@@ -1478,7 +1490,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createGroup(name: String, memberPids: List<String>) {
         if (pairManager.createGroup(name, memberPids) == null) {
-            postEvent("A group needs a name and at least two paired devices")
+            postEvent("A group needs a name and at least one paired device")
         }
         syncWebThreads()
     }

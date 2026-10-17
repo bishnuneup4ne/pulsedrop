@@ -116,7 +116,7 @@ class PairRepository(
         // A group cannot hold an unpaired device — drop it and retire empty groups.
         _groups.update { list ->
             list.map { g -> g.copy(memberPids = g.memberPids.filterNot { it == pid }) }
-                .filter { it.memberPids.size >= 2 }
+                .filter { it.memberPids.isNotEmpty() }
         }
         save()
         saveGroups()

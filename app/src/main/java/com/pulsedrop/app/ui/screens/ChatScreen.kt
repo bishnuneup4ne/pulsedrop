@@ -463,7 +463,7 @@ private fun InboxView(
                     DropdownMenuItem(
                         text = { Text("New encrypted group") },
                         leadingIcon = { Icon(Icons.Default.Groups, null) },
-                        enabled = pairedDevices.size >= 2,
+                        enabled = pairedDevices.isNotEmpty(),
                         onClick = {
                             menuOpen = false
                             showGroupDialog = true
@@ -603,6 +603,10 @@ private fun InboxView(
             onCreate = { name, pids ->
                 onCreateGroup(name, pids)
                 showGroupDialog = false
+                // A group lives behind the filter toggle, so the dialog that just made one would
+                // otherwise appear to have done nothing. Reveal it instead of leaving the user to
+                // find the toggle.
+                showPrivateThreads = true
             }
         )
     }
@@ -733,7 +737,7 @@ private fun GroupDialog(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = if (selected.size < 2) "Pick at least two devices"
+                    text = if (selected.isEmpty()) "Pick at least one device"
                     else "${selected.size} devices selected",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -743,7 +747,7 @@ private fun GroupDialog(
         confirmButton = {
             Button(
                 onClick = { onCreate(name.trim(), selected.toList()) },
-                enabled = name.isNotBlank() && selected.size >= 2
+                enabled = name.isNotBlank() && selected.isNotEmpty()
             ) { Text("Create") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

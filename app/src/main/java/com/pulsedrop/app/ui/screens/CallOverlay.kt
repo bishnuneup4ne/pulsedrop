@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -129,41 +130,37 @@ fun CallOverlay(
             .systemBarsPadding()
             .testTag("call_overlay")
     ) {
-        // Remote video / screen feed
-        if (state.conference) {
-            ConferenceGrid(
-                participants = state.participants,
-                frames = remoteFrames,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("conference_grid")
-            )
-        } else if (peerScreenEncoded) {
-            // The peer's desktop, already on a surface: their camera keeps its own decoder and waits for
-            // the tile back, exactly as the shared screen used to wait for the JPEG pump.
-            RemoteSurface(
-                onAttach = onAttachPeerScreenSurface,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("call_peer_screen_surface")
-            )
-        } else if (h264Lane && !state.peerSharing) {
-            // Everything else — the peer's camera when they are not sharing, or either picture when the
-            // lane is JPEG — comes down as a Bitmap and is drawn from `remoteFrame` below.
-            RemoteSurface(
-                onAttach = onAttachRemoteSurface,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("call_remote_surface")
-            )
-        } else if (remoteFrame != null) {
-            Image(
-                bitmap = remoteFrame.asImageBitmap(),
-                contentDescription = if (state.peerSharing) "Shared screen" else "Remote video",
-                modifier = Modifier.fillMaxSize(),
-                // A camera feed should fill the phone; a shared screen must stay whole.
-                contentScale = if (state.peerSharing) ContentScale.Fit else ContentScale.Crop
-            )
+        // Remote video / screen feed. A group call draws one grid instead, and that grid is part of
+        // the column below rather than a layer under it: as a layer, the header text and the control
+        // dock both landed on top of the tiles.
+        if (!state.conference) {
+            if (peerScreenEncoded) {
+                // The peer's desktop, already on a surface: their camera keeps its own decoder and waits for
+                // the tile back, exactly as the shared screen used to wait for the JPEG pump.
+                RemoteSurface(
+                    onAttach = onAttachPeerScreenSurface,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("call_peer_screen_surface")
+                )
+            } else if (h264Lane && !state.peerSharing) {
+                // Everything else — the peer's camera when they are not sharing, or either picture when the
+                // lane is JPEG — comes down as a Bitmap and is drawn from `remoteFrame` below.
+                RemoteSurface(
+                    onAttach = onAttachRemoteSurface,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("call_remote_surface")
+                )
+            } else if (remoteFrame != null) {
+                Image(
+                    bitmap = remoteFrame.asImageBitmap(),
+                    contentDescription = if (state.peerSharing) "Shared screen" else "Remote video",
+                    modifier = Modifier.fillMaxSize(),
+                    // A camera feed should fill the phone; a shared screen must stay whole.
+                    contentScale = if (state.peerSharing) ContentScale.Fit else ContentScale.Crop
+                )
+            }
         }
 
         if (!state.conference && (showingFeed || state.cameraOn)) {
@@ -183,8 +180,9 @@ fun CallOverlay(
             )
         }
 
-        // Sharing banners ride above the feed so they are never hidden by a frame.
-        if (state.sharing || state.peerSharing) {
+        // Sharing banners ride above the feed so they are never hidden by a frame. A group call
+        // says the same thing on the tile that owns the share, and the dock already carries Stop.
+        if (!state.conference && (state.sharing || state.peerSharing)) {
             Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -241,8 +239,10 @@ fun CallOverlay(
             )
         }
 
-        if (state.cameraOn) {
-            if (!state.conference && !showingFeed) {
+        // In a group call the camera lives in this device's own tile, so a corner copy of the same
+        // picture would be a second surface fighting for one sensor.
+        if (state.cameraOn && !state.conference) {
+            if (!showingFeed) {
                 // Nothing from the other side yet: your own lens fills the stage so a video
                 // call opens as a video screen, not a black avatar with a spinner.
                 SelfPreview(
@@ -272,7 +272,8 @@ fun CallOverlay(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(48.dp))
+            // A group call trades the header's air for tile height.
+            Spacer(modifier = Modifier.height(if (state.conference) 4.dp else 48.dp))
 
             if (!state.conference && !showingFeed && !state.cameraOn) {
                 Box(
@@ -302,14 +303,13 @@ fun CallOverlay(
             Spacer(modifier = Modifier.height(6.dp))
 
             if (state.conference && state.participants.isNotEmpty()) {
+                // Tiles carry the names, so the header only owes the count: spelling every seat out
+                // here wrapped to three lines over the grid on a five-device call.
+                val joined = state.participants.count { it.connected }
                 Text(
-                    text = state.participants.joinToString(" · ") { p ->
-                        buildString {
-                            append(p.name)
-                            if (p.muted) append(" (muted)")
-                            if (p.sharing) append(" (sharing)")
-                        }
-                    },
+                    text = "$joined of ${state.participants.size} joined" +
+                        if (state.participants.size - joined > 0)
+                            " · ${state.participants.size - joined} ringing" else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = stage.textSecondary,
                     textAlign = TextAlign.Center,
@@ -359,7 +359,22 @@ fun CallOverlay(
                 CallStatsReadout(stats = stats, modifier = Modifier.testTag("call_stats_overlay"))
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            if (state.conference) {
+                ConferenceGrid(
+                    participants = state.participants,
+                    frames = remoteFrames,
+                    selfPid = state.selfPid,
+                    selfCameraOn = state.cameraOn,
+                    onAttachSelf = onAttachPreview,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(top = 10.dp)
+                        .testTag("conference_grid")
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
 
             Row(
                 modifier = Modifier
@@ -418,105 +433,140 @@ fun CallOverlay(
 }
 
 /**
- * One tile per seat. Camera is off by default in a group call, so tiles fall back to initials
- * until a frame arrives - the roster still reads correctly either way.
+ * One tile per seat, sized to whatever room the header and the dock leave rather than to a
+ * height picked in advance.
+ *
+ * The camera is off by default in a group call, so a tile falls back to an initial until a frame
+ * arrives. This device's own seat is the exception: its picture never comes back over the wire,
+ * so it is drawn from the sensor — otherwise the host of every group call watches a letter where
+ * it knows it is streaming video.
  */
 @Composable
 private fun ConferenceGrid(
     participants: List<CallParticipant>,
     frames: Map<String, Bitmap>,
+    selfPid: String,
+    selfCameraOn: Boolean,
+    onAttachSelf: (SurfaceHolder?) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val stage = PulseStageColors
-    val rows = participants.chunked(if (participants.size > 2) 2 else 1)
-    Column(
-        modifier = modifier.padding(horizontal = 12.dp, vertical = 64.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
+    if (participants.isEmpty()) return
+    val cols = when {
+        participants.size <= 2 -> 1
+        participants.size <= 6 -> 2
+        else -> 3
+    }
+    val rows = participants.chunked(cols)
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         rows.forEach { row ->
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 row.forEach { p ->
-                    val frame = frames[p.pid]?.asImageBitmap()
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(if (rows.size > 1) 170.dp else 240.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(stage.surfaceElevated)
-                            .testTag("conf_tile_${p.pid}"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        // A tile shows its picture when it has one. Whose camera is running is the
-                        // remote's business, not this device's: the gate used to read the *local*
-                        // video flag, so an audio-only joiner watched letter avatars while a peer
-                        // streamed video straight past them.
-                        if (frame != null) {
-                            Image(
-                                bitmap = frame,
-                                contentDescription = "${p.name} video",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            Text(
-                                text = p.name.take(1).uppercase(),
-                                style = MaterialTheme.typography.headlineMedium,
-                                color = if (p.connected) stage.onAccentTint else stage.textTertiary
-                            )
-                        }
-                        Row(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = p.name,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = stage.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (p.muted) {
-                                Spacer(modifier = Modifier.size(5.dp))
-                                Icon(
-                                    imageVector = Icons.Default.MicOff,
-                                    contentDescription = "Muted",
-                                    tint = stage.danger,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                            }
-                            if (p.sharing) {
-                                Spacer(modifier = Modifier.size(5.dp))
-                                Icon(
-                                    imageVector = Icons.Default.ScreenShare,
-                                    contentDescription = "Sharing screen",
-                                    tint = stage.success,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                            }
-                        }
-                        if (!p.connected) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(8.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(stage.warningTint)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text("Ringing", style = MaterialTheme.typography.labelSmall, color = stage.onWarningTint)
-                            }
-                        }
-                    }
+                    ConfTile(
+                        participant = p,
+                        frame = if (selfPid.isNotBlank() && p.pid == selfPid) null else frames[p.pid],
+                        isSelf = selfPid.isNotBlank() && p.pid == selfPid,
+                        selfCameraOn = selfCameraOn,
+                        onAttachSelf = onAttachSelf,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
-                // Keep an odd last row left-aligned instead of stretching one tile.
-                if (row.size == 1 && participants.size > 2) {
+                // A short last row keeps its cells the size they are everywhere else instead of
+                // stretching one tile across the screen.
+                repeat(cols - row.size) {
                     Spacer(modifier = Modifier.weight(1f))
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfTile(
+    participant: CallParticipant,
+    frame: Bitmap?,
+    isSelf: Boolean,
+    selfCameraOn: Boolean,
+    onAttachSelf: (SurfaceHolder?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val stage = PulseStageColors
+    val shape = RoundedCornerShape(14.dp)
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(shape)
+            .background(stage.surfaceElevated)
+            .testTag("conf_tile_${participant.pid}"),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            isSelf && selfCameraOn -> SelfPreview(
+                onAttach = onAttachSelf,
+                modifier = Modifier.matchParentSize()
+            )
+            frame != null -> Image(
+                bitmap = frame.asImageBitmap(),
+                contentDescription = "${participant.name} video",
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop
+            )
+            else -> Text(
+                text = participant.name.take(1).uppercase(),
+                style = MaterialTheme.typography.headlineMedium,
+                color = if (participant.connected) stage.onAccentTint else stage.textTertiary
+            )
+        }
+        // Names go over somebody's picture, so they need a backing of their own.
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(8.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(stage.scrim)
+                .padding(horizontal = 6.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (isSelf) "You" else participant.name,
+                style = MaterialTheme.typography.labelMedium,
+                color = stage.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (participant.muted) {
+                Spacer(modifier = Modifier.size(5.dp))
+                Icon(
+                    imageVector = Icons.Default.MicOff,
+                    contentDescription = "Muted",
+                    tint = stage.danger,
+                    modifier = Modifier.size(13.dp)
+                )
+            }
+            if (participant.sharing) {
+                Spacer(modifier = Modifier.size(5.dp))
+                Icon(
+                    imageVector = Icons.Default.ScreenShare,
+                    contentDescription = "Sharing screen",
+                    tint = stage.success,
+                    modifier = Modifier.size(13.dp)
+                )
+            }
+        }
+        if (!participant.connected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(stage.warningTint)
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text("Ringing", style = MaterialTheme.typography.labelSmall, color = stage.onWarningTint)
             }
         }
     }

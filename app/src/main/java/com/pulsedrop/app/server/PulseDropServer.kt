@@ -2,6 +2,7 @@ package com.pulsedrop.app.server
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.pulsedrop.app.BuildConfig
 import com.pulsedrop.app.R
 import com.pulsedrop.app.discovery.PeerCapabilityRegistry
@@ -720,6 +721,11 @@ class PulseDropServer(
     private var tlsFactory: javax.net.ssl.SSLServerSocketFactory? = null
     private var tlsFactoryHosts: List<String> = emptyList()
 
+    // Why the secure port is not up. Without this the whole browser-call feature fails silently:
+    // the tab polls /api/info, sees tlsUp=false, and waits forever on a "Secure mode" button that
+    // never appears, while the phone's screen says nothing either.
+    @Volatile private var tlsFailure: String? = null
+
     // NanoHTTPD's legacy session carries no secure flag, so the TLS delegate marks its
     // own worker threads and the redirect below asks them instead.
     private val secureOrigin = ThreadLocal.withInitial { false }
@@ -797,10 +803,15 @@ class PulseDropServer(
                     synchronized(this) {
                         tlsHosts = hosts
                         tlsServer = delegate
+                        tlsFailure = null
                     }
                     return@Thread
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    // Logcat under its own tag, and kept for /api/info: a browser locked out of the
+                    // camera has no other way to learn that the phone's https port never bound.
+                    tlsFailure = "${e.javaClass.simpleName}: ${e.message ?: "no message"}"
+                    Log.w("PulseDropTls", "secure port $tlsPort would not start (attempt $attempt)", e)
+
                     try {
                         Thread.sleep(minOf(400L * attempt, 4_000L))
                     } catch (ie: InterruptedException) {
@@ -813,6 +824,9 @@ class PulseDropServer(
 
     /** True once the https counterpart is actually listening. */
     fun tlsUp(): Boolean = tlsServer != null
+
+    /** Why it is not listening, or null when it is (or has not been tried yet). */
+    fun tlsError(): String? = if (tlsServer != null) null else tlsFailure
 
     /**
      * A visitor stuck on plain http has no mic, camera or screen access, so their request is a
@@ -884,11 +898,15 @@ class PulseDropServer(
                 messages[index] = messages[index].copy(deleted = true, text = "")
                 messages[index]
             }
-        } ?: return false
-        listener.onMessageDeleted(found.id)
-        pushWebEvent("deleted") { put("id", found.id); put("threadId", found.threadId ?: "") }
-        if (fromWeb && found.threadId == null) listener.onRoomDeleteFromWeb(found.id)
-        return true
+        }
+        // Ring the doorbell whether or not the rolling room list still holds it. A message older
+        // than SERVER_CHAT_RETENTION is gone from here but still on every screen that rendered it,
+        // and a delete that is never announced is a bubble that keeps its words until the visitor
+        // reloads the tab.
+        listener.onMessageDeleted(id)
+        pushWebEvent("deleted") { put("id", id); put("threadId", found?.threadId ?: "") }
+        if (fromWeb && found != null && found.threadId == null) listener.onRoomDeleteFromWeb(found.id)
+        return found != null
     }
 
     /**
@@ -1114,6 +1132,9 @@ class PulseDropServer(
                 put("secure", secureOrigin.get())
                 put("tlsUp", tlsUp())
                 put("tlsPort", tlsPort)
+                // Empty while the secure port is up. A tab on http that cannot reach it has to say
+                // which of the two failures it is looking at, because the advice is opposite.
+                put("tlsError", tlsError() ?: "")
                 // Lets a client-only phone pick which pairing to sign relay traffic with, and tells
                 // an older build that this host will carry mail for devices with no server.
                 put("deviceId", pairManager?.myDeviceId() ?: "")
@@ -1676,10 +1697,10 @@ class PulseDropServer(
                     newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", "{\"success\":false}")
                 }
             } else if (method == Method.DELETE) {
-                try {
-                    val map = HashMap<String, String>()
-                    session.parseBody(map)
-                    val id = JSONObject(map["postData"] ?: "{}").optString("id")
+                return try {
+                    // NanoHTTPD reads a body only for POST/PUT - a DELETE body is discarded before
+                    // the handler sees it, so the id has to arrive in the query string.
+                    val id = session.parms["id"].orEmpty()
                     val owner = findMessage(id)
                     // A browser may only retract what it wrote; the phone owns the room and reaches
                     // the same marking through the ViewModel instead.

@@ -127,8 +127,19 @@ interface ChatMessageDao {
      */
     @Transaction
     suspend fun strikeOut(id: String) {
+        val row = findById(id)
         markDeleted(id)
         deleteFtsFor(id)
+        // The thread list previews the last message's text, and nothing else will rewrite it until
+        // the next message arrives — so a deleted last message would keep showing its words in the
+        // inbox long after the thread itself went blank.
+        if (row != null) clearPreview(row)
+    }
+
+    private suspend fun clearPreview(message: ChatMessageEntity) {
+        val conversation = findConversation(message.threadId ?: ROOM_KEY) ?: return
+        if (conversation.lastMessageAt != message.timestamp) return
+        updateConversation(conversation.copy(lastText = ""))
     }
 
     @Query("UPDATE chat_message SET deleted = 1, text = '', reaction = NULL WHERE id = :id")
