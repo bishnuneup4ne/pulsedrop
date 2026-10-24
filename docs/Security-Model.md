@@ -27,8 +27,10 @@ from ECDH plus the safety code you read aloud.
 - **A browser that logs in gets a session, not the PIN.** 256 random bits, stored only as a
   SHA-256, expiring after 12 hours, revocable one at a time (`/api/auth/logout`) or all at once
   (regenerating the PIN). Nothing in a tab's `localStorage` is the room secret any more, and the
-  server no longer accepts the PIN in a `?auth=` query string — which is where it was reaching
-  browser history, link markup and `Referer`.
+  server accepts no credential in a query string — not the PIN, and not a session. The requests a
+  browser cannot put a header on carry a **URL ticket** instead: five minutes, one object, minted
+  by an authenticated `POST /api/ticket`, bound to the requesting address, and invalidated by a
+  restart or a PIN change. A URL in history is then a URL, not a way back in.
 - What a session does *not* buy: it is not end-to-end encryption, and it says nothing about who is
   on the network. Anyone who can read the LAN can read the traffic a session authorises, because
   the transport is a documented trade-off (above), not a secret.

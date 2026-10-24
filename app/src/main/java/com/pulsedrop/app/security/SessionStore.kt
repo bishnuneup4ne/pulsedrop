@@ -33,8 +33,8 @@ class SessionStore(private val now: () -> Long = { System.currentTimeMillis() })
     fun issue(): String {
         val bytes = ByteArray(TOKEN_BYTES).also { random.nextBytes(it) }
         // Hex rather than base64: `java.util.Base64` is API 26 and this app serves Android 7 phones,
-        // and `android.util.Base64` would make the store untestable off a device. A hex token is
-        // already URL-safe, which is what the transitional `?auth=` path needs it to be.
+        // and `android.util.Base64` would make the store untestable off a device. Hex also keeps a
+        // token unambiguous anywhere it is compared or logged, which base64's `+/=` do not.
         val token = bytes.toHex()
         synchronized(sessions) {
             pruneLocked()

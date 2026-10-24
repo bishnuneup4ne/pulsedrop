@@ -67,9 +67,11 @@ Consequences that are easy to miss:
    authenticates a phone-to-phone upload with the room PIN, and a phone running an older build has no
    login step with which to obtain a session. This is an app-to-app compatibility allowance, not a
    browser path — no browser is ever handed the PIN.
-4. A **live session token** in `?auth=` — transitional only, until the download-ticket work removes
-   the query string entirely (S-2). **The PIN is no longer accepted here**, which is the part that was
-   leaking into history, link markup and `Referer`.
+4. A **URL ticket** in `?ticket=` — accepted only on the five GET route families a browser cannot
+   put a header on (`/api/events`, `/download/{id}`, `/download-folder`, `/chatfile/{id}`,
+   `/preview/{id}`). It is an HMAC over the exact object, the caller's normalized address and a
+   five-minute expiry, minted by an authenticated `POST /api/ticket`, and it dies on restart or PIN
+   change. No session and no PIN is accepted in a query string (S-2).
 5. A pairing upload proof — `X-Pair-Id` + `X-Pair-Auth` + `Content-Length` verified against
    the shared E2E key — **but only for `uri == "/upload"`** (`pairedSenderIsAuthorized`). Paired
    phones cannot reach any other route without the PIN.
@@ -146,7 +148,8 @@ then 404s.
 | Method | Path | Line | Guard | Scope | Notes |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/threads` | `:1188` | `isAuthorized` `:1189` | all open threads | Returns `id`, `title`, `kind`, `members` for every thread the phone opened to browsers. No per-client filter: any authenticated client sees all `webThreads`. Acceptable only if thread membership is genuinely not confidential between clients — verify against `webThreads` population. |
-| GET | `/api/events` | `:1205` | `isAuthorized` `:1206` | global event stream | SSE. Streams `call`, `pair` and other events to **every** authenticated tab; `pushWebEvent("pair", exceptIp=...)` (`:1477`) shows the code does suppress by IP for some events, so check what `webCall`/`webThreads` payloads leak across tabs. Capped by `maxEventStreams` with oldest evicted (`:1210-1214`) — good. `markActivity()` (`:1207`) keeps the server alive, so this is an anti-idle-stop vector for an unauthenticated… no: it is protected. Fine. |
+| GET | `/api/events` | `:1368` | `isAuthorized` or `events` ticket | global event stream | SSE. `EventSource` cannot send a header, so this route also accepts a ticket (`?ticket=`) minted for the `events` scope by an authenticated caller. Streams `call`, `pair` and other events to **every** authenticated tab; `pushWebEvent("pair", exceptIp=...)` shows the code does suppress by IP for some events, so check what `webCall`/`webThreads` payloads leak across tabs. Capped by `maxEventStreams` with oldest evicted — good. `markActivity()` keeps the server alive, so this is an anti-idle-stop vector for an authenticated tab. |
+| POST | `/api/ticket` | `:1683` | `isAuthorized` | mints one URL ticket | Body capped at 64 KiB from the declared length. The requested scope must be `events` or one of the four object families (`download:`, `folder:`, `chatfile:`, `preview:`), so the route cannot mint a permission it would not spend, and no state-changing route accepts one. The ticket is an HMAC-SHA256 over scope + normalized client address + a five-minute expiry, so nothing is stored; `rotate()` on PIN change kills every ticket in flight. Proved by `ServerSessionAuthTest`. |
 | GET | `/api/call/web` | `:1232` | `isAuthorized` `:1235` | `cid`, state, `incoming`/`self` flags | Ownership is by address: `sameAddr(c.ip, clientIp)` (`:1253`). |
 | POST | `/api/call/web` `action=ring` | `:1269` | `isAuthorized` | starts a call to the phone | Refuses when a call is already up (`:1270`). Accepts `name` verbatim (`:1287`) → shown on the phone's ringing UI. Confirm it is rendered as text, not markup. |
 | POST | `/api/call/web` `action=accept`/`decline` | `:1299` | `isAuthorized` | own call only | Requires `c.outgoing && sameAddr(c.ip, clientIp)` (`:1302`). Correct. |
@@ -162,11 +165,11 @@ then 404s.
 | Method | Path | Line | Object scope | Notes |
 | --- | --- | --- | --- | --- |
 | GET | `/api/files` | `:1618` | `receivedFileIsVisibleTo(file, clientIp)` (`:526`) | The isolation model. Public files are the shared room; directed files are visible to sender and receiver only. This was three hand-written copies of `file.targetClientIp != clientIp && file.uploadedByIp != clientIp` comparing **raw strings**, which locked an owner out of its own file when one side of the record was the dual-stack form (`::ffff:192.168.1.9`) of the other; the predicate folds both through `sameAddr`. `isMine` (`:1630`) is `sameAddr(uploadedByIp, clientIp)` — retract-what-I-sent, not merely "visible to me". Reports `from`/`to` IPs to the reader — LAN addresses of other clients, which the PRD's "who can see what" question should decide on deliberately. |
-| GET | `/download/{id}` | `:1646` | same predicate (`:1655`) | 403 `Access forbidden for this device IP` on mismatch. **Accepts the credential in `?auth=`** — the browser builds it that way (`WebClientHtml.kt`) because a plain anchor cannot set a header; the value there is now a *session*, not the PIN. See §6 S-2. |
-| GET | `/download-folder?path=` | `:1560`, `handleFolderDownload` `:1836` | **derived from the files inside** | `sanitizeRelativePath` + canonical-path check against `WebDrop_Received`. Traversal was never the hole; **ownership** was, and a folder is not a record, so the check is derived: if any `SharedFile` lives under the canonical prefix and is not visible to this client (`:1852-1861`), the whole zip is 403. Two bounds the old code lacked, both reached *before* anything is written: `FOLDER_ZIP_MAX_ENTRIES` = 2 000 and `FOLDER_ZIP_MAX_BYTES` = 512 MiB, tested against a lazy `take(MAX + 1)` walk (`:1868`) so a huge tree costs one entry, not a minute. `Content-Length` is declared, so `folderTooLarge` answers 413 and deletes nothing. The catch no longer reflects `e.message` into the body (`:1902`). |
+| GET | `/download/{id}` | `handleFileDownload` | same predicate (`receivedFileIsVisibleTo`) | 403 `Access forbidden for this device IP` on mismatch. A plain anchor cannot set a header, so the browser passes a ticket scoped `download:<id>` (`?ticket=`), minted over that exact id and the caller's address; a ticket for another id is 401. See §6 S-2. |
+| GET | `/download-folder?path=` | `:1560`, `handleFolderDownload` `:1836` | **derived from the files inside** | `sanitizeRelativePath` + canonical-path check against `WebDrop_Received`. Traversal was never the hole; **ownership** was, and a folder is not a record, so the check is derived: if any `SharedFile` lives under the canonical prefix and is not visible to this client (`:1852-1861`), the whole zip is 403. Two bounds the old code lacked, both reached *before* anything is written: `FOLDER_ZIP_MAX_ENTRIES` = 2 000 and `FOLDER_ZIP_MAX_BYTES` = 512 MiB, tested against a lazy `take(MAX + 1)` walk (`:1868`) so a huge tree costs one entry, not a minute. `Content-Length` is declared, so `folderTooLarge` answers 413 and deletes nothing. A browser link carries a ticket scoped `folder:<path>` rather than a session. The catch no longer reflects `e.message` into the body (`:1902`). |
 | POST | `/upload` | `:1732`, `handleFileUpload` `:2046` | writes under `WebDrop_Received` | Two credentials: PIN, or a pairing upload proof bound to `Content-Length` (`:1117-1127`). `uploadBudgetBytes(cacheDir)` is tested against the declared length before `parseBody` (`:2057`), so a file this phone cannot hold is refused instead of buffered. `?path=` controls the subdirectory (`:2074`). Duplicate names get a timestamp suffix rather than overwrite (`:2086-2093`). Free-space preflight for the destination (`:2096`) — a second, different measurement of a different volume. Paired uploads are decrypted to `.{name}.part` (`:2111`) and plain copies land there too (`:2118`), renamed onto the final name only after the write completes (`:2120`); a refusal therefore leaves nothing that looks like a received file. The failure reply no longer quotes `e.message`, which used to name a path under the app's private storage. |
 | POST | `/chatupload` | `:1737`, `handleChatUpload` `:2245` | attachment store | Same bytes, never enters the hosted file list, and the same cache-volume ceiling (`:2247`). `tempFile.copyTo(target, overwrite = true)` (`:2261`) is the only `overwrite = true` in the file, and it is safe: `target` is prefixed with a freshly generated UUID (`:2260`), so the name it could overwrite is one this request made milliseconds earlier. A second client cannot clobber a first one's attachment. |
-| GET | `/chatfile/{id}` | `:1719` | `chatFileIsVisibleTo` (`:564`) | **Fixed.** This route checked nothing: any client that passed the room gate could read any attachment whose id it knew, including one still unsent in the phone's own composer. The rule is now the one `/api/messages` already applied to *text* — an attachment is readable by the tab that uploaded it, or by anyone who may read a message that carries it (`threadIsVisibleTo`, `:542`: open room, the reader's own address book, the host's book when watching it, a group the phone opened). 404 rather than 403, because a UUID id that answers "real but not yours" tells a probing tab who is chatting. |
+| GET | `/chatfile/{id}` | `:1719` | `chatFileIsVisibleTo` (`:564`) | **Fixed.** This route checked nothing: any client that passed the room gate could read any attachment whose id it knew, including one still unsent in the phone's own composer. The rule is now the one `/api/messages` already applied to *text* — an attachment is readable by the tab that uploaded it, or by anyone who may read a message that carries it (`threadIsVisibleTo`, `:542`: open room, the reader's own address book, the host's book when watching it, a group the phone opened). 404 rather than 403, because a UUID id that answers "real but not yours" tells a probing tab who is chatting. A browser reads it with a ticket scoped `chatfile:<id>`. |
 | GET | `/preview/{id}` | `:1685` | same predicate (`:1689`) | Inline serving: no `Content-Disposition: attachment`, and `serveFileInline` passes the stored `mimeType` straight through. **Correction, on `security/upload-names`:** this row used to claim an uploaded HTML/SVG file is served "with its own declared type", which is not what the code does — the type of a web upload is *guessed from the saved extension* by `guessMimeType`, a table with no HTML and no SVG row, so `page.html` is offered as `application/octet-stream` (`FileNameAdversarialTest`). What is still true: a file whose recorded type is active — a phone-side share whose content URI reports `text/html` — is served inline, with no `X-Content-Type-Options: nosniff` and no CSP anywhere. Range requests are honoured. |
 | POST | `/api/delete` | `:1696` | `receivedFileIsVisibleTo` (`:2355`) + must live under `WebDrop_Received` | Two-layer check: visibility then canonical root prefix. Deleting a file outside the received dir is refused. Correct. |
 | GET | `/api/messages` | `:1755` | `threadIsVisibleTo` (`:542`) | The subtlest scoping in the server, now in **one function** instead of four locals inside the loop — hoisted because `/chatfile/{id}` has to answer the identical question and did not. Depends on `sameAddr`/`normalizeAddr` (IPv4/IPv6 folding) being right; a client that presents as the host address reads the host's private threads. `fromWeb` and `mine` flags decide what the tab may retract. |
@@ -201,8 +204,9 @@ Access-Control-Allow-Headers: Content-Type, X-Pulse-Auth
   `Cache-Control: no-store` on authenticated JSON/file responses (only SSE `:1226` and the
   media leg `:1340` set it), `Strict-Transport-Security` on TLS.
 
-`?auth=` in a URL plus no `Referrer-Policy` is the concrete pairing that makes §6 S-2 worse
-than credential-in-history alone.
+No URL credential outlives its purpose any more: a ticket is minutes long, names one object, and
+belongs to one address. `Referrer-Policy` is still missing (see below), so a ticket-bearing URL may
+still be sent as `Referer`, but it leaks a five-minute permission rather than a room secret.
 
 ---
 
@@ -222,7 +226,7 @@ scope, which had no backlog entry until now).
 | ID | Status | Finding |
 | --- | --- | --- |
 | **S-1** | **Fixed** | Was: the PIN *was* the session token (`pinCode ?: "ok"`), with no expiry, no revocation and no per-session identity. Now: `SessionStore` (`app/security/SessionStore.kt`) mints a 256-bit random session, keeps only its SHA-256, expires it after 12 hours, caps the store at 64 live sessions, revokes singly or all, and clears on PIN rotation (`updatePinSecurity`). In-memory is the policy: a server restart logs every browser out. Proved by `SessionStoreTest` (9) and `ServerSessionAuthTest` (13) — including that the token is not the PIN, that logout kills it, and that rotating the PIN kills every tab. |
-| **S-2** | Half fixed | The server **no longer accepts the PIN in a query string**, which was the leak that mattered: history, the SSE URL, link markup and `Referer` were all carrying a long-lived room secret. A tab that still holds one gets 401, runs its own `lockOut()`, and re-authenticates. Still open: the tab continues to build `?auth=<session>` for anchor-triggered downloads (`WebClientHtml.kt:2097, 2161, 2405, 3042, 3534, 3893`), so a *session* — not the PIN — appears in URLs. Closing that needs short-lived single-use download tickets scoped to one file id and action, which is the next PR. |
+| **S-2** | **Fixed** | Was: the PIN, then a 12-hour session, rode in `?auth=` — into browser history, the SSE URL, link markup and `Referer`. Now no route reads a credential from the query string: `isAuthorized` is header-only, `WebClientHtml.kt` builds plain URLs, and the five GET route families a header cannot reach accept a **ticket** instead (`UrlTicket.kt`, `POST /api/ticket`). A ticket is an HMAC-SHA256 over `scope` + normalized client address + expiry, valid five minutes, minted only by an authenticated caller, and rotated to death on PIN change (`updatePinSecurity`) or restart (in-memory secret). A ticket opens exactly the object in its scope and only from the address that asked; it is rejected on every state-changing route. Proved by `UrlTicketTest` (11) and `ServerSessionAuthTest` (7 new cases: no session in a query string, one-object scope, no ticket on the API, events stream, mint requires a credential, unknown scope refused, PIN change kills in-flight tickets). |
 | **S-1b** | **Fixed** | Was: `authToken = data.token \|\| pin` — the tab cached the typed PIN whenever a response had no token. Now the tab refuses to proceed without a real session and shows an error instead, so nothing in `localStorage` is the PIN. `lockOut()` also posts `/api/auth/logout` first, so closing a tab does not leave a session alive on the phone until expiry. This is item 6 of the backlog's `S-1` fix list, not a separate finding. |
 | **S-8** | Confirmed | `pairedSenderIsAuthorized` covers `/upload` only (`:1009`), so a paired phone with the PIN rotated on the host can send files but cannot pull its own messages or thread list. Product gap worth documenting either way. |
 
@@ -262,7 +266,9 @@ The table-driven suite must, for **each row above**, assert status and body-shap
 1. no credential, PIN required;
 2. wrong credential (once, then repeatedly → expect lockout at 8 distinct guesses);
 3. correct PIN via `X-Pulse-Auth`;
-4. correct PIN via `?auth=` — **and after the S-2 fix, assert this returns 401**;
+4. correct PIN via `?auth=` — **assert 401** (no credential in a query string), and the same for a
+   session token; then a ticket minted by an authenticated caller — 200 on its exact object, 401 on any
+   other, 401 on a state-changing route, and 401 after a PIN change;
 5. PIN disabled (`isPinRequired = false`) — assert which routes a LAN host can then reach;
 6. pairing upload proof against `/upload`, and the *same* proof against `/api/files`,
    `/download/{id}`, `/chatfile/{id}`, `/api/messages` — all must be rejected (`:1009`);
@@ -344,10 +350,11 @@ Where a test contradicts this matrix, the code is wrong until proven otherwise �
 
 - **Keep every route path and response shape** in §§2-4 until a compatibility test proves a
   migration. Old phones and open tabs are in the wild with these strings hard-coded.
-- `?auth=` must be **accepted with a deprecation window or refused outright** — but decide it
-  in one place, and remember `WebClientHtml.kt:3893` (SSE) and `:2097` (downloads) are the two
-  reasons it exists. Ticketed downloads have to work for an `<a href>` and for
-  `EventSource`, neither of which can set a header.
+- `?auth=` was **removed outright** rather than deprecated: a tab holding a session in a URL gets 401,
+  runs its own `lockOut()`, and re-authenticates, which is the intended behaviour for a leaked
+  credential. `WebClientHtml.kt` was updated in the same change so no shipped page sends one. The
+  ticketed replacements cover the two reasons the query string existed — an `<a download>` and
+  `EventSource` — neither of which can set a header.
 - `X-Pulse-Auth` is in the CORS `Allow-Headers` (`:2232`); renaming the credential header
   requires updating both that list and `WebClientHtml.kt:1626`, `:2407`, `:3535`.
 - Do not rename the pairing aliases, preference keys (`localdrop_identity`,
