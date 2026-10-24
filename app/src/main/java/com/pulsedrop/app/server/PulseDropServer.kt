@@ -92,6 +92,34 @@ private const val RELAY_VISITOR_TTL_MS = 90_000L
 // The event stream's ticket scope; the other families are named after the object they open, so a
 // ticket minted for one scope cannot spend it on another.
 private const val EVENT_TICKET_SCOPE = "events"
+private const val MAX_TLS_FAILURE_CHARS = 200
+
+/** Types a browser renders as a document, where script would run if the file were navigated to. */
+private val ACTIVE_DOCUMENT_TYPES = setOf(
+    "text/html",
+    "application/xhtml+xml",
+    "image/svg+xml",
+    "text/xml",
+    "application/xml"
+)
+
+// Anything that looks like an absolute path, including the Android schemes that carry one.
+private val ABSOLUTE_PATH = Regex("""(?:[A-Za-z]:)?(?:/[^\s:,'"]+)+""")
+
+/**
+ * What `/api/info` may say about a secure port that never bound.
+ *
+ * The class name is diagnosis. The message is not a string this app wrote: a keystore or socket
+ * exception can name a file under the app's private storage, and this text is shown in the tab's
+ * toast. Redact path-shaped runs and bound the length; the full exception still reaches Logcat.
+ */
+internal fun describeTlsFailure(e: Exception): String {
+    val kind = e.javaClass.simpleName.ifBlank { "Exception" }
+    val message = (e.message ?: "").replace(ABSOLUTE_PATH, "<path>")
+        .take(MAX_TLS_FAILURE_CHARS)
+        .trim()
+    return if (message.isEmpty()) kind else "$kind: $message"
+}
 
 class PulseDropServer(
     val port: Int,
@@ -949,7 +977,7 @@ class PulseDropServer(
                 } catch (e: Exception) {
                     // Logcat under its own tag, and kept for /api/info: a browser locked out of the
                     // camera has no other way to learn that the phone's https port never bound.
-                    tlsFailure = "${e.javaClass.simpleName}: ${e.message ?: "no message"}"
+                    tlsFailure = describeTlsFailure(e)
                     Log.w("PulseDropTls", "secure port $tlsPort would not start (attempt $attempt)", e)
 
                     try {
@@ -2417,6 +2445,7 @@ class PulseDropServer(
             val input = context.contentResolver.openInputStream(Uri.parse(file.uriString))
                 ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File is no longer available")
             val response = newFixedLengthResponse(Response.Status.OK, mime, input, file.size)
+            addInlineSafety(response, mime)
             addCorsHeaders(response)
             return response
         }
@@ -2425,6 +2454,22 @@ class PulseDropServer(
             return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File is no longer available")
         }
         return serveLocalFile(session, local, mime, asAttachment = false)
+    }
+
+    /**
+     * The file's own bytes are returned with the type the phone recorded, which may be HTML or SVG
+     * from a share. In an `<img>` or `<video>` that is inert, but a browser navigated straight to
+     * `/preview/{id}` would run it on this origin. `sandbox` is the directive that applies to a
+     * document: no script, and a unique origin, so the file cannot read the room it sits in. It is
+     * added only for types a browser would treat as a document, so the PDF viewer and media
+     * elements see exactly the bytes and headers they did before.
+     */
+    private fun addInlineSafety(response: Response, mime: String) {
+        response.addHeader("X-Content-Type-Options", "nosniff")
+        response.addHeader("Referrer-Policy", "no-referrer")
+        if (mime.substringBefore(';').trim().lowercase() in ACTIVE_DOCUMENT_TYPES) {
+            response.addHeader("Content-Security-Policy", "sandbox")
+        }
     }
 
     /** Range-aware body for previews, so video and audio can seek. */
@@ -2452,7 +2497,7 @@ class PulseDropServer(
                 }
                 val response = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, input, to - from + 1)
                 response.addHeader("Content-Range", "bytes $from-$to/$length")
-                if (asAttachment) addDownloadDisposition(response, displayName ?: file.name)
+                if (asAttachment) addDownloadDisposition(response, displayName ?: file.name) else addInlineSafety(response, mime)
                 response.addHeader("Accept-Ranges", "bytes")
                 addCorsHeaders(response)
                 return response
@@ -2460,7 +2505,7 @@ class PulseDropServer(
         }
         val response = newFixedLengthResponse(Response.Status.OK, mime, FileInputStream(file), length)
         response.addHeader("Accept-Ranges", "bytes")
-        if (asAttachment) addDownloadDisposition(response, displayName ?: file.name)
+        if (asAttachment) addDownloadDisposition(response, displayName ?: file.name) else addInlineSafety(response, mime)
         addCorsHeaders(response)
         return response
     }

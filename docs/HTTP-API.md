@@ -273,6 +273,9 @@ A name that sanitizes away to nothing gets a generated one, and the Windows rese
 Two things a name does *not* decide. It does not decide who may read the file — that is the object-scope
 rule above, and `/preview/{id}` answers an upload with the MIME type guessed from the saved extension by a
 table with no HTML row, so an uploaded `page.html` is offered as `application/octet-stream` rather than as
-a document from this origin. And it does not decide who wins when two clients pick the same name: the
-second gets a timestamp suffix if the first has landed, which is an open question, not a policy — see
-backlog `R-2`.
+a document from this origin. A file whose *recorded* type is a document (`text/html`, XHTML, SVG, XML)
+is served with `Content-Security-Policy: sandbox`, so navigating to it directly yields a script-less,
+unique-origin document; every inline response carries `nosniff` and `Referrer-Policy: no-referrer`, and
+media and PDF responses are left unsandboxed so their viewers still work. And a name does not decide who
+wins when two clients pick the same name: the second gets a timestamp suffix if the first has landed,
+which is an open question, not a policy — see backlog `R-2`.
