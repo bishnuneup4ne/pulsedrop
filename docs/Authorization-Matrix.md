@@ -123,7 +123,7 @@ memory: it resets on process death.
 
 | Method | Path | Line | Guard | Scope | Intentional public? | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| OPTIONS | *any* | `:1074` | none | — | yes | 200 + wildcard CORS for paths that do not exist. Reveals route shape when paired with method probing. |
+| OPTIONS | *any* | `:1074` | none | — | yes | 200 with an empty body and no CORS headers. It still answers 200 for paths that do not exist, which is a route-shape oracle when paired with method probing (R-8). |
 | GET | `/`, `/index.html` | `:1096` | none | full page | yes | Redirects to `https://host:tlsPort/` when the TLS listener is up (`:1099-1107`). Page body itself contains no credential; it embeds `deviceName` and a "requiresPin" boolean. |
 | GET | `/fonts/google-sans-{regular,medium,semibold,bold}.ttf` | `:1082`, `WEB_FONTS` `:2255` | none | 4 fixed resources | yes | Whitelisted map, no path interpolation. Cache-Control `public, max-age=604800`. Safe as written. |
 | GET | `/api/info` | `:1118` | none | device metadata | yes — documented | Leaks `deviceName`, `version`, LAN `clientIp`, `deviceId`, TLS status and a `tlsError` string, capability list. **Fixed:** `tlsError` is now `describeTlsFailure(e)` — the exception class, plus a message with path-shaped runs replaced by `<path>` and the whole thing capped at 200 characters; the full exception still goes to Logcat. `deviceId` remains disclosed and is P-3's open half. |
