@@ -573,10 +573,21 @@ class PulseDropServer(
     }
 
     /**
-     * A response to send instead of reading this body, or null if it is small enough. NanoHTTPD
-     * 2.3.1 imposes no ceiling of its own — `parseBody` allocates the whole `Content-Length` as a
-     * Java String for a JSON post — so one large POST is enough to run the phone out of heap.
-     * The header has to be answered before `parseBody`, because afterwards it is too late.
+     * A response to send instead of reading this body, or null if it is small enough.
+     *
+     * This is a real ceiling rather than a polite request, and the reason is worth keeping straight:
+     * NanoHTTPD 2.3.1's `HTTPSession.execute()` hands the session to `serve()` **before** the body is
+     * read, so a route that answers here never touches the socket again. Once `parseBody` runs the
+     * damage is already priced in — a JSON post is copied whole into a Java String, and a multipart
+     * one is written to a file in `cacheDir` and memory-mapped back. Neither can be bounded from
+     * outside: `getTmpBucket()` takes only `TempFile.getName()` and opens its own `RandomAccessFile`,
+     * so wrapping the `TempFile` to count bytes would count nothing. The declared length is the one
+     * number available before the read, which makes answering it early the whole job.
+     *
+     * A client that *under*-declares is not a disk-fill risk for the same reason: `parseBody` reads
+     * exactly `Content-Length` bytes and stops, leaving the rest in the socket to be parsed as the
+     * next pipelined request. That leftover is a request-smuggling question, not a storage one, and
+     * is tracked separately.
      */
     private fun bodyTooLarge(session: IHTTPSession, maxBytes: Long): Response? {
         val declared = session.headers["content-length"]?.trim()?.toLongOrNull() ?: return null
@@ -1260,6 +1271,11 @@ class PulseDropServer(
                 return res
             } else if (method == Method.POST) {
                 return try {
+                    // Sized for a sender name and a boolean, because that is all this route can use.
+                    // It runs before the credential check by design — presence is open to the room —
+                    // so this ceiling is the only thing between an unauthenticated socket and a body
+                    // written to this phone's storage.
+                    bodyTooLarge(session, TYPING_BODY_LIMIT)?.let { return it }
                     val map = HashMap<String, String>()
                     session.parseBody(map)
                     val json = JSONObject(map["postData"] ?: "{}")
@@ -1562,6 +1578,9 @@ class PulseDropServer(
         // API Auth
         if (uri == "/api/auth" && method == Method.POST) {
             return try {
+                // The one route that must answer before any credential exists, so its ceiling is
+                // not a nicety. A login body is a 6-digit PIN; 8 KiB already forgives a great deal.
+                bodyTooLarge(session, LOGIN_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
                 session.parseBody(map)
                 val postData = map["postData"] ?: ""
@@ -1612,6 +1631,10 @@ class PulseDropServer(
         // payloads without a known pairing id or valid ciphertext are rejected.
         if ((uri.startsWith("/api/pair/") || uri.startsWith("/api/call/") || uri.startsWith("/api/relay/")) && method == Method.POST) {
             return try {
+                // Key-gated, not PIN-gated: whoever holds a pairing id — or nobody, for `poll` —
+                // reaches `parseBody`. An SDP offer with a full candidate set is a few KiB, so the
+                // same ceiling as any other JSON route is generous rather than tight.
+                bodyTooLarge(session, JSON_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
                 session.parseBody(map)
                 val json = JSONObject(map["postData"] ?: "{}")
@@ -1741,6 +1764,7 @@ class PulseDropServer(
         // Delete a received file (only files saved by the web upload flow)
         if (uri == "/api/delete" && method == Method.POST) {
             return try {
+                bodyTooLarge(session, JSON_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
                 session.parseBody(map)
                 val json = JSONObject(map["postData"] ?: "{}")
@@ -1794,6 +1818,7 @@ class PulseDropServer(
                 return res
             } else if (method == Method.POST) {
                 return try {
+                    bodyTooLarge(session, JSON_BODY_LIMIT)?.let { return it }
                     val map = HashMap<String, String>()
                     session.parseBody(map)
                     val postData = map["postData"] ?: ""
@@ -2025,6 +2050,11 @@ class PulseDropServer(
         var finalFile: File? = null
 
         return try {
+            // The body is buffered whole in `cacheDir` by `parseBody`, so this is the last moment the
+            // phone can decline it cheaply. `hasFreeSpaceFor` below guards the *destination*; this
+            // guards the temporary copy, which is a second full-size file on a different volume and
+            // the one that was never bounded at all.
+            bodyTooLarge(session, uploadBudgetBytes(context.cacheDir))?.let { return it }
             val filesMap = HashMap<String, String>()
             session.parseBody(filesMap)
 
@@ -2071,19 +2101,29 @@ class PulseDropServer(
                     )
                 }
 
-                if (pairCrypt && pairedSender != null) {
-                    val pm = pairManager
-                    val ok = pm != null && pm.decryptUpload(pairId!!, tempFile, finalFile)
-                    tempFile.delete()
-                    if (!ok) {
-                        finalFile?.delete()
-                        return jsonResponse(false, "error" to "Encrypted upload failed - unknown pairing")
+                // Land the bytes under a name the received listing cannot match, then rename. Copied
+                // straight onto the final name, an interrupted transfer leaves a file that looks
+                // complete and is half empty — and nothing in this folder says which one it is.
+                val partFile = File(finalFile.parentFile, ".${finalFile.name}.part")
+                try {
+                    if (pairCrypt && pairedSender != null) {
+                        val pm = pairManager
+                        val ok = pm != null && pm.decryptUpload(pairId!!, tempFile, partFile)
+                        if (!ok) {
+                            return jsonResponse(false, "error" to "Encrypted upload failed - unknown pairing")
+                        }
+                    } else if (pairCrypt) {
+                        return jsonResponse(false, "error" to "Unknown pairing id")
+                    } else {
+                        tempFile.copyTo(partFile, overwrite = true)
                     }
-                } else if (pairCrypt) {
-                    tempFile.delete()
-                    return jsonResponse(false, "error" to "Unknown pairing id")
-                } else {
-                    tempFile.copyTo(finalFile, overwrite = true)
+                    if (!partFile.renameTo(finalFile)) {
+                        // Same directory, so this only fails when the two names are on different
+                        // volumes — the copy is the fallback, not a second chance at atomicity.
+                        partFile.copyTo(finalFile, overwrite = true)
+                    }
+                } finally {
+                    partFile.delete()
                     tempFile.delete()
                 }
                 break
@@ -2184,12 +2224,16 @@ class PulseDropServer(
             // delete it instead of leaking storage on every error.
             try { finalFile?.delete() } catch (ignored: Exception) { }
             listener.onTransferFailed(transferId, "Upload", e.message ?: "Failed", TransferDirection.INCOMING)
+            // The wire gets a fixed sentence rather than `e.message`: an exception string from this
+            // depth is a path, and a path is a small map of the device handed to whoever sent the
+            // body. The phone's own UI still gets the real reason through the listener above.
+            android.util.Log.w("PulseDropServer", "Upload failed", e)
             val res = newFixedLengthResponse(
                 Response.Status.INTERNAL_ERROR,
                 "application/json",
                 JSONObject().apply {
                     put("success", false)
-                    put("error", e.message ?: "Upload failed")
+                    put("error", "Upload failed")
                 }.toString()
             )
             addCorsHeaders(res)
@@ -2200,6 +2244,7 @@ class PulseDropServer(
     /** Browser-side chat upload: identical bytes, but registered only as a chat attachment. */
     private fun handleChatUpload(session: IHTTPSession): Response {
         return try {
+            bodyTooLarge(session, uploadBudgetBytes(context.cacheDir))?.let { return it }
             val filesMap = HashMap<String, String>()
             session.parseBody(filesMap)
             val entry = filesMap.entries.firstOrNull { it.key != "postData" }
@@ -2229,7 +2274,10 @@ class PulseDropServer(
             markActivity()
             jsonResponse(true, "attachment" to attachmentJson(attachment))
         } catch (e: Exception) {
-            jsonResponse(false, "error" to (e.message ?: "Upload failed"))
+            // As on /upload: no client needs an exception string that contains a path, and the
+            // declared-length ceiling above already answered the one failure worth naming.
+            android.util.Log.w("PulseDropServer", "Chat attachment upload failed", e)
+            jsonResponse(false, "error" to "Upload failed")
         }
     }
 
@@ -2409,11 +2457,19 @@ class PulseDropServer(
         const val RECEIVED_DIR_NAME = "WebDrop_Received"
 
         /**
-         * Ceiling for a JSON POST on the signaling routes. The largest legitimate one carries a
-         * device name and a call id, so this is orders of magnitude above what the client sends;
-         * it exists because `parseBody` will otherwise allocate whatever `Content-Length` claims.
+         * Ceiling for a JSON POST. The largest legitimate one carries a device name, a call id and
+         * an SDP offer, so this is orders of magnitude above what any client sends; it exists because
+         * `parseBody` reads whatever `Content-Length` claims and hands the result over as a Java
+         * String. Covers every JSON route, including the pairing and relay ones that answer to a
+         * key rather than a PIN.
          */
         private const val JSON_BODY_LIMIT = 64L * 1024
+
+        /** Ceiling for `/api/auth`, whose whole body is `{"pin":"123456"}`. */
+        private const val LOGIN_BODY_LIMIT = 8L * 1024
+
+        /** Ceiling for one typing-presence ping: a sender name and a boolean. */
+        private const val TYPING_BODY_LIMIT = 4L * 1024
 
         /** Ceiling for one ~10 Hz batch of base64 media frames on `/api/webcall/up`. */
         private const val WEB_CALL_BODY_LIMIT = 256L * 1024

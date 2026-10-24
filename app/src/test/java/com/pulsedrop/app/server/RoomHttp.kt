@@ -23,6 +23,10 @@ class RoomHttp(private val port: Int) {
 
     class Answer(val status: Int, val body: String, val headers: String)
 
+    /** Body bytes the last [streamBody] got the server to accept; meaningless before one. */
+    var streamedBytes: Long = 0L
+        private set
+
     fun call(
         method: String,
         path: String,
@@ -57,7 +61,8 @@ class RoomHttp(private val port: Int) {
     fun postMultipart(
         path: String,
         parts: Map<String, String>,
-        token: String
+        token: String,
+        extraHeaders: Map<String, String> = emptyMap()
     ): Answer {
         val boundary = "----pulsedroptestboundary"
         val body = StringBuilder()
@@ -73,9 +78,59 @@ class RoomHttp(private val port: Int) {
             mapOf(
                 "Content-Type" to "multipart/form-data; boundary=$boundary",
                 "X-Pulse-Auth" to token
-            ),
+            ) + extraHeaders,
             body.toString()
         )
+    }
+
+    /**
+     * A multipart body written in chunks rather than built in memory, because the only interesting
+     * size for an upload ceiling test is one the phone cannot hold — and holding it in a `String`
+     * first would test the test's heap instead of the server's.
+     *
+     * Writes stop on the first `IOException`: once the server has refused, the socket closing under
+     * the client *is* the outcome, and reading the reply is what asserts it.
+     */
+    fun streamBody(path: String, token: String, totalBytes: Long, fieldName: String = "big.bin"): Answer {        val boundary = "----pulsedropstreamboundary"
+        val header = ("--$boundary\r\n" +
+            "Content-Disposition: form-data; name=\"$fieldName\"; filename=\"$fieldName\"\r\n" +
+            "Content-Type: application/octet-stream\r\n\r\n").toByteArray()
+        val trailer = "\r\n--$boundary--\r\n".toByteArray()
+        val request = StringBuilder()
+            .append("POST $path HTTP/1.1\r\n")
+            .append("Host: 127.0.0.1:$port\r\n")
+            .append("Content-Type: multipart/form-data; boundary=$boundary\r\n")
+            .append("X-Pulse-Auth: $token\r\n")
+            .append("Content-Length: ${header.size + totalBytes + trailer.size}\r\n")
+            .append("Connection: close\r\n\r\n")
+            .toString().toByteArray()
+        val chunk = ByteArray(64 * 1024)
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 60_000
+            val out = socket.getOutputStream()
+            out.write(request)
+            out.write(header)
+            out.flush()
+            var sent = 0L
+            streamedBytes = 0L
+            try {
+                while (sent < totalBytes) {
+                    val n = minOf(chunk.size.toLong(), totalBytes - sent).toInt()
+                    out.write(chunk, 0, n)
+                    out.flush()
+                    sent += n
+                }
+                out.write(trailer)
+                out.flush()
+            } catch (e: IOException) {
+                // The server stopped reading. Which is the point.
+            }
+            streamedBytes = sent
+            val text = runCatching { socket.getInputStream().reader().readText() }.getOrDefault("")
+            val statusLine = text.lineSequence().firstOrNull().orEmpty()
+            val code = statusLine.split(" ").getOrNull(1)?.toIntOrNull() ?: -1
+            return Answer(code, text.substringAfter("\r\n\r\n", ""), text.substringBefore("\r\n\r\n"))
+        }
     }
 
     /** The login a browser performs, returning whatever the phone gave it. */
