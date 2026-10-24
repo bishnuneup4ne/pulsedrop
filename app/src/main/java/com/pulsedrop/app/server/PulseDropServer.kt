@@ -647,7 +647,6 @@ class PulseDropServer(
             Response.Status.PAYLOAD_TOO_LARGE, MIME_PLAINTEXT, "Request body too large"
         )
         res.addHeader("Cache-Control", "no-store")
-        addCorsHeaders(res)
         return res
     }
 
@@ -1232,7 +1231,6 @@ class PulseDropServer(
             "application/json",
             "{\"error\":\"Unauthorized. PIN required.\"}"
         )
-        addCorsHeaders(res)
         return res
     }
 
@@ -1244,7 +1242,6 @@ class PulseDropServer(
         )
         res.addHeader("Retry-After", "1")
         res.addHeader("Cache-Control", "no-store")
-        addCorsHeaders(res)
         return res
     }
 
@@ -1289,7 +1286,17 @@ class PulseDropServer(
         synchronized(pinAttempts) { pinAttempts.remove(clientIp) }
     }
 
-    override fun serve(session: IHTTPSession): Response {
+    override fun serve(session: IHTTPSession): Response =
+        dispatch(session).also { response ->
+            // Every reply, including 401, 404 and the inline previews: a page served by this phone
+            // must not have its bytes re-typed into something executable, and following a link off
+            // this origin must not tell the next host which LAN address it came from. Inline views
+            // below set the same values; NanoHTTPD replaces a header by name, so this stays one.
+            response.addHeader("X-Content-Type-Options", "nosniff")
+            response.addHeader("Referrer-Policy", "no-referrer")
+        }
+
+    private fun dispatch(session: IHTTPSession): Response {
         val uri = session.uri
         val method = session.method
         val requestIp = session.remoteIpAddress ?: "127.0.0.1"
@@ -1316,7 +1323,6 @@ class PulseDropServer(
 
         if (method == Method.OPTIONS) {
             val res = newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "")
-            addCorsHeaders(res)
             return res
         }
 
@@ -1341,7 +1347,6 @@ class PulseDropServer(
                 bytes.size.toLong()
             )
             res.addHeader("Cache-Control", "public, max-age=604800")
-            addCorsHeaders(res)
             return res
         }
 
@@ -1355,7 +1360,6 @@ class PulseDropServer(
                     ?: NetworkUtils.getLocalIpAddress()
                 val res = newFixedLengthResponse(Response.Status.REDIRECT, "text/plain", "")
                 res.addHeader("Location", "https://$host:$tlsPort/")
-                addCorsHeaders(res)
                 return res
             }
             // Landing here means the secure port is not up yet; a fresh page load is a good
@@ -1363,7 +1367,6 @@ class PulseDropServer(
             if (!secureOrigin.get()) retryTls()
             val html = WebClientHtml.getHtml(deviceName, isPinRequired && !pinCode.isNullOrBlank())
             val res = newFixedLengthResponse(Response.Status.OK, "text/html; charset=UTF-8", html)
-            addCorsHeaders(res)
             return res
         }
 
@@ -1398,7 +1401,6 @@ class PulseDropServer(
                 put("caps", JSONArray(PeerCapabilityRegistry.localCaps()))
             }
             val res = newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
-            addCorsHeaders(res)
             return res
         }
 
@@ -1413,7 +1415,6 @@ class PulseDropServer(
                         .distinct()
                 }
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", JSONArray(active).toString())
-                addCorsHeaders(res)
                 return res
             } else if (method == Method.POST) {
                 // A tab pings every 2 s while typing, so anything faster is a loop, not a typist.
@@ -1441,7 +1442,6 @@ class PulseDropServer(
                         }
                     }
                     val res = newFixedLengthResponse(Response.Status.OK, "application/json", "{\"success\":true}")
-                    addCorsHeaders(res)
                     res
                 } catch (e: Exception) {
                     newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", "{\"success\":false}")
@@ -1461,7 +1461,6 @@ class PulseDropServer(
                 })
             }
             val res = newFixedLengthResponse(Response.Status.OK, "application/json", arr.toString())
-            addCorsHeaders(res)
             return res
         }
 
@@ -1488,7 +1487,6 @@ class PulseDropServer(
             val res = newChunkedResponse(Response.Status.OK, "text/event-stream", EventBody(stream))
             res.addHeader("Cache-Control", "no-store")
             res.addHeader("X-Accel-Buffering", "no")
-            addCorsHeaders(res)
             return res
         }
 
@@ -1520,7 +1518,6 @@ class PulseDropServer(
                     }
                 }
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
-                addCorsHeaders(res)
                 return res
             }
             if (method == Method.POST) {
@@ -1622,7 +1619,6 @@ class PulseDropServer(
                 Response.Status.OK, "application/octet-stream", WebMediaStream(cid)
             )
             res.addHeader("Cache-Control", "no-store")
-            addCorsHeaders(res)
             return res
         }
         if (uri == "/api/webcall/up" && method == Method.POST) {
@@ -1716,7 +1712,6 @@ class PulseDropServer(
                     .thenByDescending { it.optLong("lastSeen") }
             ).forEach { arr.put(it) }
             val res = newFixedLengthResponse(Response.Status.OK, "application/json", arr.toString())
-            addCorsHeaders(res)
             return res
         }
 
@@ -1749,11 +1744,9 @@ class PulseDropServer(
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", resp.toString())
                 // A minted session must not sit in a cache or a shared proxy.
                 res.addHeader("Cache-Control", "no-store")
-                addCorsHeaders(res)
                 res
             } catch (e: Exception) {
                 val res = newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", "{\"success\":false}")
-                addCorsHeaders(res)
                 res
             }
         }
@@ -1768,7 +1761,6 @@ class PulseDropServer(
                 JSONObject().put("success", true).put("revoked", revoked).toString()
             )
             res.addHeader("Cache-Control", "no-store")
-            addCorsHeaders(res)
             return res
         }
 
@@ -1838,11 +1830,9 @@ class PulseDropServer(
                     else -> JSONObject().put("success", false)
                 }
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", result.toString())
-                addCorsHeaders(res)
                 res
             } catch (e: Exception) {
                 val res = newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", "{\"success\":false}")
-                addCorsHeaders(res)
                 res
             }
         }
@@ -1871,7 +1861,6 @@ class PulseDropServer(
                 }
             }
             val res = newFixedLengthResponse(Response.Status.OK, "application/json", jsonArr.toString())
-            addCorsHeaders(res)
             return res
         }
 
@@ -1984,7 +1973,6 @@ class PulseDropServer(
                     }
                 }
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", arr.toString())
-                addCorsHeaders(res)
                 return res
             } else if (method == Method.POST) {
                 return try {
@@ -2027,7 +2015,6 @@ class PulseDropServer(
                         )
                     }
                     val res = newFixedLengthResponse(Response.Status.OK, "application/json", "{\"success\":true}")
-                    addCorsHeaders(res)
                     res
                 } catch (e: Exception) {
                     newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", "{\"success\":false}")
@@ -2044,14 +2031,12 @@ class PulseDropServer(
                         val res = newFixedLengthResponse(
                             Response.Status.FORBIDDEN, "application/json", "{\"success\":false}"
                         )
-                        addCorsHeaders(res)
                         return res
                     }
                     markMessageDeleted(id, fromWeb = true)
                     val res = newFixedLengthResponse(
                         Response.Status.OK, "application/json", "{\"success\":true}"
                     )
-                    addCorsHeaders(res)
                     res
                 } catch (e: Exception) {
                     newFixedLengthResponse(
@@ -2062,7 +2047,6 @@ class PulseDropServer(
         }
 
         val res = newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
-        addCorsHeaders(res)
         return res
     }
 
@@ -2128,7 +2112,6 @@ class PulseDropServer(
             val encodedName = java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20")
             val response = newFixedLengthResponse(Response.Status.OK, "application/zip", stream, size)
             response.addHeader("Content-Disposition", "attachment; filename=\"$name\"; filename*=UTF-8''$encodedName")
-            addCorsHeaders(response)
             response
         } catch (e: Exception) {
             zipFile?.delete()
@@ -2141,7 +2124,6 @@ class PulseDropServer(
     private fun folderTooLarge(reason: String): Response {
         val res = newFixedLengthResponse(Response.Status.PAYLOAD_TOO_LARGE, MIME_PLAINTEXT, reason)
         res.addHeader("Cache-Control", "no-store")
-        addCorsHeaders(res)
         return res
     }
 
@@ -2213,7 +2195,6 @@ class PulseDropServer(
             val fallback = file.name.replace(Regex("[^A-Za-z0-9 ._\\-()]"), "_")
             response.addHeader("Content-Disposition", "attachment; filename=\"$fallback\"; filename*=UTF-8''$encodedName")
             response.addHeader("Accept-Ranges", "bytes")
-            addCorsHeaders(response)
             response
         } catch (e: Exception) {
             listener.onTransferFailed(transferId, file.name, e.message ?: "Download error", TransferDirection.OUTGOING)
@@ -2359,7 +2340,6 @@ class PulseDropServer(
                             put("size", fileSize)
                         }.toString()
                     )
-                    addCorsHeaders(res)
                     return res
                 }
 
@@ -2400,7 +2380,6 @@ class PulseDropServer(
                         put("size", fileSize)
                     }.toString()
                 )
-                addCorsHeaders(res)
                 res
             } else {
                 newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", "{\"success\":false,\"error\":\"No file found in request\"}")
@@ -2422,7 +2401,6 @@ class PulseDropServer(
                     put("error", "Upload failed")
                 }.toString()
             )
-            addCorsHeaders(res)
             res
         }
     }
@@ -2490,7 +2468,6 @@ class PulseDropServer(
                 ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File is no longer available")
             val response = newFixedLengthResponse(Response.Status.OK, mime, input, file.size)
             addInlineSafety(response, mime)
-            addCorsHeaders(response)
             return response
         }
         val local = File(file.uriString)
@@ -2543,14 +2520,12 @@ class PulseDropServer(
                 response.addHeader("Content-Range", "bytes $from-$to/$length")
                 if (asAttachment) addDownloadDisposition(response, displayName ?: file.name) else addInlineSafety(response, mime)
                 response.addHeader("Accept-Ranges", "bytes")
-                addCorsHeaders(response)
                 return response
             }
         }
         val response = newFixedLengthResponse(Response.Status.OK, mime, FileInputStream(file), length)
         response.addHeader("Accept-Ranges", "bytes")
         if (asAttachment) addDownloadDisposition(response, displayName ?: file.name) else addInlineSafety(response, mime)
-        addCorsHeaders(response)
         return response
     }
 
@@ -2634,7 +2609,6 @@ class PulseDropServer(
             "application/json",
             obj.toString()
         )
-        addCorsHeaders(res)
         return res
     }
 
@@ -2653,12 +2627,6 @@ class PulseDropServer(
         }
         synchronized(sharedFiles) { sharedFiles.remove(file) }
         return jsonResponse(true, "name" to file.name)
-    }
-
-    private fun addCorsHeaders(response: Response) {
-        response.addHeader("Access-Control-Allow-Origin", "*")
-        response.addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        response.addHeader("Access-Control-Allow-Headers", "Content-Type, X-Pulse-Auth")
     }
 
     companion object {

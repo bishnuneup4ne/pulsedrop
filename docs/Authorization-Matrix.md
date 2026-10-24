@@ -181,7 +181,7 @@ without a room credential and falls through to the final 404 with one.
 | DELETE | `/api/messages?id=` | `:1699` | `sameAddr(owner.clientIp, clientIp)` (`:1707`) | 403 on mismatch. Id must be in the query string because NanoHTTPD discards a DELETE body (`:1701-1703`) — a legitimate exception to the "no meaningful data in query strings" rule, but note that `id` is a message id, not a credential. |
 
 Anything else that no rule matches takes the default rule — prefix `*`, `SESSION` for every verb —
-so it is refused without a room credential and answers 404 with CORS headers once authenticated.
+so it is refused without a room credential and answers 404 once authenticated.
 `AuthorizationPolicyTest` pins that default, because a newly added route inheriting `SESSION` is
 what keeps "forgot to add a rule" from meaning "public".
 
@@ -189,8 +189,17 @@ what keeps "forgot to add a rule" from meaning "public".
 
 ## 5. Response headers on protected routes
 
-`addCorsHeaders()` (`:2229`) is applied to essentially every response, including
-`unauthorized()` (`:1004`) and 404 (`:1729`):
+No route sends CORS headers any more. `serve()` is a thin wrapper over `dispatch()` that adds, to
+every answer:
+
+```
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+```
+
+The pair is applied once at the boundary — after a route has built its reply, before NanoHTTPD writes
+it — so it covers the page, JSON, 401, 404, fonts, inline previews and the SSE stream without any
+route having to remember. The old wildcard:
 
 ```
 Access-Control-Allow-Origin: *
@@ -198,22 +207,20 @@ Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS
 Access-Control-Allow-Headers: Content-Type, X-Pulse-Auth
 ```
 
-- `*` with a **header-borne credential** is not the classic ambient-credential CSRF (no
-  cookies are used anywhere, so no cross-site automatic auth). It does mean **any page open in
-  any browser on the LAN can read every `PUBLIC` route from JavaScript**, and — with the PIN
-  disabled — every `SESSION` route too. That is the real exposure: a phishing page on a
-  victim's laptop can call `/api/peers`, `/api/messages`, `/download/{id}` silently.
-- `X-Pulse-Client` is sent by the browser client (`WebClientHtml.kt:1627`) but is **not** in
-  `Allow-Headers`, so the same code fails from any cross-origin context. The allow-list is out
-  of sync with the client. Either a latent bug or an accidental partial mitigation — decide
-  which on purpose.
-- Missing everywhere: `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy`,
-  `Cache-Control: no-store` on authenticated JSON/file responses (only SSE `:1226` and the
-  media leg `:1340` set it), `Strict-Transport-Security` on TLS.
+is gone rather than narrowed. Nothing in this repo is a cross-origin client: the page is served from
+the same origin, every URL in it is relative, and `X-Pulse-Client` is a request header the tab sends
+to its own origin. So `*` granted a capability no shipped client used, to any web page the user
+happened to have open — including the 401 that confirms a room exists. A future cross-origin
+integration must opt in deliberately instead of inheriting the grant.
+
+Still missing: `Content-Security-Policy` (the page is inline CSS/JS and blob media, so this needs a
+browser pass first, not a guessed header), `Cache-Control: no-store` on authenticated JSON (only SSE,
+the media leg, login and a few routes set it), and `Strict-Transport-Security` on the TLS listener.
+Backlog R-6 carries the remainder.
 
 No URL credential outlives its purpose any more: a ticket is minutes long, names one object, and
-belongs to one address. `Referrer-Policy` is still missing (see below), so a ticket-bearing URL may
-still be sent as `Referer`, but it leaks a five-minute permission rather than a room secret.
+belongs to one address. `Referrer-Policy: no-referrer` now applies to the whole origin, so a
+ticket-bearing URL is not sent as `Referer` when a link leaves the page.
 
 ---
 
@@ -261,7 +268,7 @@ scope, which had no backlog entry until now).
 | ID | Status | Finding |
 | --- | --- | --- |
 | **H-1** | **Fixed** | `/preview/` inlined the stored MIME type with no `nosniff` and no CSP. An uploaded `.html` was already inert (the MIME guess has no HTML row), but a phone-side share reporting `text/html` or `image/svg+xml` could run on this origin if the URL was opened directly. Inline responses now carry `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and add `Content-Security-Policy: sandbox` when the recorded type is a document (`text/html`, XHTML, SVG, XML) — so media and PDF viewers are untouched while a direct navigation is a script-less, unique-origin document. Range responses carry the same headers. Proved by `FileNameAdversarialTest`. |
-| **H-2** | Confirmed | `Access-Control-Allow-Origin: *` on every response including 401/404 (`:2229`), with no `Referrer-Policy` and no `Cache-Control: no-store` on private JSON. |
+| **H-2** | **Fixed** | Was: `Access-Control-Allow-Origin: *` on every response including 401/404, no `Referrer-Policy`, no `Cache-Control: no-store` on private JSON. Now: the wildcard and both companion `Allow-*` headers are removed; `serve()` adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to every answer. `Cache-Control: no-store` on all authenticated JSON is still open in R-6. Proved by `ResponseHardeningTest`. |
 | **H-3** | **Fixed (audit)** | Every caller-supplied string — `sender`, `action=ring`'s `name`, device names, filenames, thread titles, `X-Pulse-Client`, message bodies — reaches the DOM through `textContent` / `createTextNode` / input values. The 15 `innerHTML` assignments all receive SVG constants defined in the same file; the one helper that takes markup as an argument is only called with `FE_*` constants. No `eval`, `new Function`, `document.write`, `insertAdjacentHTML`, `outerHTML`, `srcdoc` or `javascript:` sink exists. `WebClientSafetyTest` pins all four properties against the served page, and the server-side `deviceName` is escaped by `esc()` at all three insertion points. |
 
 ---
@@ -344,6 +351,12 @@ The table-driven suite must, for **each row above**, assert status and body-shap
     bytes. That closes the route's own half. It does not close the claim: this server sends **no CSP**
     (`R-6`) and the shipped tab builds its file list from `/api/files` names, so whether a name can
     execute is a question about `WebClientHtml.kt`'s rendering (`R-5`), not about this response.
+15. every response shape, not just data routes: `GET /`, a 401, a 404, a font, an `OPTIONS` preflight
+    and a successful mutation — each must carry `X-Content-Type-Options: nosniff` and
+    `Referrer-Policy: no-referrer`, and none may carry an `Access-Control-Allow-*` header.
+    *Written:* `ResponseHardeningTest` asserts exactly that, once per shape, against the wire. The
+    font case also pins that the global pair did not displace `Cache-Control: public, max-age=…`,
+    since NanoHTTPD stores headers by name.
 15. session lifecycle (after S-1): issue, use, expire, logout, PIN change, server restart,
     revoked-token reuse;
 16. SSE: `/api/events` from two tabs, assert an event meant for one does not disclose the
