@@ -145,7 +145,7 @@ then 404s.
 | POST | `/api/call/web` `action=accept`/`decline` | `:1299` | `isAuthorized` | own call only | Requires `c.outgoing && sameAddr(c.ip, clientIp)` (`:1302`). Correct. |
 | POST | `/api/call/web` `action=end` | `:1369` | `isAuthorized` + own call | **Fixed.** The handler now refuses when there is no live call, when the `cid` is present but not the running one, and when `sameAddr(c.ip, clientIp)` fails (`:1384`) — the same three questions accept/decline already asked. A blank `cid` no longer means "whichever call is up", and ending a call that is not running answers a failure instead of a hollow `success`. |
 | GET | `/api/webcall/down` | `:1404` | `isAuthorized` `:1405` + own call | `:1408` rejects a wrong/absent `cid`; the cid alone was never enough, because `GET /api/call/web` publishes it to every authorized tab. `sameAddr(call.ip, clientIp)` (`:1415`) now binds the media leg to the tab that owns the call. Chunked media body. |
-| POST | `/api/webcall/up` | `:1425` | `isAuthorized` `:1426` + own call | Base64 frame batch decoded and handed to the engine. `sameAddr(call.ip, clientIp)` (`:1443`) refuses a frame batch from a tab that does not own the call, and `bodyTooLarge(session, WEB_CALL_BODY_LIMIT)` (`:1431`, 256 KiB) answers 413 from the declared `Content-Length` **before** `parseBody` buffers it — NanoHTTPD 2.3.1 has no ceiling of its own. See §6 R-1. |
+| POST | `/api/webcall/up` | `:1481` | `isAuthorized` `:1482` + own call | Base64 frame batch decoded and handed to the engine. `sameAddr(call.ip, clientIp)` (`:1499`) refuses a frame batch from a tab that does not own the call, and `bodyTooLarge(session, WEB_CALL_BODY_LIMIT)` (`:1487`, 256 KiB) answers 413 from the declared `Content-Length` **before** `parseBody` reads it — NanoHTTPD 2.3.1 has no ceiling of its own, and `serve()` gets the headers with the body still in the socket. See §6 R-1. |
 | GET | `/api/peers` | `:1372` | `isAuthorized` `:1373` | whole-LAN peer table | Exposes every client IP, name, last-seen, file count and byte total (`:1375-1430`). This is a network map and is the most sensitive tier B response. It is fine *if* the PIN is on; with PIN disabled it is free reconnaissance for any host on the subnet. |
 
 ---
@@ -157,8 +157,8 @@ then 404s.
 | GET | `/api/files` | `:1618` | `receivedFileIsVisibleTo(file, clientIp)` (`:526`) | The isolation model. Public files are the shared room; directed files are visible to sender and receiver only. This was three hand-written copies of `file.targetClientIp != clientIp && file.uploadedByIp != clientIp` comparing **raw strings**, which locked an owner out of its own file when one side of the record was the dual-stack form (`::ffff:192.168.1.9`) of the other; the predicate folds both through `sameAddr`. `isMine` (`:1630`) is `sameAddr(uploadedByIp, clientIp)` — retract-what-I-sent, not merely "visible to me". Reports `from`/`to` IPs to the reader — LAN addresses of other clients, which the PRD's "who can see what" question should decide on deliberately. |
 | GET | `/download/{id}` | `:1646` | same predicate (`:1655`) | 403 `Access forbidden for this device IP` on mismatch. **Accepts the credential in `?auth=`** — the browser builds it that way (`WebClientHtml.kt`) because a plain anchor cannot set a header; the value there is now a *session*, not the PIN. See §6 S-2. |
 | GET | `/download-folder?path=` | `:1560`, `handleFolderDownload` `:1836` | **derived from the files inside** | `sanitizeRelativePath` + canonical-path check against `WebDrop_Received`. Traversal was never the hole; **ownership** was, and a folder is not a record, so the check is derived: if any `SharedFile` lives under the canonical prefix and is not visible to this client (`:1852-1861`), the whole zip is 403. Two bounds the old code lacked, both reached *before* anything is written: `FOLDER_ZIP_MAX_ENTRIES` = 2 000 and `FOLDER_ZIP_MAX_BYTES` = 512 MiB, tested against a lazy `take(MAX + 1)` walk (`:1868`) so a huge tree costs one entry, not a minute. `Content-Length` is declared, so `folderTooLarge` answers 413 and deletes nothing. The catch no longer reflects `e.message` into the body (`:1902`). |
-| POST | `/upload` | `:1566` | writes under `WebDrop_Received` | Two credentials: PIN, or a pairing upload proof bound to `Content-Length` (`:1008-1016`). `?path=` controls the subdirectory (`:1873`). Duplicate names get a timestamp suffix rather than overwrite (`:1886-1893`). Free-space preflight (`:1895`). Paired uploads are decrypted from the temp file (`:1905`). |
-| POST | `/chatupload` | `:1571` | attachment store | Same bytes, never enters the hosted file list. `tempFile.copyTo(target, overwrite = true)` (`:2045`) — the only `overwrite = true` in the file; check where `target` comes from and whether a second client can clobber a first one's attachment. |
+| POST | `/upload` | `:1732`, `handleFileUpload` `:2046` | writes under `WebDrop_Received` | Two credentials: PIN, or a pairing upload proof bound to `Content-Length` (`:1117-1127`). `uploadBudgetBytes(cacheDir)` is tested against the declared length before `parseBody` (`:2057`), so a file this phone cannot hold is refused instead of buffered. `?path=` controls the subdirectory (`:2074`). Duplicate names get a timestamp suffix rather than overwrite (`:2086-2093`). Free-space preflight for the destination (`:2096`) — a second, different measurement of a different volume. Paired uploads are decrypted to `.{name}.part` (`:2111`) and plain copies land there too (`:2118`), renamed onto the final name only after the write completes (`:2120`); a refusal therefore leaves nothing that looks like a received file. The failure reply no longer quotes `e.message`, which used to name a path under the app's private storage. |
+| POST | `/chatupload` | `:1737`, `handleChatUpload` `:2245` | attachment store | Same bytes, never enters the hosted file list, and the same cache-volume ceiling (`:2247`). `tempFile.copyTo(target, overwrite = true)` (`:2261`) is the only `overwrite = true` in the file, and it is safe: `target` is prefixed with a freshly generated UUID (`:2260`), so the name it could overwrite is one this request made milliseconds earlier. A second client cannot clobber a first one's attachment. |
 | GET | `/chatfile/{id}` | `:1719` | `chatFileIsVisibleTo` (`:564`) | **Fixed.** This route checked nothing: any client that passed the room gate could read any attachment whose id it knew, including one still unsent in the phone's own composer. The rule is now the one `/api/messages` already applied to *text* — an attachment is readable by the tab that uploaded it, or by anyone who may read a message that carries it (`threadIsVisibleTo`, `:542`: open room, the reader's own address book, the host's book when watching it, a group the phone opened). 404 rather than 403, because a UUID id that answers "real but not yours" tells a probing tab who is chatting. |
 | GET | `/preview/{id}` | `:1685` | same predicate (`:1689`) | Inline serving: no `Content-Disposition: attachment`, and `serveFileInline` (`:2219`) passes the stored `mimeType` straight through. **An uploaded HTML/SVG file is served inline with its own declared type.** Needs `X-Content-Type-Options: nosniff` and a forced-octet-stream rule for active content. Range requests are honoured. |
 | POST | `/api/delete` | `:1696` | `receivedFileIsVisibleTo` (`:2355`) + must live under `WebDrop_Received` | Two-layer check: visibility then canonical root prefix. Deleting a file outside the received dir is refused. Correct. |
@@ -233,7 +233,7 @@ scope, which had no backlog entry until now).
 
 | ID | Status | Finding |
 | --- | --- | --- |
-| **P-1** | Partially fixed | No rate limit anywhere except the PIN-guess counter. **The two bodies that could be filled from a browser tab are now capped from the declared `Content-Length` before `parseBody` runs** — `JSON_BODY_LIMIT` 64 KiB on `/api/call/web` (`:1324`) and `WEB_CALL_BODY_LIMIT` 256 KiB on `/api/webcall/up` (`:1431`), answering 413. Still open: tier A POST bodies (`:1165` and its neighbours) are parsed and buffered with no size test, which is unauthenticated disk-fill in `cacheDir`, and a client may lie about `Content-Length` and stream less — the cap bounds the buffer, not the liar. Only the relay envelope was capped before (`MAX_RELAY_ENVELOPE`). |
+| **P-1** | Partially fixed | No rate limit anywhere except the PIN-guess counter. **Every route that reads a body now answers a ceiling first, from the declared `Content-Length` and before `parseBody` runs:** `TYPING_BODY_LIMIT` 4 KiB (`:1278`) and `LOGIN_BODY_LIMIT` 8 KiB (`:1583`) on the two tier A routes that take no credential, `JSON_BODY_LIMIT` 64 KiB on the tier A pairing/call/relay group (`:1637`), on `/api/call/web` (`:1380`), `/api/delete` (`:1767`) and `POST /api/messages` (`:1821`), `WEB_CALL_BODY_LIMIT` 256 KiB on `/api/webcall/up` (`:1487`), and `uploadBudgetBytes(cacheDir)` — free space less headroom — on `/upload` (`:2057`) and `/chatupload` (`:2247`). All answer 413 with `Cache-Control: no-store`. Still open: **size is not frequency**, and nothing counts requests, so a tab inside every ceiling can still ask as often as the socket allows; and only the relay envelope (`MAX_RELAY_ENVELOPE`) was ever capped against a decoded payload. |
 | **P-2** | Confirmed | `POST /api/typing` accepts a self-declared `sender` with no authentication (`:1167`) and lets any host evict another's presence by name (`:1173-1176`); 64 entries is the only bound. |
 | **P-3** | Needs test | `/api/info` discloses `tlsError` text (`:1137`) and `deviceId` (`:1140`) to any LAN host. |
 
@@ -272,17 +272,22 @@ The table-driven suite must, for **each row above**, assert status and body-shap
 11. oversized body on every tier A and tier C POST: 1 MiB over cap on `/api/typing`,
     `/api/messages`, `/api/pair/*`, `/api/webcall/up`, `/upload`, `/chatupload` — assert a
     bounded rejection, not a buffered temp file and not a crash.
-    *Partly written:* `ObjectScopeTest` asserts 413 on `/api/webcall/up` and `/api/call/web` from a
+    *Written:* `ObjectScopeTest` asserts 413 on `/api/webcall/up` and `/api/call/web` from a
     declared 400 MB `Content-Length`, *and* that a normal-sized action still passes — a ceiling test
-    that only checks the refusal cannot tell a cap from a block. Tier A and `/upload` remain uncapped
-    (`R-2`).
+    that only checks the refusal cannot tell a cap from a block. `UploadCeilingTest` covers the rest:
+    `/upload` and `/chatupload` against a measured cache volume, both tier A POSTs, the honest small
+    case on each, and one case that cannot be faked — a 40 MB body offered to a 32 MiB budget where
+    the assertion is that the client *could not finish sending it*, which distinguishes a refusal
+    before the read from a refusal after it. Still untested: frequency (no rate limit exists to test)
+    and a body whose declared length is a lie in the under-declaring direction, which NanoHTTPD does
+    not read at all.
 12. path traversal on `/download-folder?path=`: `../../`, `%2e%2e%2f`, absolute paths, `\`
     separators, NUL, `..%00`, Unicode-normalised fullwidth `．．／`, symlink under
     `WebDrop_Received`, depth beyond 4 segments.
     *One case written* (`ObjectScopeTest`: a folder outside the received directory is refused). The
     rest of the encodings still need asserting against `sanitizeRelativePath` directly — the
     canonical check is a defence in depth, and only one of the two layers is currently tested.
-13. filename adversaria on `/upload?path=`: control characters, `\r\n` header injection into
+13. filename adversarial on `/upload?path=`: control characters, `\r\n` header injection into
     `Content-Disposition`, HTML/JS payloads, bidirectional overrides, 300-char names, reserved
     names, duplicate concurrent uploads of the same name;
 14. `/preview/{id}` with an uploaded `.html` and `.svg` — assert it cannot execute in the
@@ -322,3 +327,13 @@ Where a test contradicts this matrix, the code is wrong until proven otherwise �
   notes rather than pretending the shape was stable.
 - Folder zips can now fail with 413 (`Too many files to zip`, `Folder is too large to zip`) where they
   previously either succeeded or filled `cacheDir`. Both carry `Cache-Control: no-store`.
+- **Uploads and JSON POSTs can now fail with 413 too**, which no shipped client renders — the tab shows
+  its generic failure text. That is the intended outcome for a body the phone cannot hold; a third-party
+  client that retried the same oversized file forever was already broken, it was just breaking the phone
+  as well as itself. The limits are ceilings, not quotas: raising one later changes nothing observable
+  for a compliant client.
+- Uploads now land as `.{name}.part` and are renamed on completion. Nothing in the *browser* file list
+  can ever show one — that list is the in-memory `sharedFiles` registry, not a directory walk — but the
+  on-phone Receive page does enumerate the folder, so a process killed between the write and the rename
+  can leave a stale partial behind until it is cleaned up (open in `R-2`). Do not rename the suffix
+  without sweeping for the old one.

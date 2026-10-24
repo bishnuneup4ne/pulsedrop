@@ -184,22 +184,53 @@ screen to match.
 
 ### R-1 [partly fixed] `/api/webcall/up` has no bound on the body or decoded frames
 `:1344-1359`: base64 batches are decoded and handed to the engine with no size cap; `parseBody` has
-already buffered the request. NanoHTTPD 2.3.1 has **no** ceiling of its own — checked the bytecode,
-`TempFilePostOutputStream` writes until the disk complains — so the cap cannot live in the library.
+already buffered the request. NanoHTTPD 2.3.1 has **no** ceiling of its own — it copies
+`Content-Length` bytes into a Java String for a JSON post, or into a file in `cacheDir` for a
+multipart one, and neither path checks the number first.
+*Correction, because the earlier version of this entry got the library wrong:* it claimed
+`TempFilePostOutputStream` "writes until the disk complains". **That class does not exist in 2.3.1**
+— it belongs to 2.5+ — and `HTTPSession.getTmpBucket()` takes only `TempFile.getName()` and opens its
+own `RandomAccessFile`, so wrapping the `TempFile` to count bytes counts nothing. The conclusion
+survives (the cap cannot live in the library) but the reason was invented, and a ceiling built on it
+would have been dead code.
 *Fixed in `security/object-scope`:* `bodyTooLarge(session, WEB_CALL_BODY_LIMIT)` runs **before**
 `parseBody` and refuses from the declared `Content-Length` at 256 KiB, sized for one ~10 Hz batch of
 frames; the same guard covers `/api/call/web` at 64 KiB. Both answer 413 with `Cache-Control:
-no-store`. *Still open:* a client may under-declare `Content-Length` and stream more, so the cap
-bounds the buffer rather than the liar; the per-frame and per-batch decoded-size caps and the bounded
-egress queue are not written, and `/upload`'s real streaming limit is R-2.
+no-store`. *Still open:* the per-frame and per-batch decoded-size caps and the bounded egress queue
+are not written — a client inside the 256 KiB ceiling can still send many batches, and the frames are
+decoded without a bound on what one batch may expand to.
 *Tests:* oversized frame batch and oversized signaling post → 413, and a normal-sized action still
 gets through the ceiling (the guard is a ceiling, not a block).
 
-### R-2 [confirmed] Upload limits must hold *while streaming*
-`/upload` at `:1566` takes `?path=` from the query (`:1873`), has a free-space preflight (`:1895`) and
-timestamp-suffix duplicate handling (`:1886`), but a client can send an unbounded body with a missing
-or false `Content-Length`. Enforce per-file/per-client/concurrent/total quotas during the copy, write
-to temp, atomically rename on success only, and clean partials on cancel/disconnect/failure/startup.
+### R-2 [partly fixed] Upload limits must hold *while streaming*
+`/upload` takes `?path=` from the query, has a free-space preflight and timestamp-suffix duplicate
+handling, but nothing bounded the *declared* length: a POST for a file larger than the phone has room
+for was buffered whole into `cacheDir` before `hasFreeSpaceFor` was asked whether the destination
+could hold it. `/chatupload` had no preflight at all.
+*Fixed in `security/object-scope`:*
+* `bodyTooLarge(session, uploadBudgetBytes(context.cacheDir))` before `parseBody` on both upload
+  routes. The budget is what the volume reports free, less 64 MiB headroom, floored at 32 MiB —
+  measured per request, because the question is what this phone can spare now. A volume that cannot
+  be measured falls back to 2 GiB rather than to unlimited, which is deliberately the opposite of
+  `hasFreeSpaceFor`'s fail-open.
+* Bytes land as `.{name}.part` and are renamed only after the copy or decrypt completes, so a
+  refused or interrupted transfer leaves nothing that looks like a received file.
+* Neither route reflects `e.message` into the response any more; an exception string from this depth
+  is a filesystem path, and the path is under the app's private storage.
+*Still open, and it is not a small remainder:* per-client, per-concurrent and total quotas; the
+`.part` is cleaned by the same request that wrote it, so a process killed mid-copy leaves one behind
+(a crash-recovery sweep of `.{name}.part` in `WebDrop_Received` is not written); and the ceiling
+bounds the *declared* length only. That last point is weaker than it sounds in one direction and
+stronger in the other: a client that over-declares is refused, and a client that under-declares is
+not read at all — `parseBody` stops at `Content-Length` — so the unconsumed bytes are left in the
+socket to be parsed as the next pipelined request, which is a request-smelling question (filed
+separately) rather than a disk-fill one.
+*Tests:* `UploadCeilingTest` — declared length above the budget → 413 on `/upload` and `/chatupload`;
+a 40 MB body streamed against a 32 MiB budget is refused *and* the client could not finish pushing
+it, which is what proves the refusal precedes the read; an upload that fits still arrives byte for
+byte; a completed upload leaves no `.part`; an encrypted upload for an unknown pairing writes nothing
+anywhere; and the budget is `availableBytes - headroom`, floored, tested against `StatFs` rather
+than against the shadow's arithmetic.
 
 ### R-3 [confirmed] Unauthenticated typing presence is forgeable and fillable
 `/api/typing` POST (`:1162-1180`) takes `sender` verbatim with no credential and no rate limit;
@@ -233,6 +264,25 @@ may not be. Label it before start/accept. *Also:* `GET /api/relay/...` style pro
 `OPTIONS` returns 200 for any path with wildcard CORS (`:1074`), and `GET /api/auth` reaches the global
 check and 401s instead of 404ing — both reveal which routes exist before any credential is offered.
 Low severity on a LAN; worth folding into S-3 rather than a separate change.
+
+### R-11 [needs verification] Bytes past a short `Content-Length` are parsed as the next request
+Discovered while bounding the upload ceiling, and deliberately not treated as one: `parseBody` reads
+exactly `Content-Length` bytes and returns, so a client that declares 100 and sends 400 MB leaves the
+other 399,999,900 in the socket — and `ClientHandler.run()` loops on `session.execute()` over the *same*
+stream while the connection is open. Those bytes are then parsed as a following HTTP request.
+
+This is not a disk-fill or heap risk, which is why it is P1 rather than P0: nothing is read, so nothing
+is buffered. What it may be is a request-smuggling shape — a pipelined request the tab never sent,
+arriving on a connection whose credential and client address are already established, and NanoHTTPD
+answers HTTP/1.0 per response while accepting HTTP/1.1 pipelining on the read side.
+
+*Needs verification first,* because this is a reading of the bytecode and not yet an observation: two
+requests on one connection, the second one smuggled behind a short `Content-Length`, against a real
+listener, asserting what the server does with it. Until that test exists this entry is a hypothesis and
+should be labelled as one wherever it is repeated.
+
+*Why the number skips:* `R-9` and `R-10` are already taken by the P2 table, which reuses the `R`
+prefix for refactor items. Nothing here was renamed.
 
 ### K-1 [recommendation] Pairing threat-model test suite
 P-256 ECDH + AES-GCM + KDF v1/v2 already have golden-vector tests. Still missing: safety code derived

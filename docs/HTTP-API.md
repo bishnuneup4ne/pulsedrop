@@ -180,8 +180,31 @@ IPv4/IPv6 normalisation:
   rather than 403 for someone else's id: the id is a UUID, and "that attachment exists but is not yours"
   would disclose who is chatting to a tab that was only probing.
 
-JSON bodies are capped from the declared `Content-Length` before they are read: 64 KiB on
-`/api/call/web`, 256 KiB for one batched uplink on `/api/webcall/up`. NanoHTTPD imposes no limit of
-its own and buffers the whole body into a Java String, so one large POST was enough to exhaust the
-phone's heap. A client that under-declares `Content-Length` defeats this; `/upload` is the route that
-needs a streaming limit, and does not yet have one.
+### Body ceilings
+
+NanoHTTPD hands `serve()` the headers with the body still in the socket, so a route can refuse a body
+before reading any of it — and once it has called `parseBody`, the whole declared length is already a
+Java String (JSON) or a file in `cacheDir` (multipart). Every route that reads a body therefore answers
+a ceiling first, from the declared `Content-Length`, with `413` and `Cache-Control: no-store`:
+
+| Route | Ceiling |
+| --- | --- |
+| `POST /api/typing` (no credential) | 4 KiB |
+| `POST /api/auth` (no credential) | 8 KiB |
+| `POST /api/pair/*`, `/api/call/*`, `/api/relay/*` (key-gated, not PIN-gated) | 64 KiB |
+| `POST /api/call/web`, `/api/delete`, `/api/messages` | 64 KiB |
+| `POST /api/webcall/up` | 256 KiB — one ~10 Hz batch of base64 frames |
+| `POST /upload`, `POST /chatupload` | free space on the cache volume less 64 MiB headroom, floored at 32 MiB |
+
+The upload ceiling is measured per request rather than fixed, because the honest answer to "how big a
+file may I send you" is "however much this phone has left". A volume that `StatFs` cannot measure falls
+back to 2 GiB rather than to unlimited.
+
+A client that *under*-declares `Content-Length` is not refused and is not read: `parseBody` stops at the
+declared count, so the remaining bytes stay in the socket to be parsed as the next pipelined request.
+These ceilings bound size, not frequency — nothing counts requests yet except the PIN-guess counter.
+
+Uploads land under a `.{name}.part` name and are renamed only once the bytes have been written or
+decrypted, so a transfer that fails leaves nothing in the received folder that looks complete; and a
+failed upload answers a fixed sentence rather than `e.message`, which from that depth is a filesystem
+path inside the app's private storage.
