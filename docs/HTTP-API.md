@@ -14,7 +14,8 @@ required for browser media).
 | --- | --- | --- |
 | GET | `/` | Web UI (single page) |
 | GET | `/api/info` | Device name, PIN requirement, version, capability list, server stats |
-| POST | `/api/auth` | PIN check → token |
+| POST | `/api/auth` | PIN check → **session token** (never the PIN) |
+| POST | `/api/auth/logout` | Revoke the session the caller is holding |
 | GET | `/api/files` | Browse received-file list |
 | GET | `/download/{id}` | Fetch a file |
 | GET | `/preview/{id}` | Thumbnail / inline view |
@@ -140,3 +141,17 @@ rather than a flag on 9, is in [Protocol v2](Protocol-V2.md).
 Most endpoints require a token from `/api/auth` when a PIN is set. Paired-device uploads
 additionally carry an AES-GCM upload proof, and relay access a role-bound proof token (see
 [Security Model](Security-Model.md)).
+
+A token from `/api/auth` is a **session**, not the PIN. It is 256 random bits, the phone keeps only
+its SHA-256, it expires after 12 hours, `POST /api/auth/logout` drops the one presented, and
+generating a new PIN drops all of them. Sessions live in memory: restarting the server logs every
+browser out, which is the intended policy.
+
+Send it in `X-Pulse-Auth`. `?auth=` is accepted for a *session* only, on the routes a browser cannot
+attach a header to (anchor downloads, the `/api/events` stream); **the PIN itself is not accepted in a
+query string any more**, and short-lived per-file tickets are scheduled to replace that path too.
+
+One deliberate exception: the PIN is still accepted in `X-Pulse-Auth` from another **PulseDrop app**.
+A phone uploading to a peer presents the room PIN and an older build cannot negotiate a session
+first, so this keeps mixed-version rooms working. Browsers never receive the PIN, so this is not the
+path that leaks into history or `Referer`.

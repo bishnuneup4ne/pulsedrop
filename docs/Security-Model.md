@@ -24,6 +24,14 @@ from ECDH plus the safety code you read aloud.
 - Toggled in **Settings** → "Require PIN in browsers", which shows the current PIN and a
   "New PIN" action. A custom-PIN editor exists in the code but is not reachable from any
   screen; regenerate is the only path today.
+- **A browser that logs in gets a session, not the PIN.** 256 random bits, stored only as a
+  SHA-256, expiring after 12 hours, revocable one at a time (`/api/auth/logout`) or all at once
+  (regenerating the PIN). Nothing in a tab's `localStorage` is the room secret any more, and the
+  server no longer accepts the PIN in a `?auth=` query string — which is where it was reaching
+  browser history, link markup and `Referer`.
+- What a session does *not* buy: it is not end-to-end encryption, and it says nothing about who is
+  on the network. Anyone who can read the LAN can read the traffic a session authorises, because
+  the transport is a documented trade-off (above), not a secret.
 
 ## Device pairing (E2E)
 
