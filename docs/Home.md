@@ -60,6 +60,7 @@ The phone hosting the room can be any one phone — nobody else has to start a s
 - [Security Model](Security-Model.md) — PIN, pairing crypto, KDF v1/v2, relay secrecy, upload proofs, backups
 - [Capabilities and Versioning](Capabilities-and-Versioning.md) — the capability strings and how mixed-version rooms decide what to send
 - [HTTP API](HTTP-API.md) — every endpoint the phone serves, including the relay
+- [Authorization Matrix](Authorization-Matrix.md) — what each endpoint demands of the caller, which scopes it applies, and the gaps still open
 - [Protocol v2](Protocol-V2.md) — the wire spec: frame types, control messages, compatibility
 - [Browser Calls (HTTPS)](Browser-Calls-HTTPS.md) — why the secure address matters, cert warning
 - [Building from Source](Building-from-Source.md) — toolchain, Gradle, release signing
