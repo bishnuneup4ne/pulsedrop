@@ -54,9 +54,9 @@ Consequences that are easy to miss:
 
 `isAuthorized()` accepts, in order:
 
-1. **Nothing at all**, when `!isPinRequired || pinCode.isNullOrBlank()`. Every tier B and C route
-   becomes public. This is the "PIN disabled" mode and is the default posture for a browser client
-   that never logs in.
+1. **Nothing at all**, when `!isPinRequired || pinCode.isNullOrBlank()`. Every `SESSION` and
+   `SESSION_OR_TICKET` route becomes public. This is the "PIN disabled" mode and is the default
+   posture for a browser client that never logs in.
 2. A **live session token** in `X-Pulse-Auth` — the random value `/api/auth` minted for that tab
    (`SessionStore.isValid`).
 3. The **PIN itself**, in `X-Pulse-Auth` only. Kept deliberately: `TransferManager.kt:276`
@@ -119,7 +119,7 @@ memory: it resets on process death.
 
 ---
 
-## 2. Tier A — routes handled with no credential
+## 2. Routes the table opens without a session (`PUBLIC`, `SELF`, `PAIRING`)
 
 | Method | Path | Line | Guard | Scope | Intentional public? | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -141,13 +141,13 @@ memory: it resets on process death.
 | POST | `/api/relay/pull` | as above | per-device relay proof | own mailbox | by design | `role = "pull"`; returns only `relayMailbox.pending(senderDid)` (`:280`) — the proof's device id, not the caller's. Correct isolation. |
 | POST | `/api/relay/pair-poll` | `:261-266` | **none** | pair answers | **gap** | This is the one relay sub-route that returns before `pairManager` is consulted (`:267` is below it). `takePairAnswer(json.optString("reqId"))` is driven by a caller-supplied `reqId` with no proof of any kind. Whether that is exploitable depends on what a pair answer contains and how guessable `reqId` is — it must be tested, not assumed. |
 
-`PUT`/`DELETE` to any `/api/pair/*`, `/api/call/*`, `/api/relay/*` path is *not* tier A (the
-branch requires `method == POST`, `:1466`); it falls through to `:1508` and is PIN-protected,
-then 404s.
+A verb the table does not name for these prefixes — `PUT`/`DELETE` to `/api/pair/*`,
+`/api/call/*`, `/api/relay/*` — takes the rule's fallback, which is `SESSION`, so it is refused
+without a room credential and falls through to the final 404 with one.
 
 ---
 
-## 3. Tier B — routes that check inline
+## 3. Routes that only need a session (`SESSION`)
 
 | Method | Path | Line | Guard | Scope | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -160,11 +160,11 @@ then 404s.
 | POST | `/api/call/web` `action=end` | `:1369` | `isAuthorized` + own call | **Fixed.** The handler now refuses when there is no live call, when the `cid` is present but not the running one, and when `sameAddr(c.ip, clientIp)` fails (`:1384`) — the same three questions accept/decline already asked. A blank `cid` no longer means "whichever call is up", and ending a call that is not running answers a failure instead of a hollow `success`. |
 | GET | `/api/webcall/down` | `:1404` | `isAuthorized` `:1405` + own call | `:1408` rejects a wrong/absent `cid`; the cid alone was never enough, because `GET /api/call/web` publishes it to every authorized tab. `sameAddr(call.ip, clientIp)` (`:1415`) now binds the media leg to the tab that owns the call. Chunked media body. |
 | POST | `/api/webcall/up` | `:1481` | `isAuthorized` `:1482` + own call | Base64 frame batch decoded and handed to the engine. `sameAddr(call.ip, clientIp)` (`:1499`) refuses a frame batch from a tab that does not own the call, and `bodyTooLarge(session, WEB_CALL_BODY_LIMIT)` (`:1487`, 256 KiB) answers 413 from the declared `Content-Length` **before** `parseBody` reads it — NanoHTTPD 2.3.1 has no ceiling of its own, and `serve()` gets the headers with the body still in the socket. See §6 R-1. |
-| GET | `/api/peers` | `:1372` | `isAuthorized` `:1373` | whole-LAN peer table | Exposes every client IP, name, last-seen, file count and byte total (`:1375-1430`). This is a network map and is the most sensitive tier B response. It is fine *if* the PIN is on; with PIN disabled it is free reconnaissance for any host on the subnet. |
+| GET | `/api/peers` | `:1372` | `isAuthorized` `:1373` | whole-LAN peer table | Exposes every client IP, name, last-seen, file count and byte total (`:1375-1430`). This is a network map and is the most sensitive `SESSION` response. It is fine *if* the PIN is on; with PIN disabled it is free reconnaissance for any host on the subnet. |
 
 ---
 
-## 4. Tier C — routes behind the global check at `:1508`
+## 4. Routes that ask a second, object-scoped question after the session
 
 | Method | Path | Line | Object scope | Notes |
 | --- | --- | --- | --- | --- |
@@ -180,7 +180,10 @@ then 404s.
 | POST | `/api/messages` | `:1821` | `thread` restricted to known groups or `ip:` form, else broadcast (`:1831-1841`) | A client can address a thread to *any* IP (`"ip:$to"`), i.e. write into a conversation it will not read but another host will. Sender name is self-declared (`:1829`). Body capped at `JSON_BODY_LIMIT` (`:1823`) — see §6 P-1 for why 64 KiB on the app's most text-shaped route is a decision worth revisiting. `attachmentId` is checked against `chatFileIsVisibleTo`: attaching is publishing, so it cannot be a way around the read rule (A-6). |
 | DELETE | `/api/messages?id=` | `:1699` | `sameAddr(owner.clientIp, clientIp)` (`:1707`) | 403 on mismatch. Id must be in the query string because NanoHTTPD discards a DELETE body (`:1701-1703`) — a legitimate exception to the "no meaningful data in query strings" rule, but note that `id` is a message id, not a credential. |
 
-Anything else reaching `:1728` → 404, CORS headers, after having been authenticated.
+Anything else that no rule matches takes the default rule — prefix `*`, `SESSION` for every verb —
+so it is refused without a room credential and answers 404 with CORS headers once authenticated.
+`AuthorizationPolicyTest` pins that default, because a newly added route inheriting `SESSION` is
+what keeps "forgot to add a rule" from meaning "public".
 
 ---
 
@@ -197,8 +200,8 @@ Access-Control-Allow-Headers: Content-Type, X-Pulse-Auth
 
 - `*` with a **header-borne credential** is not the classic ambient-credential CSRF (no
   cookies are used anywhere, so no cross-site automatic auth). It does mean **any page open in
-  any browser on the LAN can read every tier-A route from JavaScript**, and — with the PIN
-  disabled — every tier B/C route too. That is the real exposure: a phishing page on a
+  any browser on the LAN can read every `PUBLIC` route from JavaScript**, and — with the PIN
+  disabled — every `SESSION` route too. That is the real exposure: a phishing page on a
   victim's laptop can call `/api/peers`, `/api/messages`, `/download/{id}` silently.
 - `X-Pulse-Client` is sent by the browser client (`WebClientHtml.kt:1627`) but is **not** in
   `Allow-Headers`, so the same code fails from any cross-origin context. The allow-list is out
@@ -242,7 +245,7 @@ scope, which had no backlog entry until now).
 | **A-2** | **Fixed** | `/download-folder?path=` had no ownership check at all — any authenticated client could zip any received folder, including one another visitor's directed downloads. A folder is not a record, so the check is derived from the records inside it: any `SharedFile` under the canonical prefix that `receivedFileIsVisibleTo` rejects makes the whole request 403 (`:1852-1861`). Covered by `ObjectScopeTest`; the uploader-of-records case is asserted as *allowed*, because over loopback the requester is always also the recorded owner and the forbid branch cannot be reached honestly. |
 | **A-3** | **Fixed** | `POST /api/call/web action=end` ended another client's call, and a blank `cid` ended whichever call was running. `end` now asks the same three questions accept/decline asked — is there a live call, does the `cid` match it, is this tab the one it was made for (`:1384`) — and reports failure rather than `success` when there is nothing to end. `/api/webcall/down` and `/api/webcall/up` gained the same `sameAddr` binding, since `GET /api/call/web` publishes the cid to every authorized tab. |
 | **A-4** | Confirmed | `/api/relay/pair-poll` returns before the relay proof check (`:261-266`) on a caller-supplied `reqId`. |
-| **A-5** | Needs test | Everything above `:1508` is unauthenticated — the chain position *is* the policy. A route inserted in the wrong place is public with no signal. This is what the `RouteRegistry`/`AuthorizationPolicy` refactor in the PRD exists to replace. |
+| **A-5** | **Fixed** | The chain position used to *be* the policy: everything above the one global `isAuthorized` was unauthenticated, so a route inserted in the wrong place was public with no signal. Authorization now comes from a single table (`AuthorizationPolicy.forRequest`) evaluated once at the top of `serve()`, and every path it does not name takes a default rule that requires a session. A new route is therefore closed until someone writes a rule for it, and `AuthorizationPolicyTest` pins both the default and the rule-to-matrix-row match. |
 | **A-6** | **Fixed** | A-1's escalation path, left open by the fix itself: `chatFileIsVisibleTo` was asked by the download route and by nothing else, so `POST /api/messages` attached *any* id the caller named to its own message — and because the read rule follows the message, publishing was a second way to deliver the bytes. Attaching now asks the same predicate as reading (`:1850`). An id this server has never seen stays ignored rather than refused, which is what it did before, so the response shape does not move. Found by `CrossAddressScopeTest`, which is the only suite here with two addresses to point at the question. |
 
 ### Public-surface abuse
@@ -294,13 +297,13 @@ The table-driven suite must, for **each row above**, assert status and body-shap
    The socket version of this file passed every test vacuously, because Robolectric reports
    `127.0.0.1` for a client bound to `127.0.0.2`.
 10. `/api/relay/pair-poll` with a `reqId` the caller never requested;
-11. oversized body on every tier A and tier C POST: 1 MiB over cap on `/api/typing`,
+11. oversized body on every body-reading POST: 1 MiB over cap on `/api/typing`,
     `/api/messages`, `/api/pair/*`, `/api/webcall/up`, `/upload`, `/chatupload` — assert a
     bounded rejection, not a buffered temp file and not a crash.
     *Written:* `ObjectScopeTest` asserts 413 on `/api/webcall/up` and `/api/call/web` from a
     declared 400 MB `Content-Length`, *and* that a normal-sized action still passes — a ceiling test
     that only checks the refusal cannot tell a cap from a block. `UploadCeilingTest` covers the rest:
-    `/upload` and `/chatupload` against a measured cache volume, both tier A POSTs, the honest small
+    `/upload` and `/chatupload` against a measured cache volume, both public POSTs, the honest small
     case on each, and one case that cannot be faked — a 40 MB body offered to a 32 MiB budget where
     the assertion is that the client *could not finish sending it*, which distinguishes a refusal
     before the read from a refusal after it. Frequency is now tested separately: `RequestRateLimiterTest`
@@ -311,7 +314,7 @@ The table-driven suite must, for **each row above**, assert status and body-shap
     `CeilingPrecedenceTest` asserts that the wrapper ceiling clears the envelope ceiling, that a
     refusal at the login route is not charged to the PIN lockout — with the control that twelve
     distinct wrong guesses are, so the loop cannot pass vacuously — and that a stranger hitting a
-    tier C route with an oversized body is refused for credentials, not told the route is
+    `SESSION` route with an oversized body is refused for credentials, not told the route is
     size-sensitive. Each case was checked to go red only when its own rule is broken.
 12. path traversal on `/download-folder?path=`: `../../`, `%2e%2e%2f`, absolute paths, `\`
     separators, NUL, `..%00`, Unicode-normalised fullwidth `．．／`, symlink under

@@ -79,9 +79,9 @@ session; an unknown scope is refused; a PIN change kills tickets already in flig
 
 ### S-3 [fixed] Authorization is positional, not policy
 
-`serve()` was one flat chain with three tiers (see `docs/Authorization-Matrix.md` §1): tier A handled
-before any check, tier B calling `isAuthorized()` inline, tier C gated by a single global check. Any
-route inserted above that check was silently unauthenticated.
+`serve()` was one flat chain with three tiers: routes handled before any check, routes calling
+`isAuthorized()` inline, and routes gated by a single global check. Any route inserted above that
+check was silently unauthenticated.
 
 *Fixed in `security/authorization-policy`.* `AuthorizationPolicy.forRequest(uri, method)` is one
 table, consulted once at the top of `serve()`; `authorize()` applies it and hands the dispatcher a
@@ -302,8 +302,8 @@ not a security one — so it is written down rather than done here.
 normal-sized action still gets through the ceiling (a guard tested only at the refusal cannot be told
 apart from a block). `CeilingPrecedenceTest` — the three things a per-route size test cannot see: the
 wrapper ceiling clears the envelope ceiling, a refusal at the login route is not charged as a wrong
-PIN guess (with the control that twelve distinct wrong guesses *are*), and a stranger at a tier C
-route is refused for credentials before being told anything about size. Each is verified to fail when
+PIN guess (with the control that twelve distinct wrong guesses *are*), and a stranger at a
+`SESSION` route is refused for credentials before being told anything about size. Each is verified to fail when
 only its own rule is broken.
 
 ### R-2 [partly fixed] Upload limits must hold *while streaming*
