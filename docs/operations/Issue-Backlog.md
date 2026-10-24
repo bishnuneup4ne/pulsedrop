@@ -141,22 +141,54 @@ one sent into another address's thread is refused, one sent into *this* address'
 group the phone opened grants, and the uploading tab can still preview before sending (a check that
 broke the composer would be a worse bug than the one it closed).
 
-### S-6 [confirmed] Keystore failure silently writes a raw private key
+### S-6 [fixed] Keystore failure silently writes a raw private key
 
-`IdentityKeyPair.kt:26-27` — `loadOrCreate` swallows **any** exception from `fromKeystore()` and
-falls through to `fromPrefsOrGenerate`, which at `:60-63` writes `pair.private.encoded` (PKCS#8) as
+`IdentityKeyPair.kt:26-27` — `loadOrCreate` swallowed **any** exception from `fromKeystore()` and
+fell through to `fromPrefsOrGenerate`, which at `:60-63` wrote `pair.private.encoded` (PKCS#8) as
 base64 into `SharedPreferences`.
 
 *Risk:* on a device where Keystore is merely temporarily unavailable (not "unsupported"), a healthy
-hardware-backed identity is never retried and the private key ends up as readable file-backed prefs.
-The alias/prefs keys are what every existing pairing points at, so this cannot be "fixed" by
+hardware-backed identity was replaced by a fresh key written to disk and presented as the phone. The
+alias/prefs keys are what every existing pairing points at, so this could not be "fixed" by
 regenerating.
 
-*Fix:* distinguish "device genuinely lacks Keystore" from "transient failure"; keep the fallback but
-mark the lifecycle state (`healthy | legacy-fallback | corrupt | lost`), surface it in the dashboard
-and diagnostics, exclude those prefs from backup, and add a migration marker. Never auto-regenerate.
-*Tests:* transient failure does not silently downgrade; existing pairing survives; corrupt prefs
-reports "lost" rather than minting a new identity.
+*Fixed on `security/identity-keystore-refusal`.* `catch (Exception)` was asked to answer two
+different questions — "is there a keystore on this device" and "did it give us the key" — and the
+second answer was being served from the first question's store. The probe now returns four states
+(`Present`, `Empty`, `Absent`, `Refused`) and only `Absent` may write preferences, because
+`KeyStore.getInstance` is pure provider-table resolution — no daemon, no file, no binder — so it is
+the one call here that fails only when the implementation is genuinely not on the device. Everything
+after it talks to the keystore service, and a failure there is a bad moment, not a missing feature:
+the stored identity is served if there is one, otherwise a process-lifetime key that is never written
+down, so the next launch asks the hardware again.
+
+*Compatibility, which is why this is not a behaviour flip:* no identifier moves. The alias
+(`localdrop_e2e_identity`), the prefs file (`localdrop_identity`) and both keys inside it are read
+exactly as before, so an install that already lives on the prefs fallback keeps its identity and keeps
+its pairings — `Absent` behaves the way `:47` always did. Three consequences are worth naming:
+**a keystore that refuses never mints a durable rival**, so a transient fault heals instead of
+re-rooting the pairing; **an empty alias does not generate over a stored identity** (a raw key cannot
+be imported into the keystore, so minting one would break every pairing to buy nothing); and **a prefs
+copy found beside a working hardware key is deleted** — that combination can only have been produced by
+the bug itself, since the hardware key is what every launch since has been presenting. A corrupt prefs
+value still throws to the caller instead of being silently replaced, which is what it did before.
+
+*Still open:* the lifecycle state the original entry asked for (`healthy | legacy-fallback | lost`) is
+not surfaced anywhere but `Log.w("PulseDropIdentity")` — a phone running on an ephemeral identity
+should say so on the pairing screen rather than let the safety code mismatch. The prefs file is already
+excluded from backup in both `backup_rules.xml` and `data_extraction_rules.xml:8`, so that half of the
+suggested fix needed no work.
+
+*Rollback:* safe. The only thing this branch destroys is a prefs copy written alongside a hardware key
+that is still in the alias, so a reverted build reads that alias and presents the same identity.
+
+*Tests:* eleven in `IdentityKeyPairTest`. The load-bearing one is
+`aDeviceWithAKeystoreThatCannotReadItsOwnAliasWritesNothing`, which installs a real JCA provider
+registered as `AndroidKeyStore` that opens and then throws on `getEntry`, and drives the **production**
+`loadOrCreate` — the seam-injected tests cannot be wrong about that classification, and this one can.
+Seven mutations of the fix (write-on-refusal, keep-the-orphan, prefer-stored-over-hardware,
+generate-over-stored, legacy-cannot-write, refusal-classified-as-absence,
+absence-classified-as-refusal) each reddened exactly the test that owns that rule.
 
 ### S-7 [needs test] Cleartext LAN HTTP is a documented trade-off, not a guarantee
 
@@ -376,4 +408,6 @@ than precedes them; **S-4b** (`/chatfile`, matrix `A-1`) and **S-5b** (streaming
 are the two remaining P0-class scope holes.
 
 S-6 (identity fallback) and S-7 (transport labelling) touch protocol compatibility and device state;
-they get their own PR after the auth chain, with a migration plan rather than a behaviour flip.
+they get their own PR after the auth chain, with a migration plan rather than a behaviour flip. S-6
+took that PR early — it touches no endpoint, no wire format and no stored key name, and issue #20 had
+no taker — so the migration plan is the *Compatibility* paragraph above rather than a queue position.

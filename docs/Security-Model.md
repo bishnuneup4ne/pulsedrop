@@ -35,8 +35,10 @@ from ECDH plus the safety code you read aloud.
 
 ## Device pairing (E2E)
 
-- Each device holds an **EC P-256 identity** in `AndroidKeyStore` (raw-key prefs
-  fallback where unavailable).
+- Each device holds an **EC P-256 identity** in `AndroidKeyStore`. Raw-key prefs are the store only
+  on a device with no keystore provider at all: a keystore that is present and then refuses writes no
+  key to disk, because a key written in its place would make a bad moment permanent. See
+  [Pairing and Devices](Pairing-and-Devices.md).
 - Pairing runs ECDH. The shared point is turned into an AES-256-GCM key by one of two
   derivations, and the secret is **never stored** — it is re-derived at runtime, which is
   why a pairing survives an app update but not a key change.
