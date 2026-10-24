@@ -204,7 +204,39 @@ A client that *under*-declares `Content-Length` is not refused and is not read: 
 declared count, so the remaining bytes stay in the socket to be parsed as the next pipelined request.
 These ceilings bound size, not frequency — nothing counts requests yet except the PIN-guess counter.
 
-Uploads land under a `.{name}.part` name and are renamed only once the bytes have been written or
-decrypted, so a transfer that fails leaves nothing in the received folder that looks complete; and a
+Uploads land under a name of the phone's own making — `.<uuid>.part`, renamed into place once the bytes
+have been written or decrypted — so a transfer that fails leaves nothing in the received folder that
+looks complete, and two tabs sending to one `?path=` never copy into the same file at the same time. A
 failed upload answers a fixed sentence rather than `e.message`, which from that depth is a filesystem
 path inside the app's private storage.
+
+### Names
+
+`?path=` on `/upload` and `?filename=` on `/chatupload` are the only places a client chooses a name this
+phone stores, and the room credential is shared by every tab in the room, so a name is hostile input. One
+sanitizer (`sanitizeFileName`, applied per segment by `sanitizeRelativePath`) answers all of it, and it
+is worth reading as a list of guarantees rather than as a filter:
+
+* every character outside `A-Z a-z 0-9 space . _ - ( ) [ ] { }` becomes `_`. That is what removes control
+  characters — a CR in a saved name is a response-splitting bug exactly one `Content-Disposition` away,
+  because the header is built from the saved name and NanoHTTPD writes the value out as it was handed it
+  — and with them every markup metacharacter, quote and Unicode directional override;
+* `/` and `\` separate segments instead of surviving inside one, and `.` and `..` segments are dropped, so
+  no name is absolute and none points above `WebDrop_Received`. `/download-folder?path=` goes through the
+  same function and adds a canonical-path containment check on top;
+* leading and trailing dots and spaces are trimmed, so an upload cannot plant a hidden file, a
+  name-that-is-only-dots, or a file in the shape the server uses while a transfer is still landing;
+* at most four segments are kept, and each is truncated to 120 characters with the extension preferred.
+  An extension longer than the whole budget takes the plain truncation: the stem count there is
+  `120 - extension - 1`, which is negative for `a.<300 characters>`, and the exception it threw was
+  caught as an ordinary upload failure — so that name used to cost the transfer rather than be renamed.
+
+A name that sanitizes away to nothing gets a generated one, and the Windows reserved names (`nul`,
+`CON.txt`, `com1.log`) are ordinary files on Android and are not refused.
+
+Two things a name does *not* decide. It does not decide who may read the file — that is the object-scope
+rule above, and `/preview/{id}` answers an upload with the MIME type guessed from the saved extension by a
+table with no HTML row, so an uploaded `page.html` is offered as `application/octet-stream` rather than as
+a document from this origin. And it does not decide who wins when two clients pick the same name: the
+second gets a timestamp suffix if the first has landed, which is an open question, not a policy — see
+backlog `R-2`.

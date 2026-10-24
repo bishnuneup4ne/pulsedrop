@@ -207,30 +207,43 @@ gets through the ceiling (the guard is a ceiling, not a block).
 handling, but nothing bounded the *declared* length: a POST for a file larger than the phone has room
 for was buffered whole into `cacheDir` before `hasFreeSpaceFor` was asked whether the destination
 could hold it. `/chatupload` had no preflight at all.
-*Fixed in `security/object-scope`:*
+*Fixed in `security/upload-ceilings` and `security/upload-names`:*
 * `bodyTooLarge(session, uploadBudgetBytes(context.cacheDir))` before `parseBody` on both upload
   routes. The budget is what the volume reports free, less 64 MiB headroom, floored at 32 MiB —
   measured per request, because the question is what this phone can spare now. A volume that cannot
   be measured falls back to 2 GiB rather than to unlimited, which is deliberately the opposite of
   `hasFreeSpaceFor`'s fail-open.
-* Bytes land as `.{name}.part` and are renamed only after the copy or decrypt completes, so a
-  refused or interrupted transfer leaves nothing that looks like a received file.
+* Bytes land as `.{uuid}.part` and are renamed only after the copy or decrypt completes, so a refused or
+  interrupted transfer leaves nothing that looks like a received file. The landing name carries a uuid
+  rather than the final name because `?path=` is not unique: two tabs sending to one name both find it
+  free, both computed the *same* landing file, and the second one's `renameTo` then had no source left —
+  it answered 500 `Upload failed` for bytes that had arrived whole. `FileNameAdversarialTest` catches
+  that, and reverting the naming turns it red again.
+* A caller-chosen name whose extension alone outran the 120-character budget used to be refused: the
+  stem count is `120 - extension - 1`, which is negative for `a.` + 300 characters, the `take()` threw,
+  and the upload handler caught it as an ordinary failure. It now takes the plain truncation.
 * Neither route reflects `e.message` into the response any more; an exception string from this depth
   is a filesystem path, and the path is under the app's private storage.
 *Still open, and it is not a small remainder:* per-client, per-concurrent and total quotas; the
 `.part` is cleaned by the same request that wrote it, so a process killed mid-copy leaves one behind
-(a crash-recovery sweep of `.{name}.part` in `WebDrop_Received` is not written); and the ceiling
-bounds the *declared* length only. That last point is weaker than it sounds in one direction and
-stronger in the other: a client that over-declares is refused, and a client that under-declares is
-not read at all — `parseBody` stops at `Content-Length` — so the unconsumed bytes are left in the
-socket to be parsed as the next pipelined request, which is a request-smelling question (filed
-separately) rather than a disk-fill one.
+(a crash-recovery sweep of `.*.part` in `WebDrop_Received` is not written); the `?path=` collision
+policy is undecided — the second sender of one name gets a timestamp suffix when the first has already
+landed and the same name when it has not, and whether a collision should instead be a `409` is a
+response-shape question, not a security one; and the ceiling bounds the *declared* length only. That
+last point is weaker than it sounds in one direction and stronger in the other: a client that
+over-declares is refused, and a client that under-declares is not read at all — `parseBody` stops at
+`Content-Length` — so the unconsumed bytes are left in the socket to be parsed as the next pipelined
+request, which is a request-smelling question (filed separately) rather than a disk-fill one.
 *Tests:* `UploadCeilingTest` — declared length above the budget → 413 on `/upload` and `/chatupload`;
 a 40 MB body streamed against a 32 MiB budget is refused *and* the client could not finish pushing
 it, which is what proves the refusal precedes the read; an upload that fits still arrives byte for
 byte; a completed upload leaves no `.part`; an encrypted upload for an unknown pairing writes nothing
 anywhere; and the budget is `availableBytes - headroom`, floored, tested against `StatFs` rather
-than against the shadow's arithmetic.
+than against the shadow's arithmetic. `FileNameAdversarialTest` — the traversal, control-character,
+header-injection, markup, bidirectional-override, over-long-name, blank-name, reserved-name and
+same-name-collision cases on `/upload?path=`, the same sanitizer's two other users
+(`/download-folder?path=` and `/chatupload?filename=`), and the symlink case that only the canonical
+check can answer.
 
 ### R-3 [confirmed] Unauthenticated typing presence is forgeable and fillable
 `/api/typing` POST (`:1162-1180`) takes `sender` verbatim with no credential and no rate limit;
