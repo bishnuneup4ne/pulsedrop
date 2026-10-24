@@ -9,10 +9,14 @@ Source of truth: `app/src/main/java/com/pulsedrop/app/server/PulseDropServer.kt`
 the row says so — this document records what the code *does*, not what a future release
 should do.
 
-Rows marked **Fixed** describe the two branches stacked on that commit — `security/browser-sessions`
-(the credential design) and `security/object-scope` (who may touch *which* object). The latter's rows
-carry line numbers from its own HEAD, so they are the ones to trust; every other number still refers
-to `98c2a40` and is drift-prone.
+Rows marked **Fixed** describe the three branches stacked on that commit —
+`security/browser-sessions` (the credential design), `security/object-scope` (who may touch *which*
+object) and `security/upload-ceilings` (what a body may cost) — and their rows carry line numbers from
+the tip of the last branch that touched them, which is where `:NNNN` in this file is searchable from.
+Every other number still refers to `98c2a40`, and the two security branches inserted roughly two hundred
+lines into `PulseDropServer.kt` above those rows, so they have drifted and are **not** reliable pointers.
+Auditing them is a task of its own; converting the route table from `:NNNN` to the dispatch condition it
+names (`if (uri == "/upload")`) would make it self-checking and is the better fix than renumbering.
 
 ---
 
