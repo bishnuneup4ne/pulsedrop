@@ -341,11 +341,19 @@ same-name-collision cases on `/upload?path=`, the same sanitizer's two other use
 (`/download-folder?path=` and `/chatupload?filename=`), and the symlink case that only the canonical
 check can answer.
 
-### R-3 [confirmed] Unauthenticated typing presence is forgeable and fillable
-`/api/typing` POST (`:1162-1180`) takes `sender` verbatim with no credential and no rate limit;
-`typingSenders.remove(sender)` on `typing:false` lets one host evict another's presence by reusing its
-name, and the 64-slot cap (`TYPING_SENDER_LIMIT`) can be filled to deny real users. Either bind
-presence to an authenticated session or bound/normalize/rate-limit the public form.
+### R-3 [fixed] Unauthenticated typing presence is forgeable and fillable
+`/api/typing` POST took `sender` verbatim with no credential and no rate limit;
+`typingSenders.remove(sender)` on `typing:false` let one host evict another's presence by reusing its
+name, and the 64-slot cap (`TYPING_SENDER_LIMIT`) could be filled to deny real users.
+
+*Fix:* presence is keyed by the caller's **normalized address**, the one field this route cannot be
+talked out of. `typing:false` clears only the caller's own entry, a full map refuses a *new* address
+rather than evicting an existing reporter, and the display name is trimmed and capped at 60
+characters. It stays unauthenticated on purpose — a presence indicator should work before login —
+so the fix removes the hijack and the eviction vector, not the openness.
+*Tests:* `TypingPresenceTest` — a second host cannot erase the first's indicator by claiming its
+name; a host can clear its own; a 2 000-character name is truncated before display; a 65th address
+is refused while the 64 already present stay.
 
 ### R-4 [confirmed] Wildcard CORS on a credentialed server
 `addCorsHeaders` emits `Access-Control-Allow-Origin: *` on essentially every response, including 401

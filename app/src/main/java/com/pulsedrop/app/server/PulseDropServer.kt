@@ -78,6 +78,8 @@ private const val PIN_LOCKOUT_MS = 60_000L
 private const val PIN_LOCKOUT_MAX_STEPS = 4
 private const val SERVER_CHAT_RETENTION = 2000
 private const val TYPING_SENDER_LIMIT = 64
+// A display name in a typing indicator, not a field to store.
+private const val TYPING_NAME_MAX_CHARS = 60
 private const val WEB_CLIENT_TTL = 90_000L
 // Matches CallEngine.RING_TIMEOUT_MS so a browser and a paired app are given up on alike.
 private const val WEB_RING_TIMEOUT_MS = 35_000L
@@ -628,7 +630,15 @@ class PulseDropServer(
 
     private val sharedFiles = mutableListOf<SharedFile>()
     private val messages = mutableListOf<ClipMessage>()
-    private val typingSenders = mutableMapOf<String, Long>()
+
+    private data class TypingSender(val name: String, val until: Long)
+
+    /**
+     * Presence keyed by the address that reported it, not by the name it claimed. Keying by name
+     * let any host send `typing:false` under someone else's name and erase what that person was
+     * showing; an address is the one field this route cannot be talked out of.
+     */
+    private val typingSenders = mutableMapOf<String, TypingSender>()
 
     /** Per-client PIN guess counter, so a 4-digit PIN cannot be swept brute-force. */
     private class PinAttempts {
@@ -1312,7 +1322,7 @@ class PulseDropServer(
             if (method == Method.GET) {
                 val now = System.currentTimeMillis()
                 val active = synchronized(typingSenders) {
-                    typingSenders.entries.filter { it.value > now }.map { it.key }
+                    typingSenders.entries.filter { it.value.until > now }.map { it.value.name }
                 }
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", JSONArray(active).toString())
                 addCorsHeaders(res)
@@ -1327,15 +1337,23 @@ class PulseDropServer(
                     val map = HashMap<String, String>()
                     session.parseBody(map)
                     val json = JSONObject(map["postData"] ?: "{}")
-                    val sender = json.optString("sender", "Client $clientIp")
+                    // Display-only, so it is bounded here rather than trusted: the body ceiling is
+                    // 4 KiB and 64 of those would still be a quarter megabyte of names.
+                    val sender = json.optString("sender", "").trim().take(TYPING_NAME_MAX_CHARS)
+                        .ifBlank { "Client $clientIp" }
                     val typing = json.optBoolean("typing", true)
+                    val reporter = normalizeAddr(clientIp)
                     synchronized(typingSenders) {
                         val now = System.currentTimeMillis()
-                        typingSenders.entries.removeAll { it.value <= now }
+                        typingSenders.entries.removeAll { it.value.until <= now }
                         if (typing) {
-                            if (typingSenders.size < TYPING_SENDER_LIMIT) typingSenders[sender] = now + 6000
+                            // An existing reporter may always refresh its own entry; a new address
+                            // is refused once the room is full rather than evicting someone else.
+                            if (typingSenders.size < TYPING_SENDER_LIMIT || reporter in typingSenders) {
+                                typingSenders[reporter] = TypingSender(sender, now + 6000)
+                            }
                         } else {
-                            typingSenders.remove(sender)
+                            typingSenders.remove(reporter)
                         }
                     }
                     val res = newFixedLengthResponse(Response.Status.OK, "application/json", "{\"success\":true}")
