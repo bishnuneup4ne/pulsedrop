@@ -22,7 +22,7 @@ import android.os.StatFs
  * whole — into a Java String for JSON, into a file in `cacheDir` for a multipart upload. So the only
  * ceiling that costs nothing to enforce is the one answered before `parseBody`, and it was answered
  * on two of the nine routes that read a body. The other seven would buffer whatever a socket was
- * pointed at, including `/api/typing`, which asks for no credential at all.
+ * pointed at, including `/api/typing`, which used to ask for no credential at all.
  *
  * A body that arrives under its declared length is a different problem, and these tests do not
  * pretend to cover it: `parseBody` reads exactly `Content-Length` bytes and stops, so the remainder
@@ -183,12 +183,12 @@ class UploadCeilingTest {
     }
 
     @Test
-    fun `presence ping of a gigabyte is refused by a route that takes no credential`() {
-        // `/api/typing` answers to the room before any token is checked, so before this the only
-        // thing between an unauthenticated socket and this phone's storage was the route's own
-        // willingness to read the body.
+    fun `presence ping of a gigabyte is refused before the body is read`() {
+        // A presence ping is a name and a boolean. The ceiling is answered from the declared
+        // length, before `parseBody`; the credential check in front of it is P-2's, not this
+        // test's subject, so the tab logs in first.
         val answer = http.call(
-            "POST", "/api/typing", mapOf("Content-Type" to "application/json"),
+            "POST", "/api/typing", mapOf("Content-Type" to "application/json", "X-Pulse-Auth" to token),
             body = "{\"sender\":\"x\"}", declareContentLength = tooBig
         )
         assertEquals(413, answer.status)
@@ -198,7 +198,7 @@ class UploadCeilingTest {
     @Test
     fun `a normal presence ping still gets through the ceiling`() {
         val answer = http.call(
-            "POST", "/api/typing", mapOf("Content-Type" to "application/json"),
+            "POST", "/api/typing", mapOf("Content-Type" to "application/json", "X-Pulse-Auth" to token),
             "{\"sender\":\"Honest tab\",\"typing\":true}"
         )
         assertEquals(200, answer.status)

@@ -141,7 +141,8 @@ class CeilingPrecedenceTest {
         // `/api/delete` and `/api/messages` sit behind the room's credential check. If the size
         // guard answered first there, a 413 would tell any host on the subnet which routes are
         // sensitive to body length without ever asking for the PIN. The routes that answer before
-        // the PIN anyway — typing, login, the dispatcher — are the ones above.
+        // the PIN anyway — login and the dispatcher — are the ones above. (Typing is no longer one
+        // of them: P-2 put presence writes behind the room credential.)
         for (path in listOf("/api/delete", "/api/messages")) {
             val answer = ask(
                 path, stranger, "A".repeat(1024), credentialed = false,
