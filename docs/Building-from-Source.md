@@ -6,6 +6,10 @@
 - Android SDK with platform **36** and a recent build-tools (36.x)
 - No Android Studio required — Gradle CLI is enough
 
+The wrapper carries both the Gradle version and the distribution's SHA-256, so always
+invoke `./gradlew` rather than a system `gradle`; the checksum is what makes the
+downloaded distribution verifiable.
+
 ## Clone and build
 
 ```bash

@@ -95,14 +95,14 @@ This is the practical blocker for "run the tests".
 | --- | --- | --- |
 | JDK 21 (CI uses Temurin 21) | **No** — `java` not found, no `/usr/lib/jvm` | `./gradlew test` cannot run at all. Every claim below about tests is unverified until this exists. |
 | Android SDK (platform 36, build-tools) | **No** — no SDK dirs, no `ANDROID_HOME`, no `local.properties` | `assembleRelease` and `lintRelease` cannot run. |
-| Gradle | Wrapper present (`gradlew`, Gradle 9.3.1 pinned) — correct; no system Gradle, and none should be installed | Use `./gradlew` only. |
+| Gradle | Wrapper present (`gradlew`, Gradle 9.6.0 pinned) — correct; no system Gradle, and none should be installed | Use `./gradlew` only. |
 | Node.js | **No** | Only needed later if `site/` is deployed or browser asset bundling is introduced. Not needed for P0 work. |
 | `gh` CLI | **No** | Cannot open issues or PRs from the CLI; see §5. |
 | AWS CLI | Binary present, unconfigured | Not needed for the P0 work. Needed only if the owner wants cloud control-plane changes. |
 | sudo | Available passwordless | Package installs are possible — **I have not installed anything yet.** |
 | Outbound network | `services.gradle.org` 200, `dl.google.com` 200 | Provenance for JDK + SDK is reachable, so a real build is achievable here. |
 
-Reproducible build requirement, read off the project rather than guessed: Gradle 9.3.1 (wrapper),
+Reproducible build requirement, read off the project rather than guessed: Gradle 9.6.0 (wrapper),
 `compileSdk 36.1`, `minSdk 24`, `targetSdk 36`, `sourceCompatibility/targetCompatibility Java 11`,
 CI JDK **21**, `app.versionName = "2.0.2"`, `versionCode = 12`.
 
