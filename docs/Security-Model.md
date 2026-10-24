@@ -160,7 +160,10 @@ Android requires for capturing the display.
 - **Anyone on the LAN without a PIN** can open the address and join the open room. The PIN is
   the gate; pairing is not involved.
 - **A seized or rooted device** exposes chat history and received files, which are unencrypted
-  at rest. The identity key in the keystore is the durable secret; the history is not.
+  at rest. The identity key in the keystore is the durable secret; the history is not. With one
+  exception worth stating: a phone whose keystore refused it on three separate launches keeps that
+  key in the app's private preferences instead, which puts it in this same exposed set. **About →
+  This install** says which of the two this phone is, and pairing cannot be the one to tell you.
 - **A call is not confidential** in the way a paired message is. Treat a call like a speakerphone
   in the same room.
 - **"Which client" means which address, not which tab.** Object scope — whose file, whose call —

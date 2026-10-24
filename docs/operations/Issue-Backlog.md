@@ -141,22 +141,69 @@ one sent into another address's thread is refused, one sent into *this* address'
 group the phone opened grants, and the uploading tab can still preview before sending (a check that
 broke the composer would be a worse bug than the one it closed).
 
-### S-6 [confirmed] Keystore failure silently writes a raw private key
+### S-6 [fixed] Keystore failure silently writes a raw private key
 
-`IdentityKeyPair.kt:26-27` — `loadOrCreate` swallows **any** exception from `fromKeystore()` and
-falls through to `fromPrefsOrGenerate`, which at `:60-63` writes `pair.private.encoded` (PKCS#8) as
-base64 into `SharedPreferences`.
+Before `security/identity-key`, `IdentityKeyPair.loadOrCreate` swallowed **any** exception from
+`fromKeystore()` and fell through to a path that wrote `pair.private.encoded` (PKCS#8) as base64 into
+`SharedPreferences`.
 
 *Risk:* on a device where Keystore is merely temporarily unavailable (not "unsupported"), a healthy
 hardware-backed identity is never retried and the private key ends up as readable file-backed prefs.
 The alias/prefs keys are what every existing pairing points at, so this cannot be "fixed" by
 regenerating.
 
-*Fix:* distinguish "device genuinely lacks Keystore" from "transient failure"; keep the fallback but
-mark the lifecycle state (`healthy | legacy-fallback | corrupt | lost`), surface it in the dashboard
-and diagnostics, exclude those prefs from backup, and add a migration marker. Never auto-regenerate.
-*Tests:* transient failure does not silently downgrade; existing pairing survives; corrupt prefs
-reports "lost" rather than minting a new identity.
+*Fixed on `security/identity-key`.* The load now asks three different questions instead of one:
+
+- **Which store holds the identity, preferring whichever was written first.** Prefs are read before
+  the keystore, so a phone that fell back once keeps that key after the keystore recovers rather than
+  swapping identities under its own pairings. Nothing is written on this path.
+- **Did the keystore refuse, or does this environment not have one?** A refusal is counted **once per
+  launch** — three taps on Accept are one piece of evidence about the hardware, not three — and the
+  device is believed unable after three. `Security.getProvider("AndroidKeyStore") == null` means no
+  keystore exists to wait out (a JVM test, a ROM with none), and gets a file-backed identity at once.
+  That provider is registered on every Android device that has a keystore, so on a phone the counter
+  is what decides and this branch is dead: it exists so the counter cannot be reached by an
+  environment that was never going to satisfy it.
+- **Is a stored entry unusable?** Half a key pair (`priv` without `pub`, or either one that will not
+  parse) used to be treated as *nothing* and overwritten with a freshly generated identity. It is now
+  reported: `CORRUPT`, the entry left exactly as it was, and a throw.
+
+The failure is a typed one — `IdentityKeyUnavailableException`, carrying `IdentityKeyPair.explain()`,
+which is a sentence about what to do ("unlock the device and try again" versus "pair the other devices
+again") and differs by state. Nothing is auto-regenerated on any path. `IdentityState` is
+`NOT_LOADED | HEALTHY | LEGACY_FILE | CORRUPT | UNAVAILABLE`, and the three surfaces the brief asked
+for are wired: About → *This install* states where the key lives, a crash report carries an
+`| Identity | <state> |` row (the name only, never key material), and `/api/status`'s `deviceId` is
+empty rather than a 500.
+
+Every caller that stamps an identity now asks for it through a nullable door — `PairRepository
+.myDeviceIdOrNull`, `PairManager.myDeviceIdOrNull`, `PairHandshake.myPubOrNull` — because a getter that
+throws reached code with no handler: `PairHandshake.acceptIncoming` ran on the UI thread, and
+`respondToPair` inside an uncaught `scope.launch(Dispatchers.IO)`. The rule each site applies is that a
+claim the phone cannot back up is worse than the action not happening: pairing answers nothing rather
+than half-pairing, sealed mail is not sent without a `from`, a read receipt and a mailbox drop are
+dropped, an edit of your own message tells you why on screen. The request stays on the Accept screen,
+so the retry is still there once the key can be read.
+
+*Tests:* `IdentityKeyFallbackTest` (9 cases) — one refusal writes no private key anywhere; three taps
+are one refusal; a launch that answers clears the count and copies nothing into prefs; a stored key
+wins and the keystore is never asked; a believed-unable device is file-backed once and stays that way
+across a launch where the keystore comes back; half a stored key is reported lost and the bytes are
+untouched; an unreadable entry does not cost a keystore identity; no-keystore is not waited out.
+Mutation-checked, not assumed: restoring the old fall-through fails the first two cases, and counting
+per attempt instead of per launch fails the second. The 24 pre-existing pairing/relay tests, which had
+passed only because any keystore exception wrote a file key, pass unchanged through the
+no-provider branch.
+
+*Still open:* (a) **migration** — the `identity_store` marker is written and nothing reads it. Moving
+an existing `LEGACY_FILE` key into a working keystore is not possible with the stock platform, which
+will generate or wrap-import AES but not import a raw EC private key; it needs either a re-pair or a
+protocol-compatible identity handover, and either way it is a decision, not a cleanup. (b) The About
+row explains the state; no screen offers the *repair* each state implies. (c) Backup exclusion of
+`localdrop_identity.xml` was already in place in both `backup_rules.xml` and
+`data_extraction_rules.xml`, and `webdrop_database.db` is excluded too — verified here, not newly
+added. (d) A `LEGACY_FILE` phone is one root-free app-data read away from having its private key
+copied; that is the documented cost of keeping such devices able to pair at all.
 
 ### S-7 [needs test] Cleartext LAN HTTP is a documented trade-off, not a guarantee
 
