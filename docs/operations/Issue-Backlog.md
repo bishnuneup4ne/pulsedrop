@@ -77,16 +77,22 @@ API (GET or POST); the event stream accepts a ticket and refuses `?auth=`; minti
 session; an unknown scope is refused; a PIN change kills tickets already in flight.
 *Depends:* followed S-1, as required.
 
-### S-3 [confirmed] Authorization is positional, not policy
+### S-3 [fixed] Authorization is positional, not policy
 
-`serve()` is one flat chain. Three tiers exist (see `docs/Authorization-Matrix.md` §1): tier A handled
-before any check, tier B calling `isAuthorized()` inline, tier C gated by a single global check at
-`:1508`. Any route inserted above `:1508` is silently unauthenticated.
+`serve()` was one flat chain with three tiers: routes handled before any check, routes calling
+`isAuthorized()` inline, and routes gated by a single global check. Any route inserted above that
+check was silently unauthenticated.
 
-*Fix:* one `AuthorizationPolicy` table consulted per route; handlers receive an authenticated
-principal instead of re-reading headers; the matrix file becomes the reviewed source of truth and a
-table-driven test fails CI if a route has no row.
-*Rollback:* keep old route paths and response shapes untouched; this is dispatch logic only.
+*Fixed in `security/authorization-policy`.* `AuthorizationPolicy.forRequest(uri, method)` is one
+table, consulted once at the top of `serve()`; `authorize()` applies it and hands the dispatcher a
+`Principal` carrying the address and how it was admitted. The default for a path or verb the table
+does not list is `SESSION`, so a new route is protected unless someone deliberately writes the
+matrix row. Inline and global `isAuthorized` calls are gone from the dispatch chain.
+*Tests:* `AuthorizationPolicyTest` — every rule has a row in `Authorization-Matrix.md`, the unlisted
+verb falls back to `SESSION`, an unknown path is authenticated before 404, `/api/call/web` wins over
+the `/api/call/` prefix, and only the five URL-bearing GET families accept a ticket. Existing socket
+and `TabSession` suites still pass unchanged.
+*Rollback:* route paths and response shapes are untouched; this is dispatch logic only.
 
 ### S-4 [fixed] Any authenticated client can hang up the phone's active call
 
@@ -283,7 +289,9 @@ reasoned from an SDP offer — true of `/api/call/*`, and the reason 64 KiB look
 noticing `/api/relay/*` shares the line.
 *Still open:* the per-frame and per-batch decoded-size caps and the bounded egress queue — a client
 inside the 256 KiB ceiling can still send many batches, and the frames are decoded without a bound on
-what one batch may expand to. And **size is not frequency**: nothing counts requests.
+what one batch may expand to. **Frequency is now bounded** by a per-address token bucket in `serve()`
+(120 burst, 30/s) and a tighter one on presence writes; what remains open is decoded-size expansion,
+not how often a caller may ask.
 *One ceiling worth a second look, not changed without the owner:* `POST /api/messages` at 64 KiB is
 the smallest JSON ceiling on the app's most text-shaped route. The composer puts no `maxlength` on
 the message box and nothing clips `text` server-side, so pasting a log larger than ~60 K characters
@@ -294,8 +302,8 @@ not a security one — so it is written down rather than done here.
 normal-sized action still gets through the ceiling (a guard tested only at the refusal cannot be told
 apart from a block). `CeilingPrecedenceTest` — the three things a per-route size test cannot see: the
 wrapper ceiling clears the envelope ceiling, a refusal at the login route is not charged as a wrong
-PIN guess (with the control that twelve distinct wrong guesses *are*), and a stranger at a tier C
-route is refused for credentials before being told anything about size. Each is verified to fail when
+PIN guess (with the control that twelve distinct wrong guesses *are*), and a stranger at a
+`SESSION` route is refused for credentials before being told anything about size. Each is verified to fail when
 only its own rule is broken.
 
 ### R-2 [partly fixed] Upload limits must hold *while streaming*
@@ -341,11 +349,12 @@ same-name-collision cases on `/upload?path=`, the same sanitizer's two other use
 (`/download-folder?path=` and `/chatupload?filename=`), and the symlink case that only the canonical
 check can answer.
 
-### R-3 [confirmed] Unauthenticated typing presence is forgeable and fillable
-`/api/typing` POST (`:1162-1180`) takes `sender` verbatim with no credential and no rate limit;
-`typingSenders.remove(sender)` on `typing:false` lets one host evict another's presence by reusing its
-name, and the 64-slot cap (`TYPING_SENDER_LIMIT`) can be filled to deny real users. Either bind
-presence to an authenticated session or bound/normalize/rate-limit the public form.
+### R-3 [fixed] Unauthenticated typing presence is forgeable and fillable
+`/api/typing` POST took `sender` verbatim with no credential, and `typingSenders.remove(sender)` on
+`typing:false` let one host evict another's presence by reusing its name.
+*Fixed:* writes now require the room credential, presence is keyed by the caller's normalized address
+rather than its claimed name, names are de-duplicated for display, and a per-address bucket allows one
+write per 400 ms. Reads remain public. Proved by `TypingPresenceTest`.
 
 ### R-4 [confirmed] Wildcard CORS on a credentialed server
 `addCorsHeaders` emits `Access-Control-Allow-Origin: *` on essentially every response, including 401

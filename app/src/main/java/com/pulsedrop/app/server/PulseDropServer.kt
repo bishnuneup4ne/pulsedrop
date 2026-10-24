@@ -173,6 +173,18 @@ class PulseDropServer(
      */
     private val urlTickets = com.pulsedrop.app.security.UrlTicket()
 
+    /**
+     * A flood guard per address. The body ceilings bound one request's cost; this bounds how many
+     * a tab may make. Generous enough for a call at 10 Hz plus every poll, tight enough that a loop
+     * is told to slow down.
+     */
+    private val requestLimiter = com.pulsedrop.app.security.RequestRateLimiter()
+
+    /** Presence is a 2 s heartbeat, so a write faster than one per 400 ms is not a typist. */
+    private val typingLimiter = com.pulsedrop.app.security.RequestRateLimiter(
+        capacity = 1.0, refillPerSecond = 2.5, maxKeys = 256
+    )
+
     @Volatile
     var lastActivityAt: Long = System.currentTimeMillis()
         private set
@@ -656,7 +668,13 @@ class PulseDropServer(
 
     private val sharedFiles = mutableListOf<SharedFile>()
     private val messages = mutableListOf<ClipMessage>()
-    private val typingSenders = mutableMapOf<String, Long>()
+    /**
+     * Presence keyed by the address that wrote it, not by the name it claimed. A name is a display
+     * label; the address is the thing the server can actually check. Keying by name let any host
+     * either impersonate a typist or remove one by sending `typing:false` under their name.
+     */
+    private data class TypingPresence(val name: String, val until: Long)
+    private val typingSenders = mutableMapOf<String, TypingPresence>()
 
     /** Per-client PIN guess counter, so a 4-digit PIN cannot be swept brute-force. */
     private class PinAttempts {
@@ -1123,6 +1141,32 @@ class PulseDropServer(
         put("mime", attachment.mime)
     }
 
+    /**
+     * The caller a route is about to serve. [access] records *how* it was allowed, so a handler
+     * that ever needs to distinguish a ticket from a session has the answer without re-reading
+     * headers; [clientIp] is the address the scope rules use.
+     */
+    internal data class Principal(val clientIp: String, val access: RouteAccess)
+
+    /**
+     * Apply [rule] to this request. Null means "no answer but 401"; the route does not run.
+     *
+     * A ticket is only consulted for the five GET families that name an object — the ones the
+     * browser cannot put a header on. `ticketAuthenticates` re-derives the scope from the URI, so a
+     * ticket cannot be stretched to a different object by a caller-chosen parameter.
+     */
+    private fun authorize(session: IHTTPSession, rule: RouteRule): Principal? {
+        val clientIp = session.remoteIpAddress ?: "127.0.0.1"
+        val access = rule.accessFor(session.method.name)
+        val allowed = when (access) {
+            RouteAccess.PUBLIC, RouteAccess.SELF, RouteAccess.PAIRING -> true
+            RouteAccess.SESSION -> isAuthorized(session)
+            RouteAccess.SESSION_OR_TICKET ->
+                isAuthorized(session) || ticketAuthenticates(session, clientIp)
+        }
+        return if (allowed) Principal(clientIp, access) else null
+    }
+
     private fun isAuthorized(session: IHTTPSession): Boolean {
         if (!isPinRequired || pinCode.isNullOrBlank()) return true
         val clientIp = session.remoteIpAddress ?: "127.0.0.1"
@@ -1168,6 +1212,7 @@ class PulseDropServer(
     private fun ticketAuthenticates(session: IHTTPSession, clientIp: String): Boolean {
         if (session.method != Method.GET) return false
         val scope = when {
+            session.uri == "/api/events" -> EVENT_TICKET_SCOPE
             session.uri.startsWith("/download/") ->
                 "download:" + session.uri.removePrefix("/download/").substringBefore("?")
             session.uri == "/download-folder" ->
@@ -1187,6 +1232,18 @@ class PulseDropServer(
             "application/json",
             "{\"error\":\"Unauthorized. PIN required.\"}"
         )
+        addCorsHeaders(res)
+        return res
+    }
+
+    private fun tooManyRequests(): Response {
+        val res = newFixedLengthResponse(
+            Response.Status.TOO_MANY_REQUESTS,
+            "application/json",
+            "{\"success\":false,\"error\":\"Too many requests\"}"
+        )
+        res.addHeader("Retry-After", "1")
+        res.addHeader("Cache-Control", "no-store")
         addCorsHeaders(res)
         return res
     }
@@ -1235,13 +1292,13 @@ class PulseDropServer(
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
         val method = session.method
-        val clientIp = session.remoteIpAddress ?: "127.0.0.1"
+        val requestIp = session.remoteIpAddress ?: "127.0.0.1"
 
         // Every HTTP hit is a browser still sitting on the page, so the phone can list the
         // desktops connected to it. A browser has no listener, so this is the only way in.
         if (method != Method.OPTIONS) {
             noteWebClient(
-                clientIp,
+                requestIp,
                 session.headers["x-pulse-client"]
                     ?.takeIf { it.isNotBlank() }
                     ?.let { try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it } },
@@ -1262,6 +1319,16 @@ class PulseDropServer(
             addCorsHeaders(res)
             return res
         }
+
+        // A flood guard before anything reads a body or a credential: the ceilings bound what one
+        // request costs, and this bounds how many of them an address may make.
+        if (!requestLimiter.allow(normalizeAddr(requestIp))) return tooManyRequests()
+
+        // The one authorization decision. Every route's requirement is in the table beside this
+        // file; the dispatcher below no longer decides by position whether a route is protected.
+        val rule = AuthorizationPolicy.forRequest(uri, method.name)
+        val principal = authorize(session, rule) ?: return unauthorized()
+        val clientIp = principal.clientIp
 
         // Google Sans, served by this device so the browser client is typed identically
         // to the app on a network with no upstream.
@@ -1335,35 +1402,42 @@ class PulseDropServer(
             return res
         }
 
-        // Typing presence (non-sensitive, open like /api/info)
+        // Typing presence. Reading it stays public like /api/info; writing it now needs the room
+        // credential, because a write is the half a stranger could use to impersonate or evict.
         if (uri == "/api/typing") {
             if (method == Method.GET) {
                 val now = System.currentTimeMillis()
                 val active = synchronized(typingSenders) {
-                    typingSenders.entries.filter { it.value > now }.map { it.key }
+                    typingSenders.entries.filter { it.value.until > now }
+                        .map { it.value.name }
+                        .distinct()
                 }
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", JSONArray(active).toString())
                 addCorsHeaders(res)
                 return res
             } else if (method == Method.POST) {
+                // A tab pings every 2 s while typing, so anything faster is a loop, not a typist.
+                if (!typingLimiter.allow(normalizeAddr(clientIp))) return tooManyRequests()
                 return try {
-                    // Sized for a sender name and a boolean, because that is all this route can use.
-                    // It runs before the credential check by design — presence is open to the room —
-                    // so this ceiling is the only thing between an unauthenticated socket and a body
-                    // written to this phone's storage.
                     bodyTooLarge(session, TYPING_BODY_LIMIT)?.let { return it }
                     val map = HashMap<String, String>()
                     session.parseBody(map)
                     val json = JSONObject(map["postData"] ?: "{}")
-                    val sender = json.optString("sender", "Client $clientIp")
+                    // The name is a label; the address is the key. A caller can rename itself but
+                    // cannot remove or overwrite the presence of a different address.
+                    val sender = json.optString("sender", "")
+                        .takeIf { it.isNotBlank() } ?: "Client $clientIp"
                     val typing = json.optBoolean("typing", true)
+                    val key = normalizeAddr(clientIp)
                     synchronized(typingSenders) {
                         val now = System.currentTimeMillis()
-                        typingSenders.entries.removeAll { it.value <= now }
+                        typingSenders.entries.removeAll { it.value.until <= now }
                         if (typing) {
-                            if (typingSenders.size < TYPING_SENDER_LIMIT) typingSenders[sender] = now + 6000
+                            if (typingSenders.size < TYPING_SENDER_LIMIT || typingSenders.containsKey(key)) {
+                                typingSenders[key] = TypingPresence(sender, now + 6000)
+                            }
                         } else {
-                            typingSenders.remove(sender)
+                            typingSenders.remove(key)
                         }
                     }
                     val res = newFixedLengthResponse(Response.Status.OK, "application/json", "{\"success\":true}")
@@ -1377,7 +1451,6 @@ class PulseDropServer(
 
         // Group threads the browser can join (names only, no pairing secrets)
         if (uri == "/api/threads" && method == Method.GET) {
-            if (!isAuthorized(session)) return unauthorized()
             val arr = JSONArray()
             webThreads.forEach { t ->
                 arr.put(JSONObject().apply {
@@ -1394,10 +1467,6 @@ class PulseDropServer(
 
         // Browser-initiated call: drives the ringing popup on the phone.
         if (uri == "/api/events" && method == Method.GET) {
-            // A header when the browser can send one; a ticket when `EventSource` is the client.
-            if (!isAuthorized(session) && !ticketAllows(session, EVENT_TICKET_SCOPE, clientIp)) {
-                return unauthorized()
-            }
             markActivity()
             val stream = EventStream(clientIp)
             // Cap the fan-out: a page left open for days must not accumulate streams.
@@ -1425,8 +1494,8 @@ class PulseDropServer(
 
         if (uri == "/api/call/web") {
             // Ringing the phone is not free: any LAN host could otherwise pop a fake
-            // incoming-call screen over the visitor's own session.
-            if (!isAuthorized(session)) return unauthorized()
+            // incoming-call screen over the visitor's own session. The table in
+            // AuthorizationPolicy requires a session for this path, before either verb runs.
             if (method == Method.GET) {
                 var c = webCall
                 var live = c != null && c.state != "ended" && c.state != "declined"
@@ -1537,7 +1606,6 @@ class PulseDropServer(
 
         // Browser media legs. `down` is one long chunked body, `up` a ~10 Hz batch POST.
         if (uri == "/api/webcall/down" && method == Method.GET) {
-            if (!isAuthorized(session)) return unauthorized()
             val cid = session.parameters["cid"]?.firstOrNull() ?: ""
             val call = webCall
             if (call == null || call.cid != cid || call.state != "accepted") {
@@ -1558,7 +1626,6 @@ class PulseDropServer(
             return res
         }
         if (uri == "/api/webcall/up" && method == Method.POST) {
-            if (!isAuthorized(session)) return unauthorized()
             return try {
                 // A ~10 Hz batch of base64 Opus frames, so a legit body is tens of kilobytes.
                 // Checked before parseBody: NanoHTTPD reads the whole declared length into a
@@ -1594,7 +1661,6 @@ class PulseDropServer(
 
         // Who is on this server right now, plus who has talked to it recently.
         if (uri == "/api/peers" && method == Method.GET) {
-            if (!isAuthorized(session)) return unauthorized()
             val byIp = LinkedHashMap<String, JSONObject>()
             fun touch(ip: String, name: String?, ts: Long, files: Int, bytes: Long) {
                 if (ip.isBlank()) return
@@ -1709,7 +1775,6 @@ class PulseDropServer(
         // A ticket is what a URL may carry when the request cannot carry a header. Minting one
         // requires an authenticated caller, so a URL lifted from history cannot mint more of them.
         if (uri == "/api/ticket" && method == Method.POST) {
-            if (!isAuthorized(session)) return unauthorized()
             return try {
                 bodyTooLarge(session, JSON_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
@@ -1781,9 +1846,6 @@ class PulseDropServer(
                 res
             }
         }
-
-        // Security check for protected endpoints
-        if (!isAuthorized(session) && !ticketAuthenticates(session, clientIp)) return unauthorized()
 
         // API Files List with IP Isolation
         if (uri == "/api/files" && method == Method.GET) {

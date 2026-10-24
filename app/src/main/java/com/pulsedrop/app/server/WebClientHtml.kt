@@ -3514,7 +3514,7 @@ object WebClientHtml {
         lastTypingPing = now;
         fetch('/api/typing', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, authHeaders()),
           body: JSON.stringify({ sender: MY_NAME, typing: true })
         }).catch(function () {});
       }
@@ -3523,7 +3523,7 @@ object WebClientHtml {
     function clearTyping() {
       fetch('/api/typing', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, authHeaders()),
         body: JSON.stringify({ sender: MY_NAME, typing: false })
       }).catch(function () {});
     }

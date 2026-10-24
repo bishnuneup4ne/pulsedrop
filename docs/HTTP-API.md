@@ -35,8 +35,8 @@ omits the key; absent means "no capabilities claimed", never "unknown".
 | --- | --- | --- |
 | GET / POST | `/api/messages` | Poll / send chat messages |
 | DELETE | `/api/messages` | Retract a message — only what the calling tab itself wrote, and only from the same address |
-| GET | `/api/typing` | Active typing senders |
-| POST | `/api/typing` | Report typing (`sender`, `typing`) — held for 6 s |
+| GET | `/api/typing` | Active typing senders (public, like `/api/info`) |
+| POST | `/api/typing` | Report typing (`sender`, `typing`) — held for 6 s; requires `X-Pulse-Auth`, keyed by caller address, one write per 400 ms |
 | GET | `/api/threads` | Group threads a browser may join (`id`, `title`, `kind`, `members`) |
 | GET | `/api/events` | Server-sent events stream (`text/event-stream`) |
 | POST | `/chatupload` | Chat attachment upload |
@@ -225,7 +225,7 @@ a ceiling first, from the declared `Content-Length`, with `413` and `Cache-Contr
 
 | Route | Ceiling |
 | --- | --- |
-| `POST /api/typing` (no credential) | 4 KiB |
+| `POST /api/typing` | 4 KiB |
 | `POST /api/auth` (no credential) | 8 KiB |
 | `POST /api/pair/*`, `/api/call/*`, `/api/relay/*` (key-gated, not PIN-gated) | 64 KiB |
 | `POST /api/call/web`, `/api/delete`, `/api/messages`, `/api/ticket` | 64 KiB |
@@ -238,7 +238,12 @@ back to 2 GiB rather than to unlimited.
 
 A client that *under*-declares `Content-Length` is not refused and is not read: `parseBody` stops at the
 declared count, so the remaining bytes stay in the socket to be parsed as the next pipelined request.
-These ceilings bound size, not frequency — nothing counts requests yet except the PIN-guess counter.
+
+Separately from size, `serve()` counts requests: a per-address token bucket (120 at rest, refilled at
+30/s) answers `429 Too Many Requests` with `Retry-After: 1` and `Cache-Control: no-store` when a
+caller outruns it. Presence writes have a tighter bucket, one per 400 ms, because the tab's own
+heartbeat is one per 2 s. The counters are in memory and reset on restart; this is flood protection,
+not an account quota.
 
 Uploads land under a name of the phone's own making — `.<uuid>.part`, renamed into place once the bytes
 have been written or decrypted — so a transfer that fails leaves nothing in the received folder that
