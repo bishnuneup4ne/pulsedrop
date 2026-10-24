@@ -131,7 +131,7 @@ memory: it resets on process death.
 | POST | `/api/call/invite` | `:1486` | key-gated downstream | calls | by design | PIN-exempt; a LAN host can attempt to raise the incoming-call UI. Must confirm `CallEngine.handleInvite` rejects unknown pairing ids. |
 | POST | `/api/call/response` | `:1487` | key-gated downstream | calls | by design | |
 | POST | `/api/call/end` | `:1491` | key-gated downstream | calls | by design | |
-| POST | `/api/relay/post` | `:1474`, `handleRelay` `:260` | per-device relay proof | mailbox | by design | `verifyRelayAuth(pid, "post", proof)` (`:270`) — role-scoped proof, 64 KiB envelope cap (`:298`). Sound shape. |
+| POST | `/api/relay/post` | `:1474`, `handleRelay` `:260` | per-device relay proof | mailbox | by design | `verifyRelayAuth(pid, "post", proof)` (`:270`) — role-scoped proof, 64 KiB envelope cap (`:298`). Sound shape. The POST carrying an envelope is bounded separately, at four envelopes (`:1637`): the body is the envelope plus `role`, `to` and quoting, so a ceiling equal to the envelope's own refuses the last few dozen bytes of mail the relay would have accepted — and refuses them with a status the sender cannot act on, rather than the relay's own `too large`. |
 | POST | `/api/relay/pull` | as above | per-device relay proof | own mailbox | by design | `role = "pull"`; returns only `relayMailbox.pending(senderDid)` (`:280`) — the proof's device id, not the caller's. Correct isolation. |
 | POST | `/api/relay/pair-poll` | `:261-266` | **none** | pair answers | **gap** | This is the one relay sub-route that returns before `pairManager` is consulted (`:267` is below it). `takePairAnswer(json.optString("reqId"))` is driven by a caller-supplied `reqId` with no proof of any kind. Whether that is exploitable depends on what a pair answer contains and how guessable `reqId` is — it must be tested, not assumed. |
 
@@ -240,7 +240,7 @@ scope, which had no backlog entry until now).
 
 | ID | Status | Finding |
 | --- | --- | --- |
-| **P-1** | Partially fixed | No rate limit anywhere except the PIN-guess counter. **Every route that reads a body now answers a ceiling first, from the declared `Content-Length` and before `parseBody` runs:** `TYPING_BODY_LIMIT` 4 KiB (`:1278`) and `LOGIN_BODY_LIMIT` 8 KiB (`:1583`) on the two tier A routes that take no credential, `JSON_BODY_LIMIT` 64 KiB on the tier A pairing/call/relay group (`:1637`), on `/api/call/web` (`:1380`), `/api/delete` (`:1767`) and `POST /api/messages` (`:1821`), `WEB_CALL_BODY_LIMIT` 256 KiB on `/api/webcall/up` (`:1487`), and `uploadBudgetBytes(cacheDir)` — free space less headroom — on `/upload` (`:2057`) and `/chatupload` (`:2247`). All answer 413 with `Cache-Control: no-store`. Still open: **size is not frequency**, and nothing counts requests, so a tab inside every ceiling can still ask as often as the socket allows; and only the relay envelope (`MAX_RELAY_ENVELOPE`) was ever capped against a decoded payload. |
+| **P-1** | Partially fixed | No rate limit anywhere except the PIN-guess counter. **Every route that reads a body now answers a ceiling first, from the declared `Content-Length` and before `parseBody` runs:** `TYPING_BODY_LIMIT` 4 KiB (`:1278`) and `LOGIN_BODY_LIMIT` 8 KiB (`:1583`) on the two tier A routes that take no credential, `JSON_BODY_LIMIT` 64 KiB on `/api/call/web` (`:1380`), `/api/delete` (`:1767`) and `POST /api/messages` (`:1821`), `RELAY_BODY_LIMIT` 256 KiB — four envelopes — on the tier A pairing/call/relay group (`:1637`), `WEB_CALL_BODY_LIMIT` 256 KiB on `/api/webcall/up` (`:1487`), and `uploadBudgetBytes(cacheDir)` — free space less headroom — on `/upload` (`:2057`) and `/chatupload` (`:2247`). All answer 413 with `Cache-Control: no-store`. The dispatcher is kept off `JSON_BODY_LIMIT` because that number is *equal* to `MAX_RELAY_ENVELOPE` and a relay POST is a wrapper strictly larger than the envelope inside it: equal ceilings refuse the top of the relay's own budget before the relay rule can answer. Still open: **size is not frequency**, and nothing counts requests, so a tab inside every ceiling can still ask as often as the socket allows; and only the relay envelope (`MAX_RELAY_ENVELOPE`) was ever capped against a decoded payload. |
 | **P-2** | Confirmed | `POST /api/typing` accepts a self-declared `sender` with no authentication (`:1167`) and lets any host evict another's presence by name (`:1173-1176`); 64 entries is the only bound. |
 | **P-3** | Needs test | `/api/info` discloses `tlsError` text (`:1137`) and `deviceId` (`:1140`) to any LAN host. |
 
@@ -288,6 +288,12 @@ The table-driven suite must, for **each row above**, assert status and body-shap
     before the read from a refusal after it. Still untested: frequency (no rate limit exists to test)
     and a body whose declared length is a lie in the under-declaring direction, which NanoHTTPD does
     not read at all.
+    *Added here, because per-route sizes do not cover the relations between them:*
+    `CeilingPrecedenceTest` asserts that the wrapper ceiling clears the envelope ceiling, that a
+    refusal at the login route is not charged to the PIN lockout — with the control that twelve
+    distinct wrong guesses are, so the loop cannot pass vacuously — and that a stranger hitting a
+    tier C route with an oversized body is refused for credentials, not told the route is
+    size-sensitive. Each case was checked to go red only when its own rule is broken.
 12. path traversal on `/download-folder?path=`: `../../`, `%2e%2e%2f`, absolute paths, `\`
     separators, NUL, `..%00`, Unicode-normalised fullwidth `．．／`, symlink under
     `WebDrop_Received`, depth beyond 4 segments.

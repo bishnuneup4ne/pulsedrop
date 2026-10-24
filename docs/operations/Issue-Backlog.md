@@ -196,11 +196,39 @@ would have been dead code.
 *Fixed in `security/object-scope`:* `bodyTooLarge(session, WEB_CALL_BODY_LIMIT)` runs **before**
 `parseBody` and refuses from the declared `Content-Length` at 256 KiB, sized for one ~10 Hz batch of
 frames; the same guard covers `/api/call/web` at 64 KiB. Both answer 413 with `Cache-Control:
-no-store`. *Still open:* the per-frame and per-batch decoded-size caps and the bounded egress queue
-are not written — a client inside the 256 KiB ceiling can still send many batches, and the frames are
-decoded without a bound on what one batch may expand to.
-*Tests:* oversized frame batch and oversized signaling post → 413, and a normal-sized action still
-gets through the ceiling (the guard is a ceiling, not a block).
+no-store`.
+*Finished in `security/upload-ceilings`:* the other seven routes that read a body — typing (4 KiB),
+login (8 KiB), the signaling dispatcher, `/api/delete`, `POST /api/messages` (64 KiB each), and both
+upload routes against `uploadBudgetBytes(cacheDir)`, free space less headroom, which is the right
+shape for a file and was not available as a constant.
+*Corrected here, and it was load-bearing:* under-declaring is not a fill risk. `parseBody` reads
+`min(remaining, 512)` per pass and counts the declaration down, so it stops wherever the client said
+it would and leaves the surplus unread in the socket; the fill is *over*-declaration plus streaming it.
+Which is exactly why answering the header is a real ceiling rather than a courtesy — the spool cannot
+exceed what it bounds, and the two heap copies behind it cannot exceed the spool.
+*Fixed here:* the dispatcher's ceiling was `JSON_BODY_LIMIT`, which is **equal** to
+`MAX_RELAY_ENVELOPE`. The relay routes carry an envelope *inside* the POST, so the body is always
+larger than what the relay rule accepts; equal ceilings refused the last few dozen bytes of the
+relay's own budget with a 413 the sender cannot act on, instead of the relay's own "too large", which
+it can. The dispatcher now has `RELAY_BODY_LIMIT` = four envelopes. The comment above that guard
+reasoned from an SDP offer — true of `/api/call/*`, and the reason 64 KiB looked generous — without
+noticing `/api/relay/*` shares the line.
+*Still open:* the per-frame and per-batch decoded-size caps and the bounded egress queue — a client
+inside the 256 KiB ceiling can still send many batches, and the frames are decoded without a bound on
+what one batch may expand to. And **size is not frequency**: nothing counts requests.
+*One ceiling worth a second look, not changed without the owner:* `POST /api/messages` at 64 KiB is
+the smallest JSON ceiling on the app's most text-shaped route. The composer puts no `maxlength` on
+the message box and nothing clips `text` server-side, so pasting a log larger than ~60 K characters
+to your own phone now answers 413 rather than arriving. Bumping it to the 256 KiB the media batch
+already undertakes to read is the obvious move, and it is a product decision about what a note may be,
+not a security one — so it is written down rather than done here.
+*Tests:* `UploadCeilingTest` and `ObjectScopeTest` — the refusals, the uploads that fit, and that a
+normal-sized action still gets through the ceiling (a guard tested only at the refusal cannot be told
+apart from a block). `CeilingPrecedenceTest` — the three things a per-route size test cannot see: the
+wrapper ceiling clears the envelope ceiling, a refusal at the login route is not charged as a wrong
+PIN guess (with the control that twelve distinct wrong guesses *are*), and a stranger at a tier C
+route is refused for credentials before being told anything about size. Each is verified to fail when
+only its own rule is broken.
 
 ### R-2 [partly fixed] Upload limits must hold *while streaming*
 `/upload` takes `?path=` from the query, has a free-space preflight and timestamp-suffix duplicate
