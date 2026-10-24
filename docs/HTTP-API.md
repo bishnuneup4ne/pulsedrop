@@ -174,6 +174,11 @@ IPv4/IPv6 normalisation:
   `GET /api/call/web` reports the live `cid` to every authorized tab. `action=end` now fails with
   `No open call`, `Unknown call` or `Not your call` rather than always reporting success — the shipped
   tab ignores that response, a third-party client that checked it should be updated.
+* A chat attachment is readable by the tab that uploaded it, or by anyone allowed to read a message that
+  carries it — which is the same thread rule `/api/messages` uses, in one function both routes call.
+  An attachment stored but not yet sent belongs to its uploader alone. `/chatfile/{id}` answers **404**
+  rather than 403 for someone else's id: the id is a UUID, and "that attachment exists but is not yours"
+  would disclose who is chatting to a tab that was only probing.
 
 JSON bodies are capped from the declared `Content-Length` before they are read: 64 KiB on
 `/api/call/web`, 256 KiB for one batched uplink on `/api/webcall/up`. NanoHTTPD imposes no limit of

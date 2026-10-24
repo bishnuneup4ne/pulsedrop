@@ -11,6 +11,10 @@ Once work lands the annotation changes rather than the item disappearing: **[fix
 behaviour is implemented *and* asserted by a test on the branch, **[partly fixed]** names what is
 still open in the same entry. A finding is never closed by editing its heading.
 
+`S-`/`R-`/`K-` ids are this file's and are shared with `docs/Authorization-Matrix.md`. `A-1` below is
+the matrix's own numbering for a hole this document had not itemised — filed here so the two lists
+cannot disagree, and tracked as GitHub issue #17.
+
 Baseline: `main` @ `98c2a40`, app `2.0.2` / versionCode 12. PRD reviewed the same commit, so it is
 not stale. Findings the PRD asserted were re-checked here rather than copied.
 
@@ -120,6 +124,22 @@ is still not readable, and the uploader of a folder's records is not locked out 
 *distinct* client addresses, which a test bound to 127.0.0.1 cannot present honestly.
 *Still open:* streaming instead of pre-building the zip — the cap bounds the damage, it does not
 remove the temp file.
+
+### A-1 [fixed] `/chatfile/{id}` served any client's chat attachment
+
+After the room-wide gate this route looked the id up in `chatAttachments` and streamed the bytes: no
+owner, no target, no thread test — while `/download/` and `/preview/` each had one. Any tab holding an
+id had the file, including one the phone had stored but never sent.
+
+*Fixed on `security/object-scope`.* The grant is the rule `/api/messages` already applied to *text*:
+readable if you uploaded it, or if a message you are allowed to read carries it. `threadIsVisibleTo`
+was hoisted out of the message loop so both routes answer from one implementation — writing the second
+copy is precisely how the attachment store ended up with none. Unknown *or* not-yours is 404, because a
+UUID that answers "real, but not yours" tells a probing tab who is chatting.
+*Tests:* six in `ObjectScopeTest` — an unsent phone attachment is refused, a room-posted one is allowed,
+one sent into another address's thread is refused, one sent into *this* address's thread is granted, a
+group the phone opened grants, and the uploading tab can still preview before sending (a check that
+broke the composer would be a worse bug than the one it closed).
 
 ### S-6 [confirmed] Keystore failure silently writes a raw private key
 

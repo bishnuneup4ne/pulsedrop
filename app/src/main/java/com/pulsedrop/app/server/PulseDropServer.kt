@@ -530,6 +530,49 @@ class PulseDropServer(
             sameAddr(file.uploadedByIp, clientIp)
 
     /**
+     * Whether a browser may read a message in this thread — the room, an address book, or a group.
+     *
+     * Hoisted out of `/api/messages` because `/chatfile/{id}` has to answer the identical question,
+     * and having the answer in one place is the point: the attachment store served any client any
+     * attachment precisely because nobody had written this rule down for it.
+     *
+     * [hostIp] is passed in rather than looked up here because this runs per message, and
+     * enumerating interfaces per message is a real cost on a phone.
+     */
+    private fun threadIsVisibleTo(threadId: String?, senderIp: String?, clientIp: String, hostIp: String): Boolean {
+        // A message with no thread is the open room, which every client in it may read.
+        if (threadId == null) return true
+        // Anyone may read what they wrote, including a message addressed somewhere they cannot
+        // otherwise see — that is what lets a tab retract its own send.
+        if (sameAddr(senderIp, clientIp)) return true
+        // The phone hosting this server is who every tab dials. A reply it wrote into its own
+        // address book must reach the tab watching that conversation, and the phone is not a
+        // browser, so it never matches the `ip:<tab>` test below by itself.
+        if (threadId == "ip:$hostIp" && sameAddr(senderIp, hostIp)) return true
+        // The thread key is the address as the writer saw it; compare normalised forms or a tab
+        // loses its own conversation across an IPv4/IPv6 flip.
+        if (threadId.startsWith("ip:") && normalizeAddr(threadId.substring(3)) == normalizeAddr(clientIp)) return true
+        // A group the phone opened to browsers is open to the browsers it opened it for.
+        return webThreads.any { it.id == threadId }
+    }
+
+    /**
+     * Whether a browser may read a chat attachment's bytes: it uploaded them, or a message this
+     * client is allowed to see carries that attachment id. An upload that has not been sent yet
+     * belongs to its uploader alone.
+     */
+    private fun chatFileIsVisibleTo(id: String, clientIp: String): Boolean {
+        val stored = synchronized(chatAttachments) { chatAttachments[id] } ?: return false
+        if (sameAddr(stored.uploadedByIp, clientIp)) return true
+        val hostIp = NetworkUtils.getLocalIpAddress()
+        return synchronized(messages) {
+            messages.any {
+                it.attachment?.id == id && threadIsVisibleTo(it.threadId, it.clientIp, clientIp, hostIp)
+            }
+        }
+    }
+
+    /**
      * A response to send instead of reading this body, or null if it is small enough. NanoHTTPD
      * 2.3.1 imposes no ceiling of its own — `parseBody` allocates the whole `Content-Length` as a
      * Java String for a JSON post — so one large POST is enough to run the phone out of heap.
@@ -581,7 +624,15 @@ class PulseDropServer(
     private val chatAttachments = LinkedHashMap<String, ChatFile>()
 
     /** A file owned by a chat message. Chat history is restart-scoped, so is its store. */
-    private data class ChatFile(val attachment: ChatAttachment, val file: File)
+    /**
+     * A chat attachment and who may read it.
+     *
+     * `uploadedByIp` is the tab that POSTed the bytes, or null when the phone wrote them. It is not
+     * enough on its own: an attachment the *phone* sends must reach the browser on the other side of
+     * that thread, and an attachment a tab uploaded but never sent belongs to nobody else. The rest
+     * of the answer is in `messages` — see [chatFileIsVisibleTo].
+     */
+    private data class ChatFile(val attachment: ChatAttachment, val file: File, val uploadedByIp: String?)
 
     private fun chatDir(): File =
         File(context.getExternalFilesDir(null) ?: context.filesDir, "WebDrop_Chat").apply { if (!exists()) mkdirs() }
@@ -1000,24 +1051,12 @@ class PulseDropServer(
                 return null
             }
             val attachment = ChatAttachment(id, safeName, size, guessMimeType(safeName))
-            synchronized(chatAttachments) { chatAttachments[id] = ChatFile(attachment, target) }
+            synchronized(chatAttachments) { chatAttachments[id] = ChatFile(attachment, target, null) }
             attachment
         } catch (e: Exception) {
             target.delete()
             null
         }
-    }
-
-    /** Registers an already written file (the browser upload path) as a chat attachment. */
-    private fun registerChatAttachment(file: File, name: String): ChatAttachment {
-        val attachment = ChatAttachment(
-            id = UUID.randomUUID().toString(),
-            name = name,
-            size = file.length(),
-            mime = guessMimeType(name)
-        )
-        synchronized(chatAttachments) { chatAttachments[attachment.id] = ChatFile(attachment, file) }
-        return attachment
     }
 
     /** The on-disk file behind a chat attachment, for the app's own previewer. */
@@ -1679,6 +1718,12 @@ class PulseDropServer(
         // Serve a chat attachment inline (preview) or as a download
         if (uri.startsWith("/chatfile/") && method == Method.GET) {
             val id = uri.removePrefix("/chatfile/").substringBefore("?")
+            if (!chatFileIsVisibleTo(id, clientIp)) {
+                // 404, not 403: the id is a UUID, and refusing to say whether it exists costs this
+                // route nothing while telling a probing tab "that attachment is real and not yours"
+                // is a disclosure of who is chatting.
+                return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Attachment not found")
+            }
             return handleChatFileDownload(session, id)
         }
 
@@ -1710,34 +1755,18 @@ class PulseDropServer(
         if (uri == "/api/messages") {
             if (method == Method.GET) {
                 val arr = JSONArray()
-                val groupIds = webThreads.map { it.id }.toSet()
                 // The phone hosting this server is the one every tab dials; a browser reads and
-                // writes that conversation under the host's own address, "ip:<selfIp>". The tab's
-                // own messages on it are caught by `mine`, but the phone's replies would otherwise
-                // be dropped below (the thread key is the host, not the tab) - so remember the host
-                // book to let those replies back to the tab that is watching it.
+                // writes that conversation under the host's own address, "ip:<selfIp>".
                 val hostIp = NetworkUtils.getLocalIpAddress()
-                val hostBook = "ip:" + hostIp
-                val myAddr = normalizeAddr(clientIp)
                 synchronized(messages) {
                     for (m in messages) {
                         // A browser sees the public room, its own address book, the groups
                         // the phone opened to browsers, and anything it sent itself - so a
                         // browser-to-browser thread reads the same on both sides. Never
                         // another host's direct thread, and never a pair conversation,
-                        // which stays on the phones.
-                        val thread = m.threadId
-                        val mine = sameAddr(m.clientIp, clientIp)
-                        // A reply the phone wrote into its own address book belongs to whichever
-                        // tab is watching it - the phone is not a browser and so never matches
-                        // `thread == "ip:<tab>"`, yet without this the tab sees a silent phone.
-                        val fromHost = thread == hostBook && sameAddr(m.clientIp, hostIp)
-                        // The thread key is the address as the writer saw it; compare normalised
-                        // forms or a tab loses its own conversation across an IPv4/IPv6 flip.
-                        val ownBook = thread != null && thread.startsWith("ip:") &&
-                                normalizeAddr(thread.substring(3)) == myAddr
-                        if (thread != null && !mine && !fromHost && !ownBook &&
-                            thread !in groupIds) continue
+                        // which stays on the phones. Same rule `/chatfile/{id}` applies to
+                        // the bytes a message points at.
+                        if (!threadIsVisibleTo(m.threadId, m.clientIp, clientIp, hostIp)) continue
                         arr.put(JSONObject().apply {
                             put("id", m.id)
                             put("text", m.text)
@@ -2193,7 +2222,10 @@ class PulseDropServer(
                 return jsonResponse(false, "error" to "Empty upload")
             }
             val attachment = ChatAttachment(id, safeName, size, guessMimeType(safeName))
-            synchronized(chatAttachments) { chatAttachments[id] = ChatFile(attachment, target) }
+            // Recorded against the socket, not against anything the client declared: this is the only
+            // route where the uploader gets to read the bytes before a message exists to scope them.
+            val uploader = session.remoteIpAddress ?: "127.0.0.1"
+            synchronized(chatAttachments) { chatAttachments[id] = ChatFile(attachment, target, uploader) }
             markActivity()
             jsonResponse(true, "attachment" to attachmentJson(attachment))
         } catch (e: Exception) {

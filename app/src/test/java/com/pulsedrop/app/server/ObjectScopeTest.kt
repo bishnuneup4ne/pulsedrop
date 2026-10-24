@@ -1,13 +1,18 @@
 package com.pulsedrop.app.server
 
+import android.net.Uri
+import com.pulsedrop.app.model.ChatAttachment
+import java.io.ByteArrayInputStream
 import java.io.File
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -250,5 +255,85 @@ class ObjectScopeTest {
             "traversal stays closed while ownership is added",
             answer.status == 404 || answer.status == 403
         )
+    }
+
+    // -- A chat attachment is somebody's bytes too ---------------------------
+
+    /**
+     * An attachment written by the **phone**, which is the only way to make one this tab did not
+     * upload: `/chatupload` always records loopback as its uploader, and loopback is also the
+     * requester, so the uploader rule alone would wave everything through.
+     */
+    private fun phoneAttachment(name: String, bytes: ByteArray): ChatAttachment? {
+        val uri = Uri.parse("content://pulsedrop.test/$name")
+        shadowOf(RoomHttp.appContext().contentResolver).registerInputStream(uri, ByteArrayInputStream(bytes))
+        return server.storeChatAttachment(uri, name)
+    }
+
+    private fun chatFile(id: String) =
+        http.call("GET", "/chatfile/$id", mapOf("X-Pulse-Auth" to token))
+
+    @Test
+    fun `an attachment the phone has not sent yet is not the room's to read`() {
+        // The hole this closes: `/chatfile/{id}` checked nothing at all, while `/download/{id}` and
+        // `/preview/{id}` each asked who owned the file. Any tab in the room holding the id had the
+        // bytes -- including a file still sitting unsent in the phone's own composer.
+        val attachment = phoneAttachment("draft.txt", "not posted anywhere".toByteArray())
+        assertNotNull("the fixture must actually have written a file", attachment)
+        val answer = chatFile(attachment!!.id)
+        assertEquals("unsent means not yours", 404, answer.status)
+    }
+
+    @Test
+    fun `a chat attachment posted to the room is readable by the room`() {
+        val attachment = phoneAttachment("room.txt", "for everyone".toByteArray())!!
+        server.addMessage("look", "Phone", clientIp = null, threadId = null, attachment = attachment)
+        val answer = chatFile(attachment.id)
+        assertEquals("a message with no thread is the open room", 200, answer.status)
+        assertTrue(answer.body.contains("for everyone"))
+    }
+
+    @Test
+    fun `an attachment sent into another tab's thread is not mine`() {
+        val attachment = phoneAttachment("theirs.txt", "addressed elsewhere".toByteArray())!!
+        // The phone wrote this into somebody else's address book. This test's tab is loopback, and
+        // the book is 10.9.9.9's, so the bytes must stay closed -- which is the cross-client read
+        // that `/download/` already refused and this route never did.
+        server.addMessage(
+            "psst", "Phone", clientIp = "10.9.9.9", threadId = "ip:10.9.9.9", attachment = attachment
+        )
+        assertEquals(404, chatFile(attachment.id).status)
+    }
+
+    @Test
+    fun `a thread the reader belongs to grants its attachment`() {
+        val attachment = phoneAttachment("mine.txt", "this one is mine".toByteArray())!!
+        server.addMessage(
+            "hello", "Other tab", clientIp = "10.9.9.9", threadId = "ip:127.0.0.1", attachment = attachment
+        )
+        // The phone wrote to this tab's book from another address: the thread key names the reader.
+        assertEquals(200, chatFile(attachment.id).status)
+    }
+
+    @Test
+    fun `a group the phone opened to browsers grants its attachments`() {
+        val attachment = phoneAttachment("group.txt", "shared in the group".toByteArray())!!
+        server.webThreads = listOf(WebThread("group:demo", "Demo", "group", listOf()))
+        server.addMessage("hi", "Phone", clientIp = null, threadId = "group:demo", attachment = attachment)
+        assertEquals(200, chatFile(attachment.id).status)
+        server.webThreads = emptyList()
+    }
+
+    @Test
+    fun `the tab that uploaded an attachment can preview it before sending`() {
+        // The grant has to be one-way: a composer shows the file it just picked, and that message
+        // does not exist yet. Refusing it would break the UI the same release that adds the check.
+        val up = http.postMultipart(
+            "/chatupload?filename=unsent.txt", mapOf("file" to "typed but not sent"), token
+        )
+        assertEquals(200, up.status)
+        val id = Regex("\"id\"\\s*:\\s*\"([^\"]+)\"").find(up.body)?.groupValues?.get(1)
+            ?: throw AssertionError("the upload must hand back an attachment id: ${up.body}")
+        assertEquals(200, chatFile(id).status)
     }
 }
