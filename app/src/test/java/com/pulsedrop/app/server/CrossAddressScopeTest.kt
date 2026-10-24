@@ -136,6 +136,22 @@ class CrossAddressScopeTest {
         )
     }
 
+    @Test
+    fun `naming another tab's attachment id does not publish it`() {
+        val id = upload(tabA, "private.txt", "private bytes")
+
+        val stolen = postMessage(tabB, "{\"text\":\"look at this\",\"attachmentId\":\"$id\"}")
+        assertTrue(
+            "a tab that cannot read the bytes may not put them on a message either: ${stolen.body}",
+            stolen.status in 400..499 || stolen.body.contains("\"success\":false")
+        )
+        assertFalse("the message must not have carried the attachment into the room", messages(tabC).contains(id))
+        assertTrue(
+            "and the bytes stay unreadable by the tab that tried to publish them",
+            TabSession("/chatfile/$id", Method.GET, tabB, requestHeaders = auth()).sendTo(server).status in 403..404
+        )
+    }
+
     // -- hosted files ---------------------------------------------------------
 
     /** Host a file the way a directed send does, without needing an upload to go through first. */

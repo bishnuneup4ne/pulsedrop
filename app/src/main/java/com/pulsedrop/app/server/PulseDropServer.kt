@@ -1838,9 +1838,17 @@ class PulseDropServer(
                         else -> "ip:$to"
                     }
                     val attachmentId = json.optString("attachmentId", "").trim()
-                    val attachment = attachmentId.takeIf { it.isNotEmpty() }?.let { id ->
-                        synchronized(chatAttachments) { chatAttachments[id] }?.attachment
+                    // Naming an attachment is how its bytes reach people who never uploaded them:
+                    // the download route asks whose attachment this is, and publishing one has to
+                    // ask the same question of the same rule, or the refusal downstream is only a
+                    // second way to deliver the file. An id this server has never seen stays
+                    // ignored rather than refused, which is what it did before.
+                    val held = attachmentId.takeIf { it.isNotEmpty() }
+                        ?.let { id -> synchronized(chatAttachments) { chatAttachments[id] } }
+                    if (held != null && !chatFileIsVisibleTo(attachmentId, clientIp)) {
+                        return jsonResponse(false, "error" to "Attachment not yours")
                     }
+                    val attachment = held?.attachment
                     val quoted = json.optString("replyTo").takeIf { it.isNotBlank() }?.let { findMessage(it) }
                     if (text.isNotBlank() || attachment != null) {
                         addMessage(
