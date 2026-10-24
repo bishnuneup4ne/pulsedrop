@@ -22,8 +22,8 @@ android {
     applicationId = "com.pulsedrop.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 12
-    versionName = "2.0.2"
+    versionCode = 13
+    versionName = "2.1.0"
 
     // The version is part of the launcher name rather than a screen to dig through: two builds
     // installed side by side are otherwise indistinguishable, and a beta next to the release is

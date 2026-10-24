@@ -104,7 +104,7 @@ This is the practical blocker for "run the tests".
 
 Reproducible build requirement, read off the project rather than guessed: Gradle 9.3.1 (wrapper),
 `compileSdk 36.1`, `minSdk 24`, `targetSdk 36`, `sourceCompatibility/targetCompatibility Java 11`,
-CI JDK **21**, `app.versionName = "2.0.2"`, `versionCode = 12`.
+CI JDK **21**, `app.versionName = "2.1.0"`, `versionCode = 13`.
 
 ---
 
