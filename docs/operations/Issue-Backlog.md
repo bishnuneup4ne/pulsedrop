@@ -141,6 +141,22 @@ one sent into another address's thread is refused, one sent into *this* address'
 group the phone opened grants, and the uploading tab can still preview before sending (a check that
 broke the composer would be a worse bug than the one it closed).
 
+### A-6 [fixed] Attaching a file published it, and publishing asked no permission
+
+A-1's escalation path, and left open by A-1's own fix: `chatFileIsVisibleTo` was consulted by the
+download route and by nothing else, so `POST /api/messages` looked `attachmentId` up in
+`chatAttachments` and attached whatever id the caller named to its own message. Because the read rule
+follows the message — a room message is readable by the room — publishing was a second way to deliver
+bytes this tab was not allowed to read, and the download route's refusal was only the second door of
+the same room.
+
+*Fixed.* Attaching asks the same predicate as reading, from the same function. An id this server has
+never seen stays **ignored** rather than refused, which is what it did before, so a client that
+already sends a stale attachment id gets the response shape it always got.
+*Tests:* `CrossAddressScopeTest` — the same upload, the same id, two tabs: the tab that uploaded gets
+its own file back, the other cannot publish it. Found by the harness rather than by reading: a
+single-address suite has no second tab to attach *for*, so every suite in the repo passed this route.
+
 ### S-6 [confirmed] Keystore failure silently writes a raw private key
 
 `IdentityKeyPair.kt:26-27` — `loadOrCreate` swallows **any** exception from `fromKeystore()` and
