@@ -119,6 +119,26 @@ reinstalled and now holds a new identity key — the app warns about that case e
 Revoke trust on the old pairing, re-pair, and compare the new 6-digit code aloud before
 trusting the thread.
 
+## Pairing says this phone cannot read its identity key
+
+Two similar sentences, two different remedies, so they are worth telling apart. **About → This
+install** names the state under *Identity key*, and it is the fastest way to know which one you are
+looking at.
+
+- *"the Android keystore refused it and nothing was written in its place"* — the key is intact, this
+  launch just cannot have it. Usually a phone that has not been unlocked since boot, or one whose
+  lock screen changed underneath the keystore. **Unlock the screen and do it again.** Nothing was
+  lost, and the app deliberately did not fall back to a readable copy of the key to keep going.
+- *"cannot be read, and the Android keystore has none either"* — what is stored will not parse as a
+  key, or only half of one is there. The identity is gone. **Nothing was regenerated**, because a new
+  key would leave every other device unable to read this one with nothing on screen to say why, so
+  this phone now refuses to pair rather than pretend. Revoke it on the peers and pair again.
+
+While either is true, the phone keeps working as a browser hub: the open room, transfers to and from
+browsers, and history all still work, because none of them need a pairing. What stops is anything
+that has to say *who this phone is* — pairing itself, sending to a paired phone, read receipts, and
+editing your own older messages. Those say why on the spot instead of half-succeeding.
+
 ## Server stops by itself
 
 The server runs as a `specialUse` foreground service, so Android 15's `dataSync` hours-per-day

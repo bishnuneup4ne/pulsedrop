@@ -138,6 +138,7 @@ class PairedMail(
     ): Boolean {
         return try {
             val payload = messagePayload(text, threadId ?: "pair:${pairing.pid}", reply)
+                ?: return false
             deliverEncrypted(pairing, payload)
         } catch (e: Exception) {
             false
@@ -147,13 +148,20 @@ class PairedMail(
     /**
      * The message id travels inside the ciphertext rather than on the envelope, so a carrier
      * cannot renumber or duplicate mail, and both ends land on the same thread entry.
+     *
+     * Null when this phone has no device id to claim: mail signed by nobody is not mail.
      */
-    private fun messagePayload(text: String, threadId: String, reply: ClipMessage? = null): String {
+    private fun messagePayload(
+        text: String,
+        threadId: String,
+        reply: ClipMessage? = null
+    ): String? {
+        val from = repo.myDeviceIdOrNull() ?: return null
         val json = JSONObject()
             .put("mid", UUID.randomUUID().toString())
             .put("text", text)
             .put("sender", deps.deviceName())
-            .put("from", repo.myDeviceId())
+            .put("from", from)
             .put("ts", System.currentTimeMillis())
             .put("thread", threadId)
         if (reply != null) json.put("reply", replySnapshot(reply))
@@ -210,7 +218,9 @@ class PairedMail(
      * cannot read traffic to a device they are not paired with.
      */
     fun sendGroupMessage(group: ChatGroup, text: String, reply: ClipMessage? = null): Int {
-        val payload = messagePayload(text, "group:${group.id}", reply)
+        // `from` is what makes a sealed copy attributable, and an envelope we cannot sign is not
+        // mail: it is a message from nowhere that the reader has no way to disbelieve.
+        val payload = messagePayload(text, "group:${group.id}", reply) ?: return 0
         var delivered = 0
         for (pid in group.memberPids) {
             val pairing = repo.findPairing(pid) ?: continue
@@ -239,11 +249,12 @@ class PairedMail(
         /** A browser's message carried through our hub keeps its author instead of ours. */
         senderName: String? = null
     ): Int {
+        val from = repo.myDeviceIdOrNull() ?: return 0
         val json = JSONObject()
             .put("mid", mid ?: UUID.randomUUID().toString())
             .put("text", text)
             .put("sender", senderName ?: deps.deviceName())
-            .put("from", repo.myDeviceId())
+            .put("from", from)
             .put("ts", System.currentTimeMillis())
             .put("thread", ROOM_THREAD)
         if (reply != null) json.put("reply", replySnapshot(reply))
@@ -322,9 +333,10 @@ class PairedMail(
             // An "ip:" thread lives in the browser room, which the server marks directly.
             else -> return 0
         }
+        val from = repo.myDeviceIdOrNull() ?: return 0
         val payload = build(
             JSONObject()
-                .put("from", repo.myDeviceId())
+                .put("from", from)
                 // Signals carry the author's name as well as the device id: a reaction is shown to
                 // the reader as a person, while an edit is checked against the id, which is the only
                 // half a renamed peer cannot forge.

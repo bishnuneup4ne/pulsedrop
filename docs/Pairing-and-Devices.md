@@ -77,10 +77,20 @@ In practice the app starts its own server on launch, so this path is the excepti
 
 ## What a pair actually agrees
 
-Each device holds an **EC P-256** identity in `AndroidKeyStore`, falling back to raw key
-preferences where the keystore is unavailable. Pairing runs ECDH; both sides then derive the
-same AES-256-GCM key from the shared point. The secret is never stored — it is re-derived at
-runtime, which is why a pairing survives an app update but not a key change.
+Each device holds an **EC P-256** identity, in `AndroidKeyStore` wherever one exists. A keystore
+that refuses *for this launch* is not a reason to put the key somewhere readable: the refusal is
+counted once per launch and retried on the next, and only after three is the device believed unable
+— at which point the identity does become a raw key in the app's private preferences, which are
+excluded from both cloud backup and device transfer. Whichever of the two stores held the identity
+first holds it for the life of the phone, and nothing is ever generated beside it or in place of it:
+every existing pairing points at the public key this phone already handed out, so a second identity
+is a silent breakage rather than a repair. A phone that cannot read its key says so — in the
+pairing toast, on **About → This install**, and as a row in a crash report — instead of minting a
+working-looking one.
+
+Pairing runs ECDH; both sides then derive the same AES-256-GCM key from the shared point. The
+secret is never stored — it is re-derived at runtime, which is why a pairing survives an app update
+but not a key change.
 
 **Which derivation is used is decided once, by the device accepting the request**, and then
 frozen for the life of that pair:

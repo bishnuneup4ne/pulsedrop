@@ -313,7 +313,7 @@ class PulseDropServer(
             return JSONObject().put("success", false).put("error", "too large")
         }
         // Addressed at us: no reason to queue what we can act on right now.
-        if (to == pm.myDeviceId()) {
+        if (to == pm.myDeviceIdOrNull()) {
             val handled = if (kind == "signal") {
                 pm.handleRelaySignal(envelope)
             } else {
@@ -359,7 +359,7 @@ class PulseDropServer(
         ctB64: String
     ): Boolean {
         val pm = pairManager ?: return false
-        if (toDeviceId.isBlank() || toDeviceId == pm.myDeviceId()) return false
+        if (toDeviceId.isBlank() || toDeviceId == pm.myDeviceIdOrNull()) return false
         val envelope = JSONObject()
             .put("kind", "message")
             .put("from", fromDeviceId)
@@ -1248,7 +1248,7 @@ class PulseDropServer(
                 put("tlsError", tlsError() ?: "")
                 // Lets a client-only phone pick which pairing to sign relay traffic with, and tells
                 // an older build that this host will carry mail for devices with no server.
-                put("deviceId", pairManager?.myDeviceId() ?: "")
+                put("deviceId", pairManager?.myDeviceIdOrNull() ?: "")
                 put("relay", true)
                 // What this phone can really do on the media wire. A peer uses a cap only when both
                 // ends list it, so this is a hardware claim: `LanScanner` records it by address and a
@@ -1645,9 +1645,15 @@ class PulseDropServer(
                 val result: JSONObject = when {
                     uri.startsWith("/api/relay/") -> handleRelay(uri, json, clientIp)
                     uri == "/api/pair/request" && pm != null -> {
-                        pm.handleIncomingRequest(json, clientIp)
-                        pushWebEvent("pair", exceptIp = clientIp)
-                        JSONObject().put("success", true).put("waiting", true)
+                        if (pm.handleIncomingRequest(json, clientIp)) {
+                            pushWebEvent("pair", exceptIp = clientIp)
+                            JSONObject().put("success", true).put("waiting", true)
+                        } else {
+                            // Nothing was queued, so nothing is waiting. The requester is also being
+                            // handed a decline, but it may arrive after this response has already
+                            // been read, and a `success: true` here would outlive both of them.
+                            JSONObject().put("success", false).put("error", "not queued")
+                        }
                     }
                     uri == "/api/pair/response" && pm != null -> {
                         pm.handleIncomingResponse(json, clientIp)
