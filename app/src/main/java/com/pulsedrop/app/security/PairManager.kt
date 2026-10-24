@@ -161,6 +161,7 @@ class PairManager(context: Context, scope: CoroutineScope) {
 
     fun myPubB64(): String = repo.myPubB64()
     fun myDeviceId(): String = repo.myDeviceId()
+    fun myDeviceIdOrNull(): String? = repo.myDeviceIdOrNull()
     fun deviceIdOf(pairing: PairedDevice): String = repo.deviceIdOf(pairing)
     fun secretKey(p: PairedDevice): SecretKeySpec = repo.secretKey(p)
     fun pairForPeer(peer: PeerDevice): PairedDevice? = repo.pairForPeer(peer)

@@ -373,3 +373,14 @@ Where a test contradicts this matrix, the code is wrong until proven otherwise â
   upload succeeds under a name the client did not exactly ask for. No response shape changed and no
   compliant client can see the difference, but a client that was *retrying* on that 500 will now stop
   retrying â€” which is the intended outcome, not a regression.
+- **`PairRepository.myDeviceId()` throws.** Since `security/identity-key`, a phone that cannot read its
+  own identity key raises `IdentityKeyUnavailableException` rather than writing a readable fallback key
+  and carrying on, so any new caller that stamps an identity goes through the nullable door
+  (`myDeviceIdOrNull`, `PairHandshake.myPubOrNull`) and decides for itself what "no identity" means.
+  What that did to the wire, all of it on a branch that used to be a crash or a half-state:
+  `/api/pair/request` can answer `{"success":false,"error":"not queued"}` where it always said
+  `waiting:true`; a decline can arrive with no `pub`; `/api/info`'s `deviceId` can be `""` on a phone
+  whose keystore is refusing (P-3's disclosure claim is unchanged on a healthy one); and sealed mail
+  without a `from` is not sent at all. No shipped client reads a decline's `pub`, and the requester's
+  own `sendPairRequest` never gets as far as the wire when it has no key to put in the request, so the
+  only new body a legacy peer can meet is the `success:false`, which it does not parse.

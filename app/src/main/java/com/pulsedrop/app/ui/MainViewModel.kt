@@ -36,6 +36,7 @@ import com.pulsedrop.app.model.SharedFile
 import com.pulsedrop.app.model.TransferDirection
 import com.pulsedrop.app.model.TransferItem
 import com.pulsedrop.app.model.TransferStatus
+import com.pulsedrop.app.security.IdentityKeyPair
 import com.pulsedrop.app.security.PairManager
 import com.pulsedrop.app.server.PulseDropServer
 import com.pulsedrop.app.server.ServerService
@@ -136,7 +137,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * while the thread is named by the pairing - and only this side can tell the two apart.
      */
     private fun rememberChat(message: ClipMessage, fromPeer: Boolean) {
-        val senderDeviceId = if (fromPeer) peerDeviceIdFor(message.threadId) else pairManager.myDeviceId()
+        val senderDeviceId =
+            if (fromPeer) peerDeviceIdFor(message.threadId) else pairManager.myDeviceIdOrNull() ?: ""
         val displayName = threadDisplayName(message.threadId)
         viewModelScope.launch(Dispatchers.IO) {
             chatStore.record(message, displayName, countsAsUnread = fromPeer)
@@ -484,15 +486,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // The peer says how far it has read; our own sent rows in that thread get their ticks.
         pairManager.onPairedRead = { threadId, through ->
             viewModelScope.launch(Dispatchers.IO) {
-                chatStore.acknowledgeRead(threadId, through, pairManager.myDeviceId(), System.currentTimeMillis())
+                // A receipt with no device id to match against is a receipt nobody sent, so it is
+                // dropped rather than applied to rows that are not ours. Nothing to tell the user: they
+                // did not ask for this, the peer did.
+                val mine = pairManager.myDeviceIdOrNull() ?: return@launch
+                chatStore.acknowledgeRead(threadId, through, mine, System.currentTimeMillis())
             }
         }
         pairManager.relaySender = { pairing, iv, ct -> relayClient.send(pairing, iv, ct) }
         // A phone reading mail from our own mailbox is a local drop, not a remote post:
         // that is how a browser's room message reaches a paired phone that hosts nothing.
         pairManager.hostMailDropper = { pairing, iv, ct ->
-            serverInstance?.dropToRelayMailbox(
-                pairManager.deviceIdOf(pairing), pairManager.myDeviceId(), pairing.pid, iv, ct
+            // The drop is stamped with who it came from, and a stamp this phone cannot back up is
+            // worse than no drop: the browser would see its own message arrive from a stranger.
+            val mine = pairManager.myDeviceIdOrNull()
+            mine != null && serverInstance?.dropToRelayMailbox(
+                pairManager.deviceIdOf(pairing), mine, pairing.pid, iv, ct
             ) == true
         }
         pairManager.relayPairPoller = { ip, port, reqId ->
@@ -1567,7 +1576,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 postEvent("Only ${target.sender} can edit their own message")
                 return@launch
             }
-            chatStore.editIfMine(id, replacement, System.currentTimeMillis(), pairManager.myDeviceId())
+            // An edit is a claim about who wrote the message, so it needs the device id, so it
+            // needs the identity key. Without it the row stays as it is and the user hears why.
+            val mine = pairManager.myDeviceIdOrNull()
+            if (mine == null) {
+                postEvent(IdentityKeyPair.explain())
+                return@launch
+            }
+            chatStore.editIfMine(id, replacement, System.currentTimeMillis(), mine)
             val threadId = target.threadId
             if (threadId != null && !threadId.startsWith("ip:")) {
                 val reached = pairManager.editEverywhere(id, replacement, threadId)

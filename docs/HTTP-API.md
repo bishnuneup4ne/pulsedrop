@@ -92,6 +92,19 @@ pairing id and the role ("post"/"pull") — a "post" token cannot empty a mailbo
 Paths under `/api/pair/` are the family; the handshake is ECDH and the version string it
 carries is what decides KDF v1 versus v2 for the pair.
 
+`POST /api/pair/request` answers `{"success":true,"waiting":true}` only when the request was
+actually queued. It answers `{"success":false,"error":"not queued"}` when it was not — a body with
+no public key, or a phone that cannot read its own identity key — and in the second case it sends
+back a decline as well, which is the one pairing message a phone with no identity can honestly
+produce. A decline may therefore carry no `pub`: only an acceptance names a key, and a requester
+reads `pub` on the accept branch alone.
+
+Nothing about a pairing succeeds quietly on a phone that has no identity. Every point that would
+stamp this device's key checks for one first, so the attempt stays where it was — the request still
+on the Accept screen, the reason in a toast — instead of leaving one side holding a pairing the
+other can never prove. [Pairing and Devices](Pairing-and-Devices.md) has the states and what each
+one means.
+
 ## Calls
 
 | Method | Path | Purpose |

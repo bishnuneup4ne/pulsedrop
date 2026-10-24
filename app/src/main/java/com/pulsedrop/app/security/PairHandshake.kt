@@ -60,6 +60,9 @@ class PairHandshake(
         ) Kdf.V2 else Kdf.V1
 
     fun sendPairRequest(peer: PeerDevice) {
+        // Checked before anything is remembered as "pending": a request carrying no key would sit
+        // there waiting for an answer to a pairing this phone cannot take part in.
+        val myPub = myPubOrNull() ?: return
         val reqId = UUID.randomUUID().toString()
         val (myIp, myPort) = deps.endpoint()
         val relayed = !deps.acceptsInbound()
@@ -69,7 +72,7 @@ class PairHandshake(
                 val body = JSONObject()
                     .put("reqId", reqId)
                     .put("name", deps.deviceName())
-                    .put("pub", repo.myPubB64())
+                    .put("pub", myPub)
                     .put("appVersion", deps.appVersion())
                     .put("myIp", myIp)
                     .put("myPort", myPort)
@@ -153,10 +156,37 @@ class PairHandshake(
         _pendingOutgoing.value = null
     }
 
+    /**
+     * Our identity public key, or null with the reason already told to the user.
+     *
+     * Pairing is the one feature that cannot proceed without a key to hand over, and the outcome to
+     * avoid is a half-pairing: one side storing a device whose key the other side never sent. So
+     * every point that would have stamped our own key passes through here, and an attempt that
+     * cannot be signed leaves the world as it found it — the request still on screen, Accept still
+     * pressable once the key can be read again.
+     */
+    private fun myPubOrNull(): String? = try {
+        repo.myPubB64()
+    } catch (e: IdentityKeyUnavailableException) {
+        events.value = IdentityKeyPair.explain()
+        null
+    }
+
+    /** [myPubOrNull] without the sentence: for the answer that is sendable either way, where a
+     * missing key is not the thing the user asked about. */
+    private fun readMyPubOrNull(): String? = try {
+        repo.myPubB64()
+    } catch (e: IdentityKeyUnavailableException) {
+        null
+    }
+
     fun acceptIncoming(request: IncomingPairRequest) {
+        // Stamped with our key, so without one there is nothing to hand over: the request stays on
+        // the screen and Accept can be pressed again once the key can be read.
+        val myPub = myPubOrNull() ?: return
         val (myIp, myPort) = deps.endpoint()
         val paired = PairedDevice(
-            pid = Crypto.pairId(repo.myPubB64(), request.pubB64),
+            pid = Crypto.pairId(myPub, request.pubB64),
             name = request.name,
             pubB64 = request.pubB64,
             originIp = request.myIp,
@@ -200,15 +230,18 @@ class PairHandshake(
         viaRelay: Boolean = false,
         kdfVersion: Int? = null
     ) {
+        // An acceptance is a promise about a key, so it cannot go without one; a decline says only
+        // "no", which is why a phone with no identity can still send it.
+        val myPub = if (accept) myPubOrNull() ?: return else readMyPubOrNull()
         val body = JSONObject()
             .put("reqId", reqId)
             .put("type", "pair-response")
             .put("accept", accept)
             .put("name", deps.deviceName())
             .put("appVersion", deps.appVersion())
-            .put("pub", repo.myPubB64())
             .put("myIp", myIp)
             .put("myPort", myPort)
+        if (myPub != null) body.put("pub", myPub)
         // Additive: old requesters never see this key (we only ever send V1 to them) and
         // would ignore it anyway; v2 requesters store whatever we decided.
         if (kdfVersion != null && kdfVersion != Kdf.V1) body.put("kdf", kdfVersion)
@@ -240,15 +273,29 @@ class PairHandshake(
 
     /**
      * Handles POST /api/pair/request arriving at our server.
+     *
+     * False when nothing was queued, so the route never reports a request this phone did not take.
      */
-    fun handleIncomingRequest(json: JSONObject, clientIp: String) {
-        val myPub = repo.myPubB64()
+    fun handleIncomingRequest(json: JSONObject, clientIp: String): Boolean {
         val peerPub = json.optString("pub")
-        if (peerPub.isBlank()) return
+        if (peerPub.isBlank()) return false
         // Prefer the address the requester advertises as reachable for replies;
         // the socket peer IP is a fallback (differs under port-forwarding / NAT).
         val reachIp = json.optString("myIp").ifBlank { clientIp }
         val reachPort = json.optInt("myPort", 8080)
+        val myPub = myPubOrNull()
+        if (myPub == null) {
+            // Answer rather than stall: a requester that hears nothing waits out its whole minute,
+            // and a decline is the one pairing message this phone can send without an identity.
+            val (myIp, myPort) = deps.endpoint()
+            scope.launch(Dispatchers.IO) {
+                respondToPair(
+                    json.optString("reqId", ""), false, reachIp, reachPort, myIp, myPort,
+                    json.optBoolean("relay", false)
+                )
+            }
+            return false
+        }
         // Already paired with this exact key: re-answer silently so a device that lost its
         // half of the pairing (missed response, reinstall of state) heals without a prompt.
         val healPid = Crypto.pairId(myPub, peerPub)
@@ -261,7 +308,7 @@ class PairHandshake(
                     json.optBoolean("relay", false), existingKdf
                 )
             }
-            return
+            return true
         }
         val req = IncomingPairRequest(
             reqId = json.optString("reqId", UUID.randomUUID().toString()),
@@ -281,6 +328,7 @@ class PairHandshake(
                 .filter { now - it.timestamp < INCOMING_REQUEST_TTL_MS } + req)
                 .takeLast(MAX_INCOMING_REQUESTS)
         }
+        return true
     }
 
     /** Handles POST /api/pair/response arriving at our server. */
@@ -301,9 +349,10 @@ class PairHandshake(
         // the address the peer itself advertised is all there is to go on.
         val reachIp = json.optString("myIp").ifBlank { clientIp ?: pending.peer.ip }
         val reachPort = json.optInt("myPort", pending.peer.port)
+        val myPub = myPubOrNull() ?: return
         val replaced = repo.addPairing(
             PairedDevice(
-                pid = Crypto.pairId(repo.myPubB64(), peerPub),
+                pid = Crypto.pairId(myPub, peerPub),
                 name = json.optString("name", pending.peer.name),
                 pubB64 = peerPub,
                 originIp = reachIp,
