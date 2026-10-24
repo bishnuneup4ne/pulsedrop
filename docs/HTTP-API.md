@@ -92,6 +92,19 @@ pairing id and the role ("post"/"pull") — a "post" token cannot empty a mailbo
 Paths under `/api/pair/` are the family; the handshake is ECDH and the version string it
 carries is what decides KDF v1 versus v2 for the pair.
 
+`POST /api/pair/request` answers `{"success":true,"waiting":true}` only when the request was
+actually queued. It answers `{"success":false,"error":"not queued"}` when it was not — a body with
+no public key, or a phone that cannot read its own identity key — and in the second case it sends
+back a decline as well, which is the one pairing message a phone with no identity can honestly
+produce. A decline may therefore carry no `pub`: only an acceptance names a key, and a requester
+reads `pub` on the accept branch alone.
+
+Nothing about a pairing succeeds quietly on a phone that has no identity. Every point that would
+stamp this device's key checks for one first, so the attempt stays where it was — the request still
+on the Accept screen, the reason in a toast — instead of leaving one side holding a pairing the
+other can never prove. [Pairing and Devices](Pairing-and-Devices.md) has the states and what each
+one means.
+
 ## Calls
 
 | Method | Path | Purpose |
@@ -155,3 +168,88 @@ One deliberate exception: the PIN is still accepted in `X-Pulse-Auth` from anoth
 A phone uploading to a peer presents the room PIN and an older build cannot negotiate a session
 first, so this keeps mixed-version rooms working. Browsers never receive the PIN, so this is not the
 path that leaks into history or `Referer`.
+
+## Object scope
+
+Passing the room credential is necessary but not sufficient: it says you belong to the room, not that
+every object in it is yours. Three things key off the socket peer address, folded through the same
+IPv4/IPv6 normalisation:
+
+* A received file with no target is room-visible. A file *addressed* to someone is visible to that
+  client and to whoever uploaded it — which is what lets a tab retract its own send
+  (`isMine` in `/api/files`) without seeing anyone else's. Applies to `/api/files`, `/download/{id}`,
+  `/preview/{id}`, `/api/delete` and `/download-folder`.
+* `/download-folder?path=` inherits the rule from the files inside it: if any recorded download under
+  that prefix is not yours, the whole zip is 403. Two ceilings answer 413 before a byte is compressed
+  — 2 000 entries and 512 MiB total — because the zip is built in `cacheDir` on the phone.
+* A browser call record belongs to the tab it was made for. `action=end`, `/api/webcall/down` and
+  `/api/webcall/up` all check that binding; the `cid` is not a capability here, because
+  `GET /api/call/web` reports the live `cid` to every authorized tab. `action=end` now fails with
+  `No open call`, `Unknown call` or `Not your call` rather than always reporting success — the shipped
+  tab ignores that response, a third-party client that checked it should be updated.
+* A chat attachment is readable by the tab that uploaded it, or by anyone allowed to read a message that
+  carries it — which is the same thread rule `/api/messages` uses, in one function both routes call.
+  An attachment stored but not yet sent belongs to its uploader alone. `/chatfile/{id}` answers **404**
+  rather than 403 for someone else's id: the id is a UUID, and "that attachment exists but is not yours"
+  would disclose who is chatting to a tab that was only probing.
+
+### Body ceilings
+
+NanoHTTPD hands `serve()` the headers with the body still in the socket, so a route can refuse a body
+before reading any of it — and once it has called `parseBody`, the whole declared length is already a
+Java String (JSON) or a file in `cacheDir` (multipart). Every route that reads a body therefore answers
+a ceiling first, from the declared `Content-Length`, with `413` and `Cache-Control: no-store`:
+
+| Route | Ceiling |
+| --- | --- |
+| `POST /api/typing` (no credential) | 4 KiB |
+| `POST /api/auth` (no credential) | 8 KiB |
+| `POST /api/pair/*`, `/api/call/*`, `/api/relay/*` (key-gated, not PIN-gated) | 64 KiB |
+| `POST /api/call/web`, `/api/delete`, `/api/messages` | 64 KiB |
+| `POST /api/webcall/up` | 256 KiB — one ~10 Hz batch of base64 frames |
+| `POST /upload`, `POST /chatupload` | free space on the cache volume less 64 MiB headroom, floored at 32 MiB |
+
+The upload ceiling is measured per request rather than fixed, because the honest answer to "how big a
+file may I send you" is "however much this phone has left". A volume that `StatFs` cannot measure falls
+back to 2 GiB rather than to unlimited.
+
+A client that *under*-declares `Content-Length` is not refused and is not read: `parseBody` stops at the
+declared count, so the remaining bytes stay in the socket to be parsed as the next pipelined request.
+These ceilings bound size, not frequency — nothing counts requests yet except the PIN-guess counter.
+
+Uploads land under a name of the phone's own making — `.<uuid>.part`, renamed into place once the bytes
+have been written or decrypted — so a transfer that fails leaves nothing in the received folder that
+looks complete, and two tabs sending to one `?path=` never copy into the same file at the same time. A
+failed upload answers a fixed sentence rather than `e.message`, which from that depth is a filesystem
+path inside the app's private storage.
+
+### Names
+
+`?path=` on `/upload` and `?filename=` on `/chatupload` are the only places a client chooses a name this
+phone stores, and the room credential is shared by every tab in the room, so a name is hostile input. One
+sanitizer (`sanitizeFileName`, applied per segment by `sanitizeRelativePath`) answers all of it, and it
+is worth reading as a list of guarantees rather than as a filter:
+
+* every character outside `A-Z a-z 0-9 space . _ - ( ) [ ] { }` becomes `_`. That is what removes control
+  characters — a CR in a saved name is a response-splitting bug exactly one `Content-Disposition` away,
+  because the header is built from the saved name and NanoHTTPD writes the value out as it was handed it
+  — and with them every markup metacharacter, quote and Unicode directional override;
+* `/` and `\` separate segments instead of surviving inside one, and `.` and `..` segments are dropped, so
+  no name is absolute and none points above `WebDrop_Received`. `/download-folder?path=` goes through the
+  same function and adds a canonical-path containment check on top;
+* leading and trailing dots and spaces are trimmed, so an upload cannot plant a hidden file, a
+  name-that-is-only-dots, or a file in the shape the server uses while a transfer is still landing;
+* at most four segments are kept, and each is truncated to 120 characters with the extension preferred.
+  An extension longer than the whole budget takes the plain truncation: the stem count there is
+  `120 - extension - 1`, which is negative for `a.<300 characters>`, and the exception it threw was
+  caught as an ordinary upload failure — so that name used to cost the transfer rather than be renamed.
+
+A name that sanitizes away to nothing gets a generated one, and the Windows reserved names (`nul`,
+`CON.txt`, `com1.log`) are ordinary files on Android and are not refused.
+
+Two things a name does *not* decide. It does not decide who may read the file — that is the object-scope
+rule above, and `/preview/{id}` answers an upload with the MIME type guessed from the saved extension by a
+table with no HTML row, so an uploaded `page.html` is offered as `application/octet-stream` rather than as
+a document from this origin. And it does not decide who wins when two clients pick the same name: the
+second gets a timestamp suffix if the first has landed, which is an open question, not a policy — see
+backlog `R-2`.

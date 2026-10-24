@@ -7,6 +7,14 @@ Deliverable 3 of the engagement. Every item below is annotated with how well I k
   have not executed yet.
 * **[recommendation]** — proposed work, not a defect claim.
 
+Once work lands the annotation changes rather than the item disappearing: **[fixed]** means the
+behaviour is implemented *and* asserted by a test on the branch, **[partly fixed]** names what is
+still open in the same entry. A finding is never closed by editing its heading.
+
+`S-`/`R-`/`K-` ids are this file's and are shared with `docs/Authorization-Matrix.md`. `A-1` below is
+the matrix's own numbering for a hole this document had not itemised — filed here so the two lists
+cannot disagree, and tracked as GitHub issue #17.
+
 Baseline: `main` @ `98c2a40`, app `2.0.2` / versionCode 12. PRD reviewed the same commit, so it is
 not stale. Findings the PRD asserted were re-checked here rather than copied.
 
@@ -14,7 +22,7 @@ not stale. Findings the PRD asserted were re-checked here rather than copied.
 
 ## P0 — block a "security hardened" release
 
-### S-1 [confirmed] The PIN *is* the browser session token
+### S-1 [fixed] The PIN *is* the browser session token
 
 `PulseDropServer.kt:1448` — `if (success) put("token", pinCode ?: "ok")`.
 `isAuthorized` then compares that value to `pinCode` (`:985`). `WebClientHtml.kt:1662` additionally
@@ -40,7 +48,13 @@ rejected; PIN change revokes old tokens; server restart rejects pre-restart toke
 route rejects invalid/expired/revoked tokens.
 *Depends:* a working JDK/SDK build. *Rollback:* pure code, no persisted state; safe to revert.
 
-### S-2 [confirmed] PIN credentials travel in URLs
+*Shipped as `security/browser-sessions`:* items 1-6, proved by `SessionStoreTest` (9) and
+`ServerSessionAuthTest` (13). The one thing still missing is the operator-facing half of item 4 —
+`revokeAll()` exists and fires on a genuine PIN rotation, but there is no dashboard button that calls
+it, which is `U-1`. The token is hex rather than base64url: `java.util.Base64` is API 26 and
+`lintRelease` fails the build on `minSdk 24`.
+
+### S-2 [partly fixed] PIN credentials travel in URLs
 
 `isAuthorized:987` reads `session.parameters["auth"]`, and the browser builds it in six places —
 `WebClientHtml.kt:2097, 2161, 2405, 3042, 3534, 3893` (including `/api/events`, an SSE URL that a
@@ -69,7 +83,7 @@ principal instead of re-reading headers; the matrix file becomes the reviewed so
 table-driven test fails CI if a route has no row.
 *Rollback:* keep old route paths and response shapes untouched; this is dispatch logic only.
 
-### S-4 [confirmed] Any authenticated client can hang up the phone's active call
+### S-4 [fixed] Any authenticated client can hang up the phone's active call
 
 `:1309-1311` — `action=end` accepts when `cid` is **blank**: `if (c != null && (json.optString("cid").isBlank() || c.cid == ...))`.
 Compare `accept`/`decline` two branches above (`:1302`) which correctly require
@@ -78,37 +92,134 @@ Compare `accept`/`decline` two branches above (`:1302`) which correctly require
 *Risk:* denial of service against a live call by any tab holding the PIN — or, since the whole tier
 becomes public when the PIN is off (`:981`), by any host on the LAN. Also returns `success:true`
 whether or not a call existed, so it cannot be distinguished by the owner.
-*Fix:* require the caller's address to own the `webCall` record, exactly the `:1302` pattern; 403 on
-mismatch. *Tests:* tab A cannot end tab B's call; blank cid no longer ends anything.
+*Fixed in `security/object-scope`.* `end` now answers the three questions `accept`/`decline` already
+asked — is there a live call, does the `cid` name it, is this tab the one the record was made for —
+and reports `No open call` / `Unknown call` / `Not your call` instead of a hollow success. The same
+`sameAddr` binding was missing on `/api/webcall/down` and `/api/webcall/up`, where matching the cid
+was not enough precisely *because* `GET /api/call/web` hands that cid to every authorized tab.
+*Tests:* `ObjectScopeTest` — a tab that does not own the call cannot end it, a blank cid ends nothing,
+a wrong cid leaves the live call alone, the owner still hangs up its own call, ending a call that is
+not running is not reported as success, and the down leg goes only to the owning tab.
 
-### S-5 [confirmed] `/download-folder` has no per-owner scope and no size bound
+### S-5 [fixed] `/download-folder` has no per-owner scope and no size bound
 
 `:1560`, implementation `:1735-1754`. `sanitizeRelativePath` + canonical check prevents escaping
 `WebDrop_Received`, which is good — but there is **no ownership check**, so any authenticated client
 can zip and read another client's *directed* folder, and the ZIP is built into `cacheDir` with no
 cap. `:1770` reflects the exception message into the body.
 
-*Fix:* apply the same sender/receiver predicate used by `/api/files` (`:1517`); cap total expanded
-bytes and entry count; stream rather than pre-build where possible; stop echoing exception text.
-*Tests:* client A cannot download client B's directed folder; oversized folder refuses cleanly; no
-path escapes the root.
+*Fixed in `security/object-scope`.* A folder is not a record, so ownership is **derived** from the
+records inside it: any `SharedFile` whose canonical path is under the requested prefix and which
+`receivedFileIsVisibleTo` rejects makes the whole download 403. `receivedFileIsVisibleTo` is now the
+single predicate behind `/api/files`, `/download`, `/preview` and `/api/delete` — those were four
+hand-written copies comparing raw strings, which locked an owner out of its own file whenever one side
+of the pair was the dual-stack form of the same address (`::ffff:192.168.1.9`). Two bounds are tested
+before a single byte is written: `FOLDER_ZIP_MAX_ENTRIES` = 2 000 and `FOLDER_ZIP_MAX_BYTES` = 512
+MiB, measured against a lazy `take(MAX + 1)` walk so an enormous tree costs one entry and a `sumOf`,
+not a minute of compression; both answer 413 with `Cache-Control: no-store`. The catch logs the
+exception and returns a generic message.
+*Tests:* an oversized folder is refused without writing a zip, a folder outside the received directory
+is still not readable, and the uploader of a folder's records is not locked out of it (200 +
+`application/zip`). Not provable over loopback, and therefore not faked: the 403 branch needs two
+*distinct* client addresses, which a test bound to 127.0.0.1 cannot present honestly.
+*Still open:* streaming instead of pre-building the zip — the cap bounds the damage, it does not
+remove the temp file.
 
-### S-6 [confirmed] Keystore failure silently writes a raw private key
+### A-1 [fixed] `/chatfile/{id}` served any client's chat attachment
 
-`IdentityKeyPair.kt:26-27` — `loadOrCreate` swallows **any** exception from `fromKeystore()` and
-falls through to `fromPrefsOrGenerate`, which at `:60-63` writes `pair.private.encoded` (PKCS#8) as
-base64 into `SharedPreferences`.
+After the room-wide gate this route looked the id up in `chatAttachments` and streamed the bytes: no
+owner, no target, no thread test — while `/download/` and `/preview/` each had one. Any tab holding an
+id had the file, including one the phone had stored but never sent.
+
+*Fixed on `security/object-scope`.* The grant is the rule `/api/messages` already applied to *text*:
+readable if you uploaded it, or if a message you are allowed to read carries it. `threadIsVisibleTo`
+was hoisted out of the message loop so both routes answer from one implementation — writing the second
+copy is precisely how the attachment store ended up with none. Unknown *or* not-yours is 404, because a
+UUID that answers "real, but not yours" tells a probing tab who is chatting.
+*Tests:* six in `ObjectScopeTest` — an unsent phone attachment is refused, a room-posted one is allowed,
+one sent into another address's thread is refused, one sent into *this* address's thread is granted, a
+group the phone opened grants, and the uploading tab can still preview before sending (a check that
+broke the composer would be a worse bug than the one it closed).
+
+### A-6 [fixed] Attaching a file published it, and publishing asked no permission
+
+A-1's escalation path, and left open by A-1's own fix: `chatFileIsVisibleTo` was consulted by the
+download route and by nothing else, so `POST /api/messages` looked `attachmentId` up in
+`chatAttachments` and attached whatever id the caller named to its own message. Because the read rule
+follows the message — a room message is readable by the room — publishing was a second way to deliver
+bytes this tab was not allowed to read, and the download route's refusal was only the second door of
+the same room.
+
+*Fixed.* Attaching asks the same predicate as reading, from the same function. An id this server has
+never seen stays **ignored** rather than refused, which is what it did before, so a client that
+already sends a stale attachment id gets the response shape it always got.
+*Tests:* `CrossAddressScopeTest` — the same upload, the same id, two tabs: the tab that uploaded gets
+its own file back, the other cannot publish it. Found by the harness rather than by reading: a
+single-address suite has no second tab to attach *for*, so every suite in the repo passed this route.
+
+### S-6 [fixed] Keystore failure silently writes a raw private key
+
+Before `security/identity-key`, `IdentityKeyPair.loadOrCreate` swallowed **any** exception from
+`fromKeystore()` and fell through to a path that wrote `pair.private.encoded` (PKCS#8) as base64 into
+`SharedPreferences`.
 
 *Risk:* on a device where Keystore is merely temporarily unavailable (not "unsupported"), a healthy
 hardware-backed identity is never retried and the private key ends up as readable file-backed prefs.
 The alias/prefs keys are what every existing pairing points at, so this cannot be "fixed" by
 regenerating.
 
-*Fix:* distinguish "device genuinely lacks Keystore" from "transient failure"; keep the fallback but
-mark the lifecycle state (`healthy | legacy-fallback | corrupt | lost`), surface it in the dashboard
-and diagnostics, exclude those prefs from backup, and add a migration marker. Never auto-regenerate.
-*Tests:* transient failure does not silently downgrade; existing pairing survives; corrupt prefs
-reports "lost" rather than minting a new identity.
+*Fixed on `security/identity-key`.* The load now asks three different questions instead of one:
+
+- **Which store holds the identity, preferring whichever was written first.** Prefs are read before
+  the keystore, so a phone that fell back once keeps that key after the keystore recovers rather than
+  swapping identities under its own pairings. Nothing is written on this path.
+- **Did the keystore refuse, or does this environment not have one?** A refusal is counted **once per
+  launch** — three taps on Accept are one piece of evidence about the hardware, not three — and the
+  device is believed unable after three. `Security.getProvider("AndroidKeyStore") == null` means no
+  keystore exists to wait out (a JVM test, a ROM with none), and gets a file-backed identity at once.
+  That provider is registered on every Android device that has a keystore, so on a phone the counter
+  is what decides and this branch is dead: it exists so the counter cannot be reached by an
+  environment that was never going to satisfy it.
+- **Is a stored entry unusable?** Half a key pair (`priv` without `pub`, or either one that will not
+  parse) used to be treated as *nothing* and overwritten with a freshly generated identity. It is now
+  reported: `CORRUPT`, the entry left exactly as it was, and a throw.
+
+The failure is a typed one — `IdentityKeyUnavailableException`, carrying `IdentityKeyPair.explain()`,
+which is a sentence about what to do ("unlock the device and try again" versus "pair the other devices
+again") and differs by state. Nothing is auto-regenerated on any path. `IdentityState` is
+`NOT_LOADED | HEALTHY | LEGACY_FILE | CORRUPT | UNAVAILABLE`, and the three surfaces the brief asked
+for are wired: About → *This install* states where the key lives, a crash report carries an
+`| Identity | <state> |` row (the name only, never key material), and `/api/status`'s `deviceId` is
+empty rather than a 500.
+
+Every caller that stamps an identity now asks for it through a nullable door — `PairRepository
+.myDeviceIdOrNull`, `PairManager.myDeviceIdOrNull`, `PairHandshake.myPubOrNull` — because a getter that
+throws reached code with no handler: `PairHandshake.acceptIncoming` ran on the UI thread, and
+`respondToPair` inside an uncaught `scope.launch(Dispatchers.IO)`. The rule each site applies is that a
+claim the phone cannot back up is worse than the action not happening: pairing answers nothing rather
+than half-pairing, sealed mail is not sent without a `from`, a read receipt and a mailbox drop are
+dropped, an edit of your own message tells you why on screen. The request stays on the Accept screen,
+so the retry is still there once the key can be read.
+
+*Tests:* `IdentityKeyFallbackTest` (9 cases) — one refusal writes no private key anywhere; three taps
+are one refusal; a launch that answers clears the count and copies nothing into prefs; a stored key
+wins and the keystore is never asked; a believed-unable device is file-backed once and stays that way
+across a launch where the keystore comes back; half a stored key is reported lost and the bytes are
+untouched; an unreadable entry does not cost a keystore identity; no-keystore is not waited out.
+Mutation-checked, not assumed: restoring the old fall-through fails the first two cases, and counting
+per attempt instead of per launch fails the second. The 24 pre-existing pairing/relay tests, which had
+passed only because any keystore exception wrote a file key, pass unchanged through the
+no-provider branch.
+
+*Still open:* (a) **migration** — the `identity_store` marker is written and nothing reads it. Moving
+an existing `LEGACY_FILE` key into a working keystore is not possible with the stock platform, which
+will generate or wrap-import AES but not import a raw EC private key; it needs either a re-pair or a
+protocol-compatible identity handover, and either way it is a decision, not a cleanup. (b) The About
+row explains the state; no screen offers the *repair* each state implies. (c) Backup exclusion of
+`localdrop_identity.xml` was already in place in both `backup_rules.xml` and
+`data_extraction_rules.xml`, and `webdrop_database.db` is excluded too — verified here, not newly
+added. (d) A `LEGACY_FILE` phone is one root-free app-data read away from having its private key
+copied; that is the documented cost of keeping such devices able to pair at all.
 
 ### S-7 [needs test] Cleartext LAN HTTP is a documented trade-off, not a guarantee
 
@@ -119,21 +230,111 @@ explicit mode and testing legacy clients.
 *Work:* honest status labels ("secure listener ready" ≠ "browser trusts this certificate"), one-tap
 stop/pause, optional strict mode that disables unpaired endpoints.
 
+### S-8 [confirmed] A paired sender can upload but cannot read its own traffic
+
+`pairedSenderIsAuthorized` is consulted on `/upload` only (`:1009`), so a paired phone whose host has
+since rotated the PIN can still push files but gets 401 on `/api/messages`, `/api/threads` and
+`/api/files` — it cannot confirm what it sent was delivered, and the browser tab cannot retract it.
+Documented here because it is a *product* decision as much as a security one: either the pairing
+secret is a credential for the read routes too, or the pairing UI has to say that pairing grants
+upload-only.
+*Work:* decide the intent, then make `isAuthorized` agree with it in one place, and label the pairing
+screen to match.
+
 ---
 
 ## P1 — next release cycle
 
-### R-1 [confirmed] `/api/webcall/up` has no bound on the body or decoded frames
+### R-1 [partly fixed] `/api/webcall/up` has no bound on the body or decoded frames
 `:1344-1359`: base64 batches are decoded and handed to the engine with no size cap; `parseBody` has
-already buffered the request. Add a per-request byte cap, a per-frame cap, and bounded queues.
-*Tests:* oversized body → 413; malformed/truncated frame → rejected without crash; slow client can't
-grow memory.
+already buffered the request. NanoHTTPD 2.3.1 has **no** ceiling of its own — it copies
+`Content-Length` bytes into a Java String for a JSON post, or into a file in `cacheDir` for a
+multipart one, and neither path checks the number first.
+*Correction, because the earlier version of this entry got the library wrong:* it claimed
+`TempFilePostOutputStream` "writes until the disk complains". **That class does not exist in 2.3.1**
+— it belongs to 2.5+ — and `HTTPSession.getTmpBucket()` takes only `TempFile.getName()` and opens its
+own `RandomAccessFile`, so wrapping the `TempFile` to count bytes counts nothing. The conclusion
+survives (the cap cannot live in the library) but the reason was invented, and a ceiling built on it
+would have been dead code.
+*Fixed in `security/object-scope`:* `bodyTooLarge(session, WEB_CALL_BODY_LIMIT)` runs **before**
+`parseBody` and refuses from the declared `Content-Length` at 256 KiB, sized for one ~10 Hz batch of
+frames; the same guard covers `/api/call/web` at 64 KiB. Both answer 413 with `Cache-Control:
+no-store`.
+*Finished in `security/upload-ceilings`:* the other seven routes that read a body — typing (4 KiB),
+login (8 KiB), the signaling dispatcher, `/api/delete`, `POST /api/messages` (64 KiB each), and both
+upload routes against `uploadBudgetBytes(cacheDir)`, free space less headroom, which is the right
+shape for a file and was not available as a constant.
+*Corrected here, and it was load-bearing:* under-declaring is not a fill risk. `parseBody` reads
+`min(remaining, 512)` per pass and counts the declaration down, so it stops wherever the client said
+it would and leaves the surplus unread in the socket; the fill is *over*-declaration plus streaming it.
+Which is exactly why answering the header is a real ceiling rather than a courtesy — the spool cannot
+exceed what it bounds, and the two heap copies behind it cannot exceed the spool.
+*Fixed here:* the dispatcher's ceiling was `JSON_BODY_LIMIT`, which is **equal** to
+`MAX_RELAY_ENVELOPE`. The relay routes carry an envelope *inside* the POST, so the body is always
+larger than what the relay rule accepts; equal ceilings refused the last few dozen bytes of the
+relay's own budget with a 413 the sender cannot act on, instead of the relay's own "too large", which
+it can. The dispatcher now has `RELAY_BODY_LIMIT` = four envelopes. The comment above that guard
+reasoned from an SDP offer — true of `/api/call/*`, and the reason 64 KiB looked generous — without
+noticing `/api/relay/*` shares the line.
+*Still open:* the per-frame and per-batch decoded-size caps and the bounded egress queue — a client
+inside the 256 KiB ceiling can still send many batches, and the frames are decoded without a bound on
+what one batch may expand to. And **size is not frequency**: nothing counts requests.
+*One ceiling worth a second look, not changed without the owner:* `POST /api/messages` at 64 KiB is
+the smallest JSON ceiling on the app's most text-shaped route. The composer puts no `maxlength` on
+the message box and nothing clips `text` server-side, so pasting a log larger than ~60 K characters
+to your own phone now answers 413 rather than arriving. Bumping it to the 256 KiB the media batch
+already undertakes to read is the obvious move, and it is a product decision about what a note may be,
+not a security one — so it is written down rather than done here.
+*Tests:* `UploadCeilingTest` and `ObjectScopeTest` — the refusals, the uploads that fit, and that a
+normal-sized action still gets through the ceiling (a guard tested only at the refusal cannot be told
+apart from a block). `CeilingPrecedenceTest` — the three things a per-route size test cannot see: the
+wrapper ceiling clears the envelope ceiling, a refusal at the login route is not charged as a wrong
+PIN guess (with the control that twelve distinct wrong guesses *are*), and a stranger at a tier C
+route is refused for credentials before being told anything about size. Each is verified to fail when
+only its own rule is broken.
 
-### R-2 [confirmed] Upload limits must hold *while streaming*
-`/upload` at `:1566` takes `?path=` from the query (`:1873`), has a free-space preflight (`:1895`) and
-timestamp-suffix duplicate handling (`:1886`), but a client can send an unbounded body with a missing
-or false `Content-Length`. Enforce per-file/per-client/concurrent/total quotas during the copy, write
-to temp, atomically rename on success only, and clean partials on cancel/disconnect/failure/startup.
+### R-2 [partly fixed] Upload limits must hold *while streaming*
+`/upload` takes `?path=` from the query, has a free-space preflight and timestamp-suffix duplicate
+handling, but nothing bounded the *declared* length: a POST for a file larger than the phone has room
+for was buffered whole into `cacheDir` before `hasFreeSpaceFor` was asked whether the destination
+could hold it. `/chatupload` had no preflight at all.
+*Fixed in `security/upload-ceilings` and `security/upload-names`:*
+* `bodyTooLarge(session, uploadBudgetBytes(context.cacheDir))` before `parseBody` on both upload
+  routes. The budget is what the volume reports free, less 64 MiB headroom, floored at 32 MiB —
+  measured per request, because the question is what this phone can spare now. A volume that cannot
+  be measured falls back to 2 GiB rather than to unlimited, which is deliberately the opposite of
+  `hasFreeSpaceFor`'s fail-open.
+* Bytes land as `.{uuid}.part` and are renamed only after the copy or decrypt completes, so a refused or
+  interrupted transfer leaves nothing that looks like a received file. The landing name carries a uuid
+  rather than the final name because `?path=` is not unique: two tabs sending to one name both find it
+  free, both computed the *same* landing file, and the second one's `renameTo` then had no source left —
+  it answered 500 `Upload failed` for bytes that had arrived whole. `FileNameAdversarialTest` catches
+  that, and reverting the naming turns it red again.
+* A caller-chosen name whose extension alone outran the 120-character budget used to be refused: the
+  stem count is `120 - extension - 1`, which is negative for `a.` + 300 characters, the `take()` threw,
+  and the upload handler caught it as an ordinary failure. It now takes the plain truncation.
+* Neither route reflects `e.message` into the response any more; an exception string from this depth
+  is a filesystem path, and the path is under the app's private storage.
+*Still open, and it is not a small remainder:* per-client, per-concurrent and total quotas; the
+`.part` is cleaned by the same request that wrote it, so a process killed mid-copy leaves one behind
+(a crash-recovery sweep of `.*.part` in `WebDrop_Received` is not written); the `?path=` collision
+policy is undecided — the second sender of one name gets a timestamp suffix when the first has already
+landed and the same name when it has not, and whether a collision should instead be a `409` is a
+response-shape question, not a security one; and the ceiling bounds the *declared* length only. That
+last point is weaker than it sounds in one direction and stronger in the other: a client that
+over-declares is refused, and a client that under-declares is not read at all — `parseBody` stops at
+`Content-Length` — so the unconsumed bytes are left in the socket to be parsed as the next pipelined
+request, which is a request-smelling question (filed separately) rather than a disk-fill one.
+*Tests:* `UploadCeilingTest` — declared length above the budget → 413 on `/upload` and `/chatupload`;
+a 40 MB body streamed against a 32 MiB budget is refused *and* the client could not finish pushing
+it, which is what proves the refusal precedes the read; an upload that fits still arrives byte for
+byte; a completed upload leaves no `.part`; an encrypted upload for an unknown pairing writes nothing
+anywhere; and the budget is `availableBytes - headroom`, floored, tested against `StatFs` rather
+than against the shadow's arithmetic. `FileNameAdversarialTest` — the traversal, control-character,
+header-injection, markup, bidirectional-override, over-long-name, blank-name, reserved-name and
+same-name-collision cases on `/upload?path=`, the same sanitizer's two other users
+(`/download-folder?path=` and `/chatupload?filename=`), and the symlink case that only the canonical
+check can answer.
 
 ### R-3 [confirmed] Unauthenticated typing presence is forgeable and fillable
 `/api/typing` POST (`:1162-1180`) takes `sender` verbatim with no credential and no rate limit;
@@ -167,6 +368,25 @@ may not be. Label it before start/accept. *Also:* `GET /api/relay/...` style pro
 `OPTIONS` returns 200 for any path with wildcard CORS (`:1074`), and `GET /api/auth` reaches the global
 check and 401s instead of 404ing — both reveal which routes exist before any credential is offered.
 Low severity on a LAN; worth folding into S-3 rather than a separate change.
+
+### R-11 [needs verification] Bytes past a short `Content-Length` are parsed as the next request
+Discovered while bounding the upload ceiling, and deliberately not treated as one: `parseBody` reads
+exactly `Content-Length` bytes and returns, so a client that declares 100 and sends 400 MB leaves the
+other 399,999,900 in the socket — and `ClientHandler.run()` loops on `session.execute()` over the *same*
+stream while the connection is open. Those bytes are then parsed as a following HTTP request.
+
+This is not a disk-fill or heap risk, which is why it is P1 rather than P0: nothing is read, so nothing
+is buffered. What it may be is a request-smuggling shape — a pipelined request the tab never sent,
+arriving on a connection whose credential and client address are already established, and NanoHTTPD
+answers HTTP/1.0 per response while accepting HTTP/1.1 pipelining on the read side.
+
+*Needs verification first,* because this is a reading of the bytecode and not yet an observation: two
+requests on one connection, the second one smuggled behind a short `Content-Length`, against a real
+listener, asserting what the server does with it. Until that test exists this entry is a hypothesis and
+should be labelled as one wherever it is repeated.
+
+*Why the number skips:* `R-9` and `R-10` are already taken by the P2 table, which reuses the `R`
+prefix for refactor items. Nothing here was renamed.
 
 ### K-1 [recommendation] Pairing threat-model test suite
 P-256 ECDH + AES-GCM + KDF v1/v2 already have golden-vector tests. Still missing: safety code derived
@@ -231,12 +451,20 @@ Found while checking whether the security automation added to `main` on 2026-10-
 
 ## Dependency order for the first three PRs
 
+Shipped, in the order the dependency actually required:
+
 ```
-JDK 21 + Android SDK present  →  baseline ./gradlew test green
-   └─ S-1 sessions  ─→ S-2 no URL credentials  ─→ S-3 route policy
-                          (tickets need tokens first)
-   └─ S-4, S-5, R-1 are independent and can land in parallel with S-1
+JDK 21 + Android SDK present  →  baseline ./gradlew test green  (362 tests, lint clean)
+   └─ security/browser-sessions   S-1 (+ S-1b browser half)     — 378 tests after it
+   └─ security/object-scope       S-4, S-5, R-1 (body caps)     — needed S-1's tokens in the tests first
+   └─ ci/security-automation      X-1, X-2, X-3 documentation
 ```
+
+Remaining order: **S-2b** (path-scoped tickets so no credential appears in a URL) is next and is a
+smaller change than it looks now that the PIN is gone; **S-3** (route policy instead of chain
+position) wants the object-scope tests in place as its regression net, which is why it follows rather
+than precedes them; **S-4b** (`/chatfile`, matrix `A-1`) and **S-5b** (streaming upload limits, `R-2`)
+are the two remaining P0-class scope holes.
 
 S-6 (identity fallback) and S-7 (transport labelling) touch protocol compatibility and device state;
 they get their own PR after the auth chain, with a migration plan rather than a behaviour flip.

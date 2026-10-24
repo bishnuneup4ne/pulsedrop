@@ -8,6 +8,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import com.pulsedrop.app.BuildConfig
+import com.pulsedrop.app.security.IdentityKeyPair
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -75,6 +76,10 @@ object CrashReporter {
             appendLine("| Device | ${Build.BRAND} ${Build.MODEL} |")
             appendLine("| Hardware | ${Build.DEVICE} / ${Build.HARDWARE} |")
             appendLine("| Build | ${Build.ID} ${Build.TYPE} |")
+            // The state name only, never anything about the key itself. It is the difference between
+            // "pairing crashed on a Galaxy" and "pairing crashed because this phone had no identity
+            // to sign with", and the second one is the only half a fix can be written against.
+            appendLine("| Identity | ${IdentityKeyPair.state} |")
             appendLine("| Thread | ${thread.name} |")
             appendLine()
             appendLine("```")

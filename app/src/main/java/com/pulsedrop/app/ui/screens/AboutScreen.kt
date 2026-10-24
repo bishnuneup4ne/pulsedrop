@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -35,6 +36,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.pulsedrop.app.BuildConfig
 import com.pulsedrop.app.R
+import com.pulsedrop.app.security.IdentityKeyPair
+import com.pulsedrop.app.security.IdentityState
 import com.pulsedrop.app.ui.components.PulseButton
 import com.pulsedrop.app.ui.components.PulseButtonTone
 import com.pulsedrop.app.ui.components.PulseRow
@@ -189,6 +192,14 @@ fun AboutScreen(
                     subtitle = "From Android's package record.",
                     showChevron = false
                 )
+                PulseRowDivider(insetStart = 52)
+                PulseRow(
+                    modifier = Modifier.testTag("about_identity_row"),
+                    title = "Identity key",
+                    icon = Icons.Default.Key,
+                    subtitle = identityKeyLine(),
+                    showChevron = false
+                )
             }
         }
 
@@ -309,4 +320,26 @@ private fun AboutFactRow(icon: androidx.compose.ui.graphics.vector.ImageVector, 
         subtitle = body,
         showChevron = false
     )
+}
+
+/**
+ * Where this phone's identity key actually lives, in the words a person holding the phone can act
+ * on. Not a status light: the three bad states each have a different remedy, and the difference
+ * between "unlock the phone and try again" and "pair your other devices again" is the whole point.
+ */
+private fun identityKeyLine(): String = when (IdentityKeyPair.state) {
+    IdentityState.NOT_LOADED ->
+        "Not needed yet — it is created the first time you pair a device."
+    IdentityState.HEALTHY ->
+        "In the Android keystore: this phone made it, and it cannot hand the key itself out."
+    IdentityState.LEGACY_FILE ->
+        "In this app's private storage instead of the keystore, because the keystore would not hold " +
+            "it. Pairings still work; a backup or a dump of the app's data would copy this key."
+    IdentityState.CORRUPT ->
+        "Unreadable — what is stored will not parse as a key, and the keystore holds none. Nothing " +
+            "was regenerated behind your back, so existing pairings on other devices fail until you " +
+            "pair them again."
+    IdentityState.UNAVAILABLE ->
+        "The keystore refused it this launch and nothing was written in its place. Unlock the device " +
+            "and try what you were doing again."
 }

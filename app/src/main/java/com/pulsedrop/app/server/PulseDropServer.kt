@@ -84,7 +84,8 @@ private const val WEB_RING_TIMEOUT_MS = 35_000L
 // How long a relay-mode phone may come back for the pairing answer it was never handed.
 private const val PAIR_ANSWER_TTL_MS = 10 * 60_000L
 // A chat envelope is text; anything larger belongs in a file transfer, not carried mail.
-private const val MAX_RELAY_ENVELOPE = 64 * 1024
+// Internal so a test can assert the dispatcher's ceiling clears the envelope it carries.
+internal const val MAX_RELAY_ENVELOPE = 64 * 1024
 private const val RELAY_VISITOR_TTL_MS = 90_000L
 
 class PulseDropServer(
@@ -312,7 +313,7 @@ class PulseDropServer(
             return JSONObject().put("success", false).put("error", "too large")
         }
         // Addressed at us: no reason to queue what we can act on right now.
-        if (to == pm.myDeviceId()) {
+        if (to == pm.myDeviceIdOrNull()) {
             val handled = if (kind == "signal") {
                 pm.handleRelaySignal(envelope)
             } else {
@@ -358,7 +359,7 @@ class PulseDropServer(
         ctB64: String
     ): Boolean {
         val pm = pairManager ?: return false
-        if (toDeviceId.isBlank() || toDeviceId == pm.myDeviceId()) return false
+        if (toDeviceId.isBlank() || toDeviceId == pm.myDeviceIdOrNull()) return false
         val envelope = JSONObject()
             .put("kind", "message")
             .put("from", fromDeviceId)
@@ -513,6 +514,93 @@ class PulseDropServer(
         return if (isLoopback(s)) "127.0.0.1" else s.lowercase()
     }
 
+    /**
+     * Whether this client may read a file that was dropped into the room. A file with no target
+     * is room-visible; a targeted one belongs to the client it was addressed to and to whoever
+     * uploaded it.
+     *
+     * This rule used to be written four times — three copies of
+     * `file.targetClientIp != clientIp && file.uploadedByIp != clientIp` and one inverted copy in the
+     * file list — all comparing raw strings. `sameAddr` was written for exactly the dual-stack
+     * mismatch described above and the file routes never started using it, so an owner addressed as
+     * `::ffff:192.168.1.9` could be locked out of its own file by the code meant to protect it.
+     */
+    private fun receivedFileIsVisibleTo(file: SharedFile, clientIp: String): Boolean =
+        file.targetClientIp == null ||
+            sameAddr(file.targetClientIp, clientIp) ||
+            sameAddr(file.uploadedByIp, clientIp)
+
+    /**
+     * Whether a browser may read a message in this thread — the room, an address book, or a group.
+     *
+     * Hoisted out of `/api/messages` because `/chatfile/{id}` has to answer the identical question,
+     * and having the answer in one place is the point: the attachment store served any client any
+     * attachment precisely because nobody had written this rule down for it.
+     *
+     * [hostIp] is passed in rather than looked up here because this runs per message, and
+     * enumerating interfaces per message is a real cost on a phone.
+     */
+    private fun threadIsVisibleTo(threadId: String?, senderIp: String?, clientIp: String, hostIp: String): Boolean {
+        // A message with no thread is the open room, which every client in it may read.
+        if (threadId == null) return true
+        // Anyone may read what they wrote, including a message addressed somewhere they cannot
+        // otherwise see — that is what lets a tab retract its own send.
+        if (sameAddr(senderIp, clientIp)) return true
+        // The phone hosting this server is who every tab dials. A reply it wrote into its own
+        // address book must reach the tab watching that conversation, and the phone is not a
+        // browser, so it never matches the `ip:<tab>` test below by itself.
+        if (threadId == "ip:$hostIp" && sameAddr(senderIp, hostIp)) return true
+        // The thread key is the address as the writer saw it; compare normalised forms or a tab
+        // loses its own conversation across an IPv4/IPv6 flip.
+        if (threadId.startsWith("ip:") && normalizeAddr(threadId.substring(3)) == normalizeAddr(clientIp)) return true
+        // A group the phone opened to browsers is open to the browsers it opened it for.
+        return webThreads.any { it.id == threadId }
+    }
+
+    /**
+     * Whether a browser may read a chat attachment's bytes: it uploaded them, or a message this
+     * client is allowed to see carries that attachment id. An upload that has not been sent yet
+     * belongs to its uploader alone.
+     */
+    private fun chatFileIsVisibleTo(id: String, clientIp: String): Boolean {
+        val stored = synchronized(chatAttachments) { chatAttachments[id] } ?: return false
+        if (sameAddr(stored.uploadedByIp, clientIp)) return true
+        val hostIp = NetworkUtils.getLocalIpAddress()
+        return synchronized(messages) {
+            messages.any {
+                it.attachment?.id == id && threadIsVisibleTo(it.threadId, it.clientIp, clientIp, hostIp)
+            }
+        }
+    }
+
+    /**
+     * A response to send instead of reading this body, or null if it is small enough.
+     *
+     * This is a real ceiling rather than a polite request, and the reason is worth keeping straight:
+     * NanoHTTPD 2.3.1's `HTTPSession.execute()` hands the session to `serve()` **before** the body is
+     * read, so a route that answers here never touches the socket again. Once `parseBody` runs the
+     * damage is already priced in — a JSON post is copied whole into a Java String, and a multipart
+     * one is written to a file in `cacheDir` and memory-mapped back. Neither can be bounded from
+     * outside: `getTmpBucket()` takes only `TempFile.getName()` and opens its own `RandomAccessFile`,
+     * so wrapping the `TempFile` to count bytes would count nothing. The declared length is the one
+     * number available before the read, which makes answering it early the whole job.
+     *
+     * A client that *under*-declares is not a disk-fill risk for the same reason: `parseBody` reads
+     * exactly `Content-Length` bytes and stops, leaving the rest in the socket to be parsed as the
+     * next pipelined request. That leftover is a request-smuggling question, not a storage one, and
+     * is tracked separately.
+     */
+    private fun bodyTooLarge(session: IHTTPSession, maxBytes: Long): Response? {
+        val declared = session.headers["content-length"]?.trim()?.toLongOrNull() ?: return null
+        if (declared in 0..maxBytes) return null
+        val res = newFixedLengthResponse(
+            Response.Status.PAYLOAD_TOO_LARGE, MIME_PLAINTEXT, "Request body too large"
+        )
+        res.addHeader("Cache-Control", "no-store")
+        addCorsHeaders(res)
+        return res
+    }
+
     /** What the browser called itself, if it ever told us. */
     private fun webClientName(ip: String): String =
         synchronized(webClients) { webClients[ip]?.name }
@@ -548,7 +636,15 @@ class PulseDropServer(
     private val chatAttachments = LinkedHashMap<String, ChatFile>()
 
     /** A file owned by a chat message. Chat history is restart-scoped, so is its store. */
-    private data class ChatFile(val attachment: ChatAttachment, val file: File)
+    /**
+     * A chat attachment and who may read it.
+     *
+     * `uploadedByIp` is the tab that POSTed the bytes, or null when the phone wrote them. It is not
+     * enough on its own: an attachment the *phone* sends must reach the browser on the other side of
+     * that thread, and an attachment a tab uploaded but never sent belongs to nobody else. The rest
+     * of the answer is in `messages` — see [chatFileIsVisibleTo].
+     */
+    private data class ChatFile(val attachment: ChatAttachment, val file: File, val uploadedByIp: String?)
 
     private fun chatDir(): File =
         File(context.getExternalFilesDir(null) ?: context.filesDir, "WebDrop_Chat").apply { if (!exists()) mkdirs() }
@@ -967,24 +1063,12 @@ class PulseDropServer(
                 return null
             }
             val attachment = ChatAttachment(id, safeName, size, guessMimeType(safeName))
-            synchronized(chatAttachments) { chatAttachments[id] = ChatFile(attachment, target) }
+            synchronized(chatAttachments) { chatAttachments[id] = ChatFile(attachment, target, null) }
             attachment
         } catch (e: Exception) {
             target.delete()
             null
         }
-    }
-
-    /** Registers an already written file (the browser upload path) as a chat attachment. */
-    private fun registerChatAttachment(file: File, name: String): ChatAttachment {
-        val attachment = ChatAttachment(
-            id = UUID.randomUUID().toString(),
-            name = name,
-            size = file.length(),
-            mime = guessMimeType(name)
-        )
-        synchronized(chatAttachments) { chatAttachments[attachment.id] = ChatFile(attachment, file) }
-        return attachment
     }
 
     /** The on-disk file behind a chat attachment, for the app's own previewer. */
@@ -1164,7 +1248,7 @@ class PulseDropServer(
                 put("tlsError", tlsError() ?: "")
                 // Lets a client-only phone pick which pairing to sign relay traffic with, and tells
                 // an older build that this host will carry mail for devices with no server.
-                put("deviceId", pairManager?.myDeviceId() ?: "")
+                put("deviceId", pairManager?.myDeviceIdOrNull() ?: "")
                 put("relay", true)
                 // What this phone can really do on the media wire. A peer uses a cap only when both
                 // ends list it, so this is a hardware claim: `LanScanner` records it by address and a
@@ -1188,6 +1272,11 @@ class PulseDropServer(
                 return res
             } else if (method == Method.POST) {
                 return try {
+                    // Sized for a sender name and a boolean, because that is all this route can use.
+                    // It runs before the credential check by design — presence is open to the room —
+                    // so this ceiling is the only thing between an unauthenticated socket and a body
+                    // written to this phone's storage.
+                    bodyTooLarge(session, TYPING_BODY_LIMIT)?.let { return it }
                     val map = HashMap<String, String>()
                     session.parseBody(map)
                     val json = JSONObject(map["postData"] ?: "{}")
@@ -1289,6 +1378,7 @@ class PulseDropServer(
             }
             if (method == Method.POST) {
                 return try {
+                    bodyTooLarge(session, JSON_BODY_LIMIT)?.let { return it }
                     val map = HashMap<String, String>()
                     session.parseBody(map)
                     val json = JSONObject(map["postData"] ?: "{}")
@@ -1335,14 +1425,29 @@ class PulseDropServer(
                         }
                         "end" -> {
                             val c = webCall
-                            if (c != null && (json.optString("cid").isBlank() || c.cid == json.optString("cid"))) {
-                                val ended = c.copy(state = "ended", updatedAt = System.currentTimeMillis())
-                                webCall = ended
-                                // The record alone would leave the phone talking to a tab that hung up.
-                                syncWebCallMedia(ended)
-                                listener.onWebCall(ended)
+                            val wanted = json.optString("cid")
+                            // `accept` and `decline` already insist the tab is the one the record
+                            // was made for. `end` did not, and it also ended whatever call was
+                            // running whenever `cid` arrived blank — while `/api/call/web` hands
+                            // every authorized tab the live `cid`. Any second tab could therefore
+                            // hang up a call it was not part of. A blank cid is now simply wrong:
+                            // the client always knows the id it is hanging up.
+                            when {
+                                c == null || c.state == "ended" || c.state == "declined" ->
+                                    jsonResponse(false, "error" to "No open call")
+                                wanted.isBlank() || c.cid != wanted ->
+                                    jsonResponse(false, "error" to "Unknown call")
+                                !sameAddr(c.ip, clientIp) ->
+                                    jsonResponse(false, "error" to "Not your call")
+                                else -> {
+                                    val ended = c.copy(state = "ended", updatedAt = System.currentTimeMillis())
+                                    webCall = ended
+                                    // The record alone would leave the phone talking to a tab that hung up.
+                                    syncWebCallMedia(ended)
+                                    listener.onWebCall(ended)
+                                    jsonResponse(true, "cid" to ended.cid)
+                                }
                             }
-                            jsonResponse(true)
                         }
                         else -> jsonResponse(false, "error" to "Unknown action")
                     }
@@ -1360,6 +1465,12 @@ class PulseDropServer(
             if (call == null || call.cid != cid || call.state != "accepted") {
                 return jsonResponse(false, "error" to "No open call")
             }
+            // This body is the live call. Matching the cid was not enough, because
+            // `/api/call/web` gives every authorized tab that cid — so any tab could have
+            // attached to a call between the phone and someone else's browser and listened.
+            if (!sameAddr(call.ip, clientIp)) {
+                return jsonResponse(false, "error" to "Not your call")
+            }
             markActivity()
             val res = newChunkedResponse(
                 Response.Status.OK, "application/octet-stream", WebMediaStream(cid)
@@ -1371,24 +1482,32 @@ class PulseDropServer(
         if (uri == "/api/webcall/up" && method == Method.POST) {
             if (!isAuthorized(session)) return unauthorized()
             return try {
+                // A ~10 Hz batch of base64 Opus frames, so a legit body is tens of kilobytes.
+                // Checked before parseBody: NanoHTTPD reads the whole declared length into a
+                // String, and this route is reachable by anyone who knows the PIN.
+                bodyTooLarge(session, WEB_CALL_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
                 session.parseBody(map)
                 val json = JSONObject(map["postData"] ?: "{}")
                 val call = webCall
                 val engine = callEngine
-                if (call == null || call.cid != json.optString("cid") || call.state != "accepted" ||
-                    engine?.hasWebLeg() != true
-                ) {
-                    jsonResponse(false, "error" to "No open call")
-                } else {
-                    val frames = json.optString("frames")
-                    if (frames.isNotEmpty()) {
-                        engine.ingestWebFrames(
-                            android.util.Base64.decode(frames, android.util.Base64.DEFAULT)
-                        )
-                        markActivity()
+                when {
+                    call == null || engine == null || call.cid != json.optString("cid") ||
+                        call.state != "accepted" || !engine.hasWebLeg() ->
+                        jsonResponse(false, "error" to "No open call")
+                    // Without this, a second tab holding the room credential could feed its own
+                    // voice and video into the phone's call with the real caller.
+                    !sameAddr(call.ip, clientIp) -> jsonResponse(false, "error" to "Not your call")
+                    else -> {
+                        val frames = json.optString("frames")
+                        if (frames.isNotEmpty()) {
+                            engine.ingestWebFrames(
+                                android.util.Base64.decode(frames, android.util.Base64.DEFAULT)
+                            )
+                            markActivity()
+                        }
+                        jsonResponse(true)
                     }
-                    jsonResponse(true)
                 }
             } catch (e: Exception) {
                 jsonResponse(false, "error" to "Invalid frame batch")
@@ -1460,6 +1579,9 @@ class PulseDropServer(
         // API Auth
         if (uri == "/api/auth" && method == Method.POST) {
             return try {
+                // The one route that must answer before any credential exists, so its ceiling is
+                // not a nicety. A login body is a 6-digit PIN; 8 KiB already forgives a great deal.
+                bodyTooLarge(session, LOGIN_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
                 session.parseBody(map)
                 val postData = map["postData"] ?: ""
@@ -1510,6 +1632,11 @@ class PulseDropServer(
         // payloads without a known pairing id or valid ciphertext are rejected.
         if ((uri.startsWith("/api/pair/") || uri.startsWith("/api/call/") || uri.startsWith("/api/relay/")) && method == Method.POST) {
             return try {
+                // Key-gated, not PIN-gated: whoever holds a pairing id — or nobody, for `poll` —
+                // reaches `parseBody`. An SDP offer with a full candidate set is a few KiB, so the
+                // JSON ceiling would be generous for `/api/call/*` and `/api/pair/*`. The relay
+                // routes share this line and need more: see [RELAY_BODY_LIMIT].
+                bodyTooLarge(session, RELAY_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
                 session.parseBody(map)
                 val json = JSONObject(map["postData"] ?: "{}")
@@ -1518,9 +1645,15 @@ class PulseDropServer(
                 val result: JSONObject = when {
                     uri.startsWith("/api/relay/") -> handleRelay(uri, json, clientIp)
                     uri == "/api/pair/request" && pm != null -> {
-                        pm.handleIncomingRequest(json, clientIp)
-                        pushWebEvent("pair", exceptIp = clientIp)
-                        JSONObject().put("success", true).put("waiting", true)
+                        if (pm.handleIncomingRequest(json, clientIp)) {
+                            pushWebEvent("pair", exceptIp = clientIp)
+                            JSONObject().put("success", true).put("waiting", true)
+                        } else {
+                            // Nothing was queued, so nothing is waiting. The requester is also being
+                            // handed a decline, but it may arrive after this response has already
+                            // been read, and a `success: true` here would outlive both of them.
+                            JSONObject().put("success", false).put("error", "not queued")
+                        }
                     }
                     uri == "/api/pair/response" && pm != null -> {
                         pm.handleIncomingResponse(json, clientIp)
@@ -1559,17 +1692,13 @@ class PulseDropServer(
                 for (file in sharedFiles) {
                     // IP Isolation: only show files marked public (targetClientIp == null)
                     // OR files explicitly sent to or uploaded by this specific client IP!
-                    val isAllowed = file.targetClientIp == null ||
-                            file.targetClientIp == clientIp ||
-                            file.uploadedByIp == clientIp
-
-                    if (isAllowed) {
+                    if (receivedFileIsVisibleTo(file, clientIp)) {
                         val obj = JSONObject().apply {
                             put("id", file.id)
                             put("name", file.name)
                             put("size", file.size)
                             put("mimeType", file.mimeType)
-                            put("isMine", file.uploadedByIp == clientIp)
+                            put("isMine", sameAddr(file.uploadedByIp, clientIp))
                             put("received", file.uriString.contains("WebDrop_Received"))
                             put("dateAdded", file.dateAdded)
                             put("from", file.uploadedByIp ?: "")
@@ -1594,7 +1723,7 @@ class PulseDropServer(
             }
 
             // IP check: if file is target specific, verify client IP
-            if (file.targetClientIp != null && file.targetClientIp != clientIp && file.uploadedByIp != clientIp) {
+            if (!receivedFileIsVisibleTo(file, clientIp)) {
                 return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "Access forbidden for this device IP.")
             }
 
@@ -1604,7 +1733,7 @@ class PulseDropServer(
         // Download a whole received folder as a zip
         if (uri == "/download-folder" && method == Method.GET) {
             val rel = session.parameters["path"]?.firstOrNull() ?: ""
-            return handleFolderDownload(rel)
+            return handleFolderDownload(rel, clientIp)
         }
 
         // File Upload (From Web or Peer App)
@@ -1620,6 +1749,12 @@ class PulseDropServer(
         // Serve a chat attachment inline (preview) or as a download
         if (uri.startsWith("/chatfile/") && method == Method.GET) {
             val id = uri.removePrefix("/chatfile/").substringBefore("?")
+            if (!chatFileIsVisibleTo(id, clientIp)) {
+                // 404, not 403: the id is a UUID, and refusing to say whether it exists costs this
+                // route nothing while telling a probing tab "that attachment is real and not yours"
+                // is a disclosure of who is chatting.
+                return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Attachment not found")
+            }
             return handleChatFileDownload(session, id)
         }
 
@@ -1628,7 +1763,7 @@ class PulseDropServer(
             val fileId = uri.removePrefix("/preview/").substringBefore("?")
             val file = synchronized(sharedFiles) { sharedFiles.firstOrNull { it.id == fileId } }
                 ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File not found")
-            if (file.targetClientIp != null && file.targetClientIp != clientIp && file.uploadedByIp != clientIp) {
+            if (!receivedFileIsVisibleTo(file, clientIp)) {
                 return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "Access forbidden for this device IP.")
             }
             return serveFileInline(session, file)
@@ -1637,6 +1772,7 @@ class PulseDropServer(
         // Delete a received file (only files saved by the web upload flow)
         if (uri == "/api/delete" && method == Method.POST) {
             return try {
+                bodyTooLarge(session, JSON_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
                 session.parseBody(map)
                 val json = JSONObject(map["postData"] ?: "{}")
@@ -1651,34 +1787,18 @@ class PulseDropServer(
         if (uri == "/api/messages") {
             if (method == Method.GET) {
                 val arr = JSONArray()
-                val groupIds = webThreads.map { it.id }.toSet()
                 // The phone hosting this server is the one every tab dials; a browser reads and
-                // writes that conversation under the host's own address, "ip:<selfIp>". The tab's
-                // own messages on it are caught by `mine`, but the phone's replies would otherwise
-                // be dropped below (the thread key is the host, not the tab) - so remember the host
-                // book to let those replies back to the tab that is watching it.
+                // writes that conversation under the host's own address, "ip:<selfIp>".
                 val hostIp = NetworkUtils.getLocalIpAddress()
-                val hostBook = "ip:" + hostIp
-                val myAddr = normalizeAddr(clientIp)
                 synchronized(messages) {
                     for (m in messages) {
                         // A browser sees the public room, its own address book, the groups
                         // the phone opened to browsers, and anything it sent itself - so a
                         // browser-to-browser thread reads the same on both sides. Never
                         // another host's direct thread, and never a pair conversation,
-                        // which stays on the phones.
-                        val thread = m.threadId
-                        val mine = sameAddr(m.clientIp, clientIp)
-                        // A reply the phone wrote into its own address book belongs to whichever
-                        // tab is watching it - the phone is not a browser and so never matches
-                        // `thread == "ip:<tab>"`, yet without this the tab sees a silent phone.
-                        val fromHost = thread == hostBook && sameAddr(m.clientIp, hostIp)
-                        // The thread key is the address as the writer saw it; compare normalised
-                        // forms or a tab loses its own conversation across an IPv4/IPv6 flip.
-                        val ownBook = thread != null && thread.startsWith("ip:") &&
-                                normalizeAddr(thread.substring(3)) == myAddr
-                        if (thread != null && !mine && !fromHost && !ownBook &&
-                            thread !in groupIds) continue
+                        // which stays on the phones. Same rule `/chatfile/{id}` applies to
+                        // the bytes a message points at.
+                        if (!threadIsVisibleTo(m.threadId, m.clientIp, clientIp, hostIp)) continue
                         arr.put(JSONObject().apply {
                             put("id", m.id)
                             put("text", m.text)
@@ -1706,6 +1826,7 @@ class PulseDropServer(
                 return res
             } else if (method == Method.POST) {
                 return try {
+                    bodyTooLarge(session, JSON_BODY_LIMIT)?.let { return it }
                     val map = HashMap<String, String>()
                     session.parseBody(map)
                     val postData = map["postData"] ?: ""
@@ -1725,9 +1846,17 @@ class PulseDropServer(
                         else -> "ip:$to"
                     }
                     val attachmentId = json.optString("attachmentId", "").trim()
-                    val attachment = attachmentId.takeIf { it.isNotEmpty() }?.let { id ->
-                        synchronized(chatAttachments) { chatAttachments[id] }?.attachment
+                    // Naming an attachment is how its bytes reach people who never uploaded them:
+                    // the download route asks whose attachment this is, and publishing one has to
+                    // ask the same question of the same rule, or the refusal downstream is only a
+                    // second way to deliver the file. An id this server has never seen stays
+                    // ignored rather than refused, which is what it did before.
+                    val held = attachmentId.takeIf { it.isNotEmpty() }
+                        ?.let { id -> synchronized(chatAttachments) { chatAttachments[id] } }
+                    if (held != null && !chatFileIsVisibleTo(attachmentId, clientIp)) {
+                        return jsonResponse(false, "error" to "Attachment not yours")
                     }
+                    val attachment = held?.attachment
                     val quoted = json.optString("replyTo").takeIf { it.isNotBlank() }?.let { findMessage(it) }
                     if (text.isNotBlank() || attachment != null) {
                         addMessage(
@@ -1775,7 +1904,7 @@ class PulseDropServer(
         return res
     }
 
-    private fun handleFolderDownload(rel: String): Response {
+    private fun handleFolderDownload(rel: String, clientIp: String): Response {
         val receivedDir = File(context.getExternalFilesDir(null) ?: context.filesDir, "WebDrop_Received")
         val safeRel = sanitizeRelativePath(rel)
         if (safeRel.isBlank()) {
@@ -1787,11 +1916,40 @@ class PulseDropServer(
             return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Folder not found")
         }
 
+        // The path itself is chosen by whoever uploaded, and nothing records who owns a folder, so
+        // ownership is derived from the files inside it: if any member is scoped to a different
+        // client, this folder is not the requester's to take. Room-visible folders stay
+        // downloadable, which is why the rule is "one scoped member forbids it" rather than
+        // "prove you uploaded it" — the latter would lock out folders whose records expired.
+        val foreign = synchronized(sharedFiles) {
+            sharedFiles.any {
+                it.targetClientIp != null &&
+                    File(it.uriString).canonicalPath.startsWith(canonical + File.separator) &&
+                    !receivedFileIsVisibleTo(it, clientIp)
+            }
+        }
+        if (foreign) {
+            return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "Access forbidden for this device IP.")
+        }
+
+        // Bounded, and bounded before anything is written: this walk used to zip every file under
+        // the folder into cacheDir with no ceiling on count or bytes, so one visitor could fill the
+        // phone's storage with a request. `take(MAX + 1)` stays lazy, so the oversized folder is
+        // rejected without walking all of it.
+        val members = folder.walkTopDown().filter { it.isFile }.take(FOLDER_ZIP_MAX_ENTRIES + 1).toList()
+        if (members.size > FOLDER_ZIP_MAX_ENTRIES) {
+            return folderTooLarge("Too many files to zip (limit $FOLDER_ZIP_MAX_ENTRIES)")
+        }
+        val totalBytes = members.sumOf { it.length() }
+        if (totalBytes > FOLDER_ZIP_MAX_BYTES) {
+            return folderTooLarge("Folder is too large to zip (${totalBytes / 1048576} MB)")
+        }
+
         var zipFile: File? = null
         return try {
             zipFile = File.createTempFile("ld-folder-", ".zip", context.cacheDir)
             java.util.zip.ZipOutputStream(java.io.BufferedOutputStream(java.io.FileOutputStream(zipFile))).use { zos ->
-                folder.walkTopDown().filter { it.isFile }.forEach { f ->
+                members.forEach { f ->
                     zos.putNextEntry(java.util.zip.ZipEntry(f.relativeTo(folder).path))
                     f.inputStream().use { it.copyTo(zos) }
                     zos.closeEntry()
@@ -1812,8 +1970,17 @@ class PulseDropServer(
             response
         } catch (e: Exception) {
             zipFile?.delete()
-            newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Folder zip failed: ${e.message}")
+            android.util.Log.w("PulseDropServer", "Folder zip failed", e)
+            newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Folder zip failed")
         }
+    }
+
+    /** A folder this endpoint will not zip. Refusing beats writing a body the phone cannot hold. */
+    private fun folderTooLarge(reason: String): Response {
+        val res = newFixedLengthResponse(Response.Status.PAYLOAD_TOO_LARGE, MIME_PLAINTEXT, reason)
+        res.addHeader("Cache-Control", "no-store")
+        addCorsHeaders(res)
+        return res
     }
 
     private fun handleFileDownload(session: IHTTPSession, file: SharedFile): Response {
@@ -1899,6 +2066,11 @@ class PulseDropServer(
         var finalFile: File? = null
 
         return try {
+            // The body is buffered whole in `cacheDir` by `parseBody`, so this is the last moment the
+            // phone can decline it cheaply. `hasFreeSpaceFor` below guards the *destination*; this
+            // guards the temporary copy, which is a second full-size file on a different volume and
+            // the one that was never bounded at all.
+            bodyTooLarge(session, uploadBudgetBytes(context.cacheDir))?.let { return it }
             val filesMap = HashMap<String, String>()
             session.parseBody(filesMap)
 
@@ -1945,19 +2117,37 @@ class PulseDropServer(
                     )
                 }
 
-                if (pairCrypt && pairedSender != null) {
-                    val pm = pairManager
-                    val ok = pm != null && pm.decryptUpload(pairId!!, tempFile, finalFile)
-                    tempFile.delete()
-                    if (!ok) {
-                        finalFile?.delete()
-                        return jsonResponse(false, "error" to "Encrypted upload failed - unknown pairing")
+                // Land the bytes under a name the received listing cannot match, then rename. Copied
+                // straight onto the final name, an interrupted transfer leaves a file that looks
+                // complete and is half empty — and nothing in this folder says which one it is.
+                //
+                // The landing name is random rather than derived from the final name, because `?path=` is
+                // not unique: two tabs sending to one name both find it free, both compute the same
+                // landing file, and two concurrent copies into one path interleave. A `renameTo` of the
+                // result would then hand the room a whole file that is half of each send — and after the
+                // first rename the second has no source left, which the catch below reports as a failed
+                // upload of bytes that arrived fine. Whoever writes last wins the name; the bytes each
+                // client sent stay whole either way.
+                val partFile = File(finalFile.parentFile, ".${UUID.randomUUID()}.part")
+                try {
+                    if (pairCrypt && pairedSender != null) {
+                        val pm = pairManager
+                        val ok = pm != null && pm.decryptUpload(pairId!!, tempFile, partFile)
+                        if (!ok) {
+                            return jsonResponse(false, "error" to "Encrypted upload failed - unknown pairing")
+                        }
+                    } else if (pairCrypt) {
+                        return jsonResponse(false, "error" to "Unknown pairing id")
+                    } else {
+                        tempFile.copyTo(partFile, overwrite = true)
                     }
-                } else if (pairCrypt) {
-                    tempFile.delete()
-                    return jsonResponse(false, "error" to "Unknown pairing id")
-                } else {
-                    tempFile.copyTo(finalFile, overwrite = true)
+                    if (!partFile.renameTo(finalFile)) {
+                        // Same directory, so this only fails when the two names are on different
+                        // volumes — the copy is the fallback, not a second chance at atomicity.
+                        partFile.copyTo(finalFile, overwrite = true)
+                    }
+                } finally {
+                    partFile.delete()
                     tempFile.delete()
                 }
                 break
@@ -2058,12 +2248,16 @@ class PulseDropServer(
             // delete it instead of leaking storage on every error.
             try { finalFile?.delete() } catch (ignored: Exception) { }
             listener.onTransferFailed(transferId, "Upload", e.message ?: "Failed", TransferDirection.INCOMING)
+            // The wire gets a fixed sentence rather than `e.message`: an exception string from this
+            // depth is a path, and a path is a small map of the device handed to whoever sent the
+            // body. The phone's own UI still gets the real reason through the listener above.
+            android.util.Log.w("PulseDropServer", "Upload failed", e)
             val res = newFixedLengthResponse(
                 Response.Status.INTERNAL_ERROR,
                 "application/json",
                 JSONObject().apply {
                     put("success", false)
-                    put("error", e.message ?: "Upload failed")
+                    put("error", "Upload failed")
                 }.toString()
             )
             addCorsHeaders(res)
@@ -2074,6 +2268,7 @@ class PulseDropServer(
     /** Browser-side chat upload: identical bytes, but registered only as a chat attachment. */
     private fun handleChatUpload(session: IHTTPSession): Response {
         return try {
+            bodyTooLarge(session, uploadBudgetBytes(context.cacheDir))?.let { return it }
             val filesMap = HashMap<String, String>()
             session.parseBody(filesMap)
             val entry = filesMap.entries.firstOrNull { it.key != "postData" }
@@ -2096,11 +2291,17 @@ class PulseDropServer(
                 return jsonResponse(false, "error" to "Empty upload")
             }
             val attachment = ChatAttachment(id, safeName, size, guessMimeType(safeName))
-            synchronized(chatAttachments) { chatAttachments[id] = ChatFile(attachment, target) }
+            // Recorded against the socket, not against anything the client declared: this is the only
+            // route where the uploader gets to read the bytes before a message exists to scope them.
+            val uploader = session.remoteIpAddress ?: "127.0.0.1"
+            synchronized(chatAttachments) { chatAttachments[id] = ChatFile(attachment, target, uploader) }
             markActivity()
             jsonResponse(true, "attachment" to attachmentJson(attachment))
         } catch (e: Exception) {
-            jsonResponse(false, "error" to (e.message ?: "Upload failed"))
+            // As on /upload: no client needs an exception string that contains a path, and the
+            // declared-length ceiling above already answered the one failure worth naming.
+            android.util.Log.w("PulseDropServer", "Chat attachment upload failed", e)
+            jsonResponse(false, "error" to "Upload failed")
         }
     }
 
@@ -2185,8 +2386,14 @@ class PulseDropServer(
         val cleaned = base.replace(Regex("[^A-Za-z0-9 ._\\-()\\[\\]{}]"), "_").trim('.', ' ')
         return if (cleaned.length > 120) {
             val ext = cleaned.substringAfterLast(".", "")
-            val prefix = cleaned.substringBeforeLast(".").take(if (ext.isNotEmpty()) 120 - ext.length - 1 else 120)
-            if (ext.isNotEmpty()) "$prefix.$ext" else prefix
+            // The budget is spent on the extension first, because the extension is what a receiver uses
+            // to decide how to open the file. But an extension can be longer than the whole budget, and
+            // then `120 - ext - 1` is negative: that threw here, and the throw was caught by the upload
+            // handler as an ordinary failure — so a caller who named a file `a.<300 chars>` could not
+            // send it at all. With no room left for a stem there is no name worth assembling, and the
+            // plain truncation is what any other over-long name gets.
+            val stem = cleaned.substringBeforeLast(".").take((120 - ext.length - 1).coerceAtLeast(0))
+            if (ext.isEmpty() || stem.isBlank()) cleaned.take(120) else "$stem.$ext"
         } else cleaned
     }
 
@@ -2256,9 +2463,7 @@ class PulseDropServer(
         if (fileId.isBlank()) return jsonResponse(false, "error" to "Missing id")
         val file = synchronized(sharedFiles) { sharedFiles.firstOrNull { it.id == fileId } }
             ?: return jsonResponse(false, "error" to "Not found")
-        if (file.targetClientIp != null && file.targetClientIp != clientIp && file.uploadedByIp != clientIp) {
-            return jsonResponse(false, "error" to "Forbidden")
-        }
+        if (!receivedFileIsVisibleTo(file, clientIp)) return jsonResponse(false, "error" to "Forbidden")
         val receivedDir = File(context.getExternalFilesDir(null) ?: context.filesDir, "WebDrop_Received").canonicalPath
         val target = File(file.uriString)
         if (!target.canonicalPath.startsWith(receivedDir + File.separator)) {
@@ -2280,6 +2485,42 @@ class PulseDropServer(
     companion object {
         /** Where accepted uploads live; the Receive page shows this folder and nothing else. */
         const val RECEIVED_DIR_NAME = "WebDrop_Received"
+
+        /**
+         * Ceiling for a JSON POST. The largest legitimate one carries a device name, a call id and
+         * an SDP offer, so this is orders of magnitude above what any client sends; it exists because
+         * `parseBody` reads whatever `Content-Length` claims and hands the result over as a Java
+         * String. Covers every JSON route except the signaling dispatcher, which needs
+         * [RELAY_BODY_LIMIT] instead.
+         *
+         * Internal so a test can drive a route to the byte either side of its ceiling: the numbers
+         * are the contract, and literals repeated in the test would keep passing quietly if these
+         * moved.
+         */
+        internal const val JSON_BODY_LIMIT = 64L * 1024
+
+        /** Ceiling for `/api/auth`, whose whole body is `{"pin":"123456"}`. */
+        internal const val LOGIN_BODY_LIMIT = 8L * 1024
+
+        /** Ceiling for one typing-presence ping: a sender name and a boolean. */
+        internal const val TYPING_BODY_LIMIT = 4L * 1024
+
+        /** Ceiling for one ~10 Hz batch of base64 media frames on `/api/webcall/up`. */
+        internal const val WEB_CALL_BODY_LIMIT = 256L * 1024
+
+        /**
+         * Ceiling for the pair/call/relay dispatcher, and it has to be above [JSON_BODY_LIMIT] for
+         * the relay half of that route. A relay POST is a *wrapper*: the envelope inside it is
+         * accepted up to [MAX_RELAY_ENVELOPE] by the rule that knows how to say "too large" usefully,
+         * and `role`, `to` and the quoting make the body carrying it strictly larger than the
+         * envelope. Two equal ceilings therefore refuse the last few dozen bytes of the relay's own
+         * budget before that rule ever runs. Four envelopes is room without being unlimited.
+         */
+        internal const val RELAY_BODY_LIMIT = 4L * MAX_RELAY_ENVELOPE
+
+        /** A folder zip is built in cacheDir, so its cost is paid twice: read, then written. */
+        private const val FOLDER_ZIP_MAX_ENTRIES = 2_000
+        private const val FOLDER_ZIP_MAX_BYTES = 512L * 1024 * 1024
 
         /** The instance holding our port right now, so a restart can kill a stray listener. */
         @Volatile

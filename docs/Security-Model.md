@@ -160,8 +160,20 @@ Android requires for capturing the display.
 - **Anyone on the LAN without a PIN** can open the address and join the open room. The PIN is
   the gate; pairing is not involved.
 - **A seized or rooted device** exposes chat history and received files, which are unencrypted
-  at rest. The identity key in the keystore is the durable secret; the history is not.
+  at rest. The identity key in the keystore is the durable secret; the history is not. With one
+  exception worth stating: a phone whose keystore refused it on three separate launches keeps that
+  key in the app's private preferences instead, which puts it in this same exposed set. **About →
+  This install** says which of the two this phone is, and pairing cannot be the one to tell you.
 - **A call is not confidential** in the way a paired message is. Treat a call like a speakerphone
   in the same room.
+- **"Which client" means which address, not which tab.** Object scope — whose file, whose call —
+  is decided on the socket peer address, so two tabs on one laptop are the same client and can each
+  act on the other's downloads and its own call records. Sessions identify a *credential*, not a
+  device; moving scope onto the session is the open work in
+  [Authorization Matrix](Authorization-Matrix.md) §8.
+- **With the PIN off, the object rules are the only boundary left.** Every route in the room becomes
+  reachable by any host on the subnet, and what still holds is only who a file was addressed to and
+  whose call record is whose. That is a thin thing to rest a design on; "open room" is the mode where
+  the isolation is least worth anything.
 - **A missed safety-code check** is undetectable afterwards. The 6-digit code is the only
   thing standing between ECDH and an attacker-in-the-middle who performed ECDH with each of you.

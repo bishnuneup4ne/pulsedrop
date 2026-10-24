@@ -44,6 +44,20 @@ class PairRepository(
 
     fun myPubB64(): String = Crypto.publicKeyB64(context)
     fun myDeviceId(): String = Crypto.deviceId(myPubB64())
+
+    /**
+     * [myDeviceId] for the paths that can live without an answer.
+     *
+     * A phone whose keystore is refusing and that has never written a stored key has no device id, and
+     * the three things that stamp one — a read receipt, a mailbox drop, an edit of our own message — are
+     * each worse applied with a label the phone cannot back up than left undone. The message for *why*
+     * belongs to the caller: [IdentityKeyPair.explain].
+     */
+    fun myDeviceIdOrNull(): String? = try {
+        myDeviceId()
+    } catch (e: IdentityKeyUnavailableException) {
+        null
+    }
     fun deviceIdOf(pairing: PairedDevice): String = Crypto.deviceId(pairing.pubB64)
 
     fun secretKey(p: PairedDevice): SecretKeySpec = synchronized(secretCache) {
