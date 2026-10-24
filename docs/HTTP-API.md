@@ -155,3 +155,28 @@ One deliberate exception: the PIN is still accepted in `X-Pulse-Auth` from anoth
 A phone uploading to a peer presents the room PIN and an older build cannot negotiate a session
 first, so this keeps mixed-version rooms working. Browsers never receive the PIN, so this is not the
 path that leaks into history or `Referer`.
+
+## Object scope
+
+Passing the room credential is necessary but not sufficient: it says you belong to the room, not that
+every object in it is yours. Three things key off the socket peer address, folded through the same
+IPv4/IPv6 normalisation:
+
+* A received file with no target is room-visible. A file *addressed* to someone is visible to that
+  client and to whoever uploaded it — which is what lets a tab retract its own send
+  (`isMine` in `/api/files`) without seeing anyone else's. Applies to `/api/files`, `/download/{id}`,
+  `/preview/{id}`, `/api/delete` and `/download-folder`.
+* `/download-folder?path=` inherits the rule from the files inside it: if any recorded download under
+  that prefix is not yours, the whole zip is 403. Two ceilings answer 413 before a byte is compressed
+  — 2 000 entries and 512 MiB total — because the zip is built in `cacheDir` on the phone.
+* A browser call record belongs to the tab it was made for. `action=end`, `/api/webcall/down` and
+  `/api/webcall/up` all check that binding; the `cid` is not a capability here, because
+  `GET /api/call/web` reports the live `cid` to every authorized tab. `action=end` now fails with
+  `No open call`, `Unknown call` or `Not your call` rather than always reporting success — the shipped
+  tab ignores that response, a third-party client that checked it should be updated.
+
+JSON bodies are capped from the declared `Content-Length` before they are read: 64 KiB on
+`/api/call/web`, 256 KiB for one batched uplink on `/api/webcall/up`. NanoHTTPD imposes no limit of
+its own and buffers the whole body into a Java String, so one large POST was enough to exhaust the
+phone's heap. A client that under-declares `Content-Length` defeats this; `/upload` is the route that
+needs a streaming limit, and does not yet have one.

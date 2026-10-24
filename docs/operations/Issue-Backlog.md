@@ -7,6 +7,10 @@ Deliverable 3 of the engagement. Every item below is annotated with how well I k
   have not executed yet.
 * **[recommendation]** — proposed work, not a defect claim.
 
+Once work lands the annotation changes rather than the item disappearing: **[fixed]** means the
+behaviour is implemented *and* asserted by a test on the branch, **[partly fixed]** names what is
+still open in the same entry. A finding is never closed by editing its heading.
+
 Baseline: `main` @ `98c2a40`, app `2.0.2` / versionCode 12. PRD reviewed the same commit, so it is
 not stale. Findings the PRD asserted were re-checked here rather than copied.
 
@@ -14,7 +18,7 @@ not stale. Findings the PRD asserted were re-checked here rather than copied.
 
 ## P0 — block a "security hardened" release
 
-### S-1 [confirmed] The PIN *is* the browser session token
+### S-1 [fixed] The PIN *is* the browser session token
 
 `PulseDropServer.kt:1448` — `if (success) put("token", pinCode ?: "ok")`.
 `isAuthorized` then compares that value to `pinCode` (`:985`). `WebClientHtml.kt:1662` additionally
@@ -40,7 +44,13 @@ rejected; PIN change revokes old tokens; server restart rejects pre-restart toke
 route rejects invalid/expired/revoked tokens.
 *Depends:* a working JDK/SDK build. *Rollback:* pure code, no persisted state; safe to revert.
 
-### S-2 [confirmed] PIN credentials travel in URLs
+*Shipped as `security/browser-sessions`:* items 1-6, proved by `SessionStoreTest` (9) and
+`ServerSessionAuthTest` (13). The one thing still missing is the operator-facing half of item 4 —
+`revokeAll()` exists and fires on a genuine PIN rotation, but there is no dashboard button that calls
+it, which is `U-1`. The token is hex rather than base64url: `java.util.Base64` is API 26 and
+`lintRelease` fails the build on `minSdk 24`.
+
+### S-2 [partly fixed] PIN credentials travel in URLs
 
 `isAuthorized:987` reads `session.parameters["auth"]`, and the browser builds it in six places —
 `WebClientHtml.kt:2097, 2161, 2405, 3042, 3534, 3893` (including `/api/events`, an SSE URL that a
@@ -69,7 +79,7 @@ principal instead of re-reading headers; the matrix file becomes the reviewed so
 table-driven test fails CI if a route has no row.
 *Rollback:* keep old route paths and response shapes untouched; this is dispatch logic only.
 
-### S-4 [confirmed] Any authenticated client can hang up the phone's active call
+### S-4 [fixed] Any authenticated client can hang up the phone's active call
 
 `:1309-1311` — `action=end` accepts when `cid` is **blank**: `if (c != null && (json.optString("cid").isBlank() || c.cid == ...))`.
 Compare `accept`/`decline` two branches above (`:1302`) which correctly require
@@ -78,20 +88,38 @@ Compare `accept`/`decline` two branches above (`:1302`) which correctly require
 *Risk:* denial of service against a live call by any tab holding the PIN — or, since the whole tier
 becomes public when the PIN is off (`:981`), by any host on the LAN. Also returns `success:true`
 whether or not a call existed, so it cannot be distinguished by the owner.
-*Fix:* require the caller's address to own the `webCall` record, exactly the `:1302` pattern; 403 on
-mismatch. *Tests:* tab A cannot end tab B's call; blank cid no longer ends anything.
+*Fixed in `security/object-scope`.* `end` now answers the three questions `accept`/`decline` already
+asked — is there a live call, does the `cid` name it, is this tab the one the record was made for —
+and reports `No open call` / `Unknown call` / `Not your call` instead of a hollow success. The same
+`sameAddr` binding was missing on `/api/webcall/down` and `/api/webcall/up`, where matching the cid
+was not enough precisely *because* `GET /api/call/web` hands that cid to every authorized tab.
+*Tests:* `ObjectScopeTest` — a tab that does not own the call cannot end it, a blank cid ends nothing,
+a wrong cid leaves the live call alone, the owner still hangs up its own call, ending a call that is
+not running is not reported as success, and the down leg goes only to the owning tab.
 
-### S-5 [confirmed] `/download-folder` has no per-owner scope and no size bound
+### S-5 [fixed] `/download-folder` has no per-owner scope and no size bound
 
 `:1560`, implementation `:1735-1754`. `sanitizeRelativePath` + canonical check prevents escaping
 `WebDrop_Received`, which is good — but there is **no ownership check**, so any authenticated client
 can zip and read another client's *directed* folder, and the ZIP is built into `cacheDir` with no
 cap. `:1770` reflects the exception message into the body.
 
-*Fix:* apply the same sender/receiver predicate used by `/api/files` (`:1517`); cap total expanded
-bytes and entry count; stream rather than pre-build where possible; stop echoing exception text.
-*Tests:* client A cannot download client B's directed folder; oversized folder refuses cleanly; no
-path escapes the root.
+*Fixed in `security/object-scope`.* A folder is not a record, so ownership is **derived** from the
+records inside it: any `SharedFile` whose canonical path is under the requested prefix and which
+`receivedFileIsVisibleTo` rejects makes the whole download 403. `receivedFileIsVisibleTo` is now the
+single predicate behind `/api/files`, `/download`, `/preview` and `/api/delete` — those were four
+hand-written copies comparing raw strings, which locked an owner out of its own file whenever one side
+of the pair was the dual-stack form of the same address (`::ffff:192.168.1.9`). Two bounds are tested
+before a single byte is written: `FOLDER_ZIP_MAX_ENTRIES` = 2 000 and `FOLDER_ZIP_MAX_BYTES` = 512
+MiB, measured against a lazy `take(MAX + 1)` walk so an enormous tree costs one entry and a `sumOf`,
+not a minute of compression; both answer 413 with `Cache-Control: no-store`. The catch logs the
+exception and returns a generic message.
+*Tests:* an oversized folder is refused without writing a zip, a folder outside the received directory
+is still not readable, and the uploader of a folder's records is not locked out of it (200 +
+`application/zip`). Not provable over loopback, and therefore not faked: the 403 branch needs two
+*distinct* client addresses, which a test bound to 127.0.0.1 cannot present honestly.
+*Still open:* streaming instead of pre-building the zip — the cap bounds the damage, it does not
+remove the temp file.
 
 ### S-6 [confirmed] Keystore failure silently writes a raw private key
 
@@ -119,15 +147,33 @@ explicit mode and testing legacy clients.
 *Work:* honest status labels ("secure listener ready" ≠ "browser trusts this certificate"), one-tap
 stop/pause, optional strict mode that disables unpaired endpoints.
 
+### S-8 [confirmed] A paired sender can upload but cannot read its own traffic
+
+`pairedSenderIsAuthorized` is consulted on `/upload` only (`:1009`), so a paired phone whose host has
+since rotated the PIN can still push files but gets 401 on `/api/messages`, `/api/threads` and
+`/api/files` — it cannot confirm what it sent was delivered, and the browser tab cannot retract it.
+Documented here because it is a *product* decision as much as a security one: either the pairing
+secret is a credential for the read routes too, or the pairing UI has to say that pairing grants
+upload-only.
+*Work:* decide the intent, then make `isAuthorized` agree with it in one place, and label the pairing
+screen to match.
+
 ---
 
 ## P1 — next release cycle
 
-### R-1 [confirmed] `/api/webcall/up` has no bound on the body or decoded frames
+### R-1 [partly fixed] `/api/webcall/up` has no bound on the body or decoded frames
 `:1344-1359`: base64 batches are decoded and handed to the engine with no size cap; `parseBody` has
-already buffered the request. Add a per-request byte cap, a per-frame cap, and bounded queues.
-*Tests:* oversized body → 413; malformed/truncated frame → rejected without crash; slow client can't
-grow memory.
+already buffered the request. NanoHTTPD 2.3.1 has **no** ceiling of its own — checked the bytecode,
+`TempFilePostOutputStream` writes until the disk complains — so the cap cannot live in the library.
+*Fixed in `security/object-scope`:* `bodyTooLarge(session, WEB_CALL_BODY_LIMIT)` runs **before**
+`parseBody` and refuses from the declared `Content-Length` at 256 KiB, sized for one ~10 Hz batch of
+frames; the same guard covers `/api/call/web` at 64 KiB. Both answer 413 with `Cache-Control:
+no-store`. *Still open:* a client may under-declare `Content-Length` and stream more, so the cap
+bounds the buffer rather than the liar; the per-frame and per-batch decoded-size caps and the bounded
+egress queue are not written, and `/upload`'s real streaming limit is R-2.
+*Tests:* oversized frame batch and oversized signaling post → 413, and a normal-sized action still
+gets through the ceiling (the guard is a ceiling, not a block).
 
 ### R-2 [confirmed] Upload limits must hold *while streaming*
 `/upload` at `:1566` takes `?path=` from the query (`:1873`), has a free-space preflight (`:1895`) and
@@ -231,12 +277,20 @@ Found while checking whether the security automation added to `main` on 2026-10-
 
 ## Dependency order for the first three PRs
 
+Shipped, in the order the dependency actually required:
+
 ```
-JDK 21 + Android SDK present  →  baseline ./gradlew test green
-   └─ S-1 sessions  ─→ S-2 no URL credentials  ─→ S-3 route policy
-                          (tickets need tokens first)
-   └─ S-4, S-5, R-1 are independent and can land in parallel with S-1
+JDK 21 + Android SDK present  →  baseline ./gradlew test green  (362 tests, lint clean)
+   └─ security/browser-sessions   S-1 (+ S-1b browser half)     — 378 tests after it
+   └─ security/object-scope       S-4, S-5, R-1 (body caps)     — needed S-1's tokens in the tests first
+   └─ ci/security-automation      X-1, X-2, X-3 documentation
 ```
+
+Remaining order: **S-2b** (path-scoped tickets so no credential appears in a URL) is next and is a
+smaller change than it looks now that the PIN is gone; **S-3** (route policy instead of chain
+position) wants the object-scope tests in place as its regression net, which is why it follows rather
+than precedes them; **S-4b** (`/chatfile`, matrix `A-1`) and **S-5b** (streaming upload limits, `R-2`)
+are the two remaining P0-class scope holes.
 
 S-6 (identity fallback) and S-7 (transport labelling) touch protocol compatibility and device state;
 they get their own PR after the auth chain, with a migration plan rather than a behaviour flip.

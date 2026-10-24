@@ -9,8 +9,10 @@ Source of truth: `app/src/main/java/com/pulsedrop/app/server/PulseDropServer.kt`
 the row says so — this document records what the code *does*, not what a future release
 should do.
 
-Rows marked **Fixed** describe `security/browser-sessions`, where the credential design changed;
-the line numbers in those rows no longer point anywhere useful and are kept only for archaeology.
+Rows marked **Fixed** describe the two branches stacked on that commit — `security/browser-sessions`
+(the credential design) and `security/object-scope` (who may touch *which* object). The latter's rows
+carry line numbers from its own HEAD, so they are the ones to trust; every other number still refers
+to `98c2a40` and is drift-prone.
 
 ---
 
@@ -81,12 +83,16 @@ memory: it resets on process death.
 
 ### 1.2 Identity the server trusts but should not
 
-- **`clientIp` is the object-scope key** for the file list, downloads, previews, deletes, and
-  chat threads (`:1517`, `:1552`, `:1586`, `:2214`, `:1626`). It comes from the socket peer.
+- **`clientIp` is the object-scope key** for the file list, downloads, previews, deletes, folder
+  zips, both call media legs and the chat threads (`:1517`, `:1552`, `:1586`, `:2214`, `:1626`).
+  It comes from the socket peer.
   For a LAN server this is reasonably strong, but it means *one host behind a shared NAT or
   hotspot is indistinguishable from another*, and an attacker who can spoof or share the
   phone's own address (`normalizeAddr`/`sameAddr` folding, `:1617`, `:1407`) inherits that
-  host's private threads and directed files.
+  host's private threads and directed files. After `security/object-scope` the file routes answer
+  that question through **one** predicate — `receivedFileIsVisibleTo` (`:526`) — instead of four
+  copies that compared raw strings and so disagreed with `sameAddr` about `::ffff:` forms. The
+  remaining scope-by-address risk is unchanged and is what session-scoped objects would fix.
 - **`X-Pulse-Client` is caller-supplied and only decoded for display** (`:1059-1063`). It is
   never an authorization input. Correct.
 - **`sender` in `/api/messages` POST and `/api/typing` POST is caller-supplied** (`:1669`,
@@ -137,9 +143,9 @@ then 404s.
 | GET | `/api/call/web` | `:1232` | `isAuthorized` `:1235` | `cid`, state, `incoming`/`self` flags | Ownership is by address: `sameAddr(c.ip, clientIp)` (`:1253`). |
 | POST | `/api/call/web` `action=ring` | `:1269` | `isAuthorized` | starts a call to the phone | Refuses when a call is already up (`:1270`). Accepts `name` verbatim (`:1287`) → shown on the phone's ringing UI. Confirm it is rendered as text, not markup. |
 | POST | `/api/call/web` `action=accept`/`decline` | `:1299` | `isAuthorized` | own call only | Requires `c.outgoing && sameAddr(c.ip, clientIp)` (`:1302`). Correct. |
-| POST | `/api/call/web` `action=end` | `:1309` | `isAuthorized` | **any** `webCall` | **Gap.** Unlike accept/decline, `end` checks neither ownership nor even requires a matching `cid` — a blank `cid` ends whatever call is live (`:1311`). Any authenticated client (with PIN disabled: any LAN host) can hang up the phone's browser call. Compare `:1302` for the intended pattern. |
-| GET | `/api/webcall/down` | `:1329` | `isAuthorized` `:1330` | `cid` must match live accepted call | `:1333` correctly rejects a wrong/absent `cid`. Chunked media body. |
-| POST | `/api/webcall/up` | `:1344` | `isAuthorized` `:1345` | `cid` must match, engine must have a web leg | Base64 frame batch decoded and handed to the engine (`:1359`) with **no size cap on the JSON body or the decoded bytes**. `session.parseBody` has already buffered it to a temp file by then. See §6 R-1. |
+| POST | `/api/call/web` `action=end` | `:1369` | `isAuthorized` + own call | **Fixed.** The handler now refuses when there is no live call, when the `cid` is present but not the running one, and when `sameAddr(c.ip, clientIp)` fails (`:1384`) — the same three questions accept/decline already asked. A blank `cid` no longer means "whichever call is up", and ending a call that is not running answers a failure instead of a hollow `success`. |
+| GET | `/api/webcall/down` | `:1404` | `isAuthorized` `:1405` + own call | `:1408` rejects a wrong/absent `cid`; the cid alone was never enough, because `GET /api/call/web` publishes it to every authorized tab. `sameAddr(call.ip, clientIp)` (`:1415`) now binds the media leg to the tab that owns the call. Chunked media body. |
+| POST | `/api/webcall/up` | `:1425` | `isAuthorized` `:1426` + own call | Base64 frame batch decoded and handed to the engine. `sameAddr(call.ip, clientIp)` (`:1443`) refuses a frame batch from a tab that does not own the call, and `bodyTooLarge(session, WEB_CALL_BODY_LIMIT)` (`:1431`, 256 KiB) answers 413 from the declared `Content-Length` **before** `parseBody` buffers it — NanoHTTPD 2.3.1 has no ceiling of its own. See §6 R-1. |
 | GET | `/api/peers` | `:1372` | `isAuthorized` `:1373` | whole-LAN peer table | Exposes every client IP, name, last-seen, file count and byte total (`:1375-1430`). This is a network map and is the most sensitive tier B response. It is fine *if* the PIN is on; with PIN disabled it is free reconnaissance for any host on the subnet. |
 
 ---
@@ -148,14 +154,14 @@ then 404s.
 
 | Method | Path | Line | Object scope | Notes |
 | --- | --- | --- | --- | --- |
-| GET | `/api/files` | `:1511` | `targetClientIp == null \|\| == clientIp \|\| uploadedByIp == clientIp` (`:1517`) | The isolation model. Public files are the shared room; directed files are visible to sender and receiver only. Reports `from`/`to` IPs to the reader (`:1530-1531`) — LAN addresses of other clients, which the PRD's "who can see what" question should decide on deliberately. |
-| GET | `/download/{id}` | `:1543` | same predicate (`:1552`) | 403 `Access forbidden for this device IP` on mismatch. **Accepts the credential in `?auth=`** — the browser builds it that way (`WebClientHtml.kt:2095-2097`) because a plain anchor cannot set a header. See §6 S-2. |
-| GET | `/download-folder?path=` | `:1560` | **none beyond the root** | `sanitizeRelativePath` + canonical-path check against `WebDrop_Received` (`:1735-1743`). No traversal, but **any authenticated client may zip and read any received folder**, including one another client's directed folder. `?path=` has no per-owner check at all. Also: builds the whole ZIP in `cacheDir` with no size cap (`:1747-1754`) and reflects the exception message in the body (`:1770`). |
+| GET | `/api/files` | `:1618` | `receivedFileIsVisibleTo(file, clientIp)` (`:526`) | The isolation model. Public files are the shared room; directed files are visible to sender and receiver only. This was three hand-written copies of `file.targetClientIp != clientIp && file.uploadedByIp != clientIp` comparing **raw strings**, which locked an owner out of its own file when one side of the record was the dual-stack form (`::ffff:192.168.1.9`) of the other; the predicate folds both through `sameAddr`. `isMine` (`:1630`) is `sameAddr(uploadedByIp, clientIp)` — retract-what-I-sent, not merely "visible to me". Reports `from`/`to` IPs to the reader — LAN addresses of other clients, which the PRD's "who can see what" question should decide on deliberately. |
+| GET | `/download/{id}` | `:1646` | same predicate (`:1655`) | 403 `Access forbidden for this device IP` on mismatch. **Accepts the credential in `?auth=`** — the browser builds it that way (`WebClientHtml.kt`) because a plain anchor cannot set a header; the value there is now a *session*, not the PIN. See §6 S-2. |
+| GET | `/download-folder?path=` | `:1560`, `handleFolderDownload` `:1836` | **derived from the files inside** | `sanitizeRelativePath` + canonical-path check against `WebDrop_Received`. Traversal was never the hole; **ownership** was, and a folder is not a record, so the check is derived: if any `SharedFile` lives under the canonical prefix and is not visible to this client (`:1852-1861`), the whole zip is 403. Two bounds the old code lacked, both reached *before* anything is written: `FOLDER_ZIP_MAX_ENTRIES` = 2 000 and `FOLDER_ZIP_MAX_BYTES` = 512 MiB, tested against a lazy `take(MAX + 1)` walk (`:1868`) so a huge tree costs one entry, not a minute. `Content-Length` is declared, so `folderTooLarge` answers 413 and deletes nothing. The catch no longer reflects `e.message` into the body (`:1902`). |
 | POST | `/upload` | `:1566` | writes under `WebDrop_Received` | Two credentials: PIN, or a pairing upload proof bound to `Content-Length` (`:1008-1016`). `?path=` controls the subdirectory (`:1873`). Duplicate names get a timestamp suffix rather than overwrite (`:1886-1893`). Free-space preflight (`:1895`). Paired uploads are decrypted from the temp file (`:1905`). |
 | POST | `/chatupload` | `:1571` | attachment store | Same bytes, never enters the hosted file list. `tempFile.copyTo(target, overwrite = true)` (`:2045`) — the only `overwrite = true` in the file; check where `target` comes from and whether a second client can clobber a first one's attachment. |
 | GET | `/chatfile/{id}` | `:1576` | **none** | **Gap.** After the global check this handler looks the id up in `chatAttachments` (`:2064`) and serves it. There is no `targetClientIp`, no owner, no thread test — unlike `/download/` and `/preview/`, which both have one (`:1552`, `:1586`). Any client that can pass the PIN gate can read any attachment whose id it knows. `?dl=1` toggles disposition (`:2072`). |
-| GET | `/preview/{id}` | `:1582` | same predicate (`:1586`) | Inline serving: no `Content-Disposition: attachment`, and `serveFileInline` (`:2078`) passes the stored `mimeType` straight through. **An uploaded HTML/SVG file is served inline with its own declared type.** Needs `X-Content-Type-Options: nosniff` and a forced-octet-stream rule for active content. Range requests are honoured (`:2104`). |
-| POST | `/api/delete` | `:1593` | `targetClientIp`/`uploadedByIp` + must live under `WebDrop_Received` (`:2210-2227`) | Two-layer check: ownership then canonical root prefix (`:2217-2221`). Deleting a file outside the received dir is refused. Correct. |
+| GET | `/preview/{id}` | `:1685` | same predicate (`:1689`) | Inline serving: no `Content-Disposition: attachment`, and `serveFileInline` (`:2219`) passes the stored `mimeType` straight through. **An uploaded HTML/SVG file is served inline with its own declared type.** Needs `X-Content-Type-Options: nosniff` and a forced-octet-stream rule for active content. Range requests are honoured. |
+| POST | `/api/delete` | `:1696` | `receivedFileIsVisibleTo` (`:2355`) + must live under `WebDrop_Received` | Two-layer check: visibility then canonical root prefix. Deleting a file outside the received dir is refused. Correct. |
 | GET | `/api/messages` | `:1606` | thread filter: own address book, host's book if watching the host, open groups, or broadcast (`:1625-1636`) | The subtlest scoping in the server. Depends on `sameAddr`/`normalizeAddr` (IPv4/IPv6 folding) being right; a client that presents as the host address reads the host's private threads. `fromWeb` and `mine` flags (`:1649`) decide what the tab may retract. |
 | POST | `/api/messages` | `:1662` | `thread` restricted to known groups or `ip:` form, else broadcast (`:1675-1681`) | A client can address a thread to *any* IP (`"ip:$to"`), i.e. write into a conversation it will not read but another host will. Sender name is self-declared (`:1669`). No body-size cap. |
 | DELETE | `/api/messages?id=` | `:1699` | `sameAddr(owner.clientIp, clientIp)` (`:1707`) | 403 on mismatch. Id must be in the query string because NanoHTTPD discards a DELETE body (`:1701-1703`) — a legitimate exception to the "no meaningful data in query strings" rule, but note that `id` is a message id, not a credential. |
@@ -198,22 +204,28 @@ than credential-in-history alone.
 Ordered by the risk the code shows, not by how hard the fix is. **Confirmed** = visible in
 source and actionable now; **Needs test** = the code does not prove it is broken.
 
+The `S-n` numbers here are the **same** items as `docs/operations/Issue-Backlog.md`, which is the
+canonical list: `A-n` rows are findings this matrix is the only place describing, and `P-n`/`H-n`
+describe the public surface and the browser. Two rows carry ids that only existed here and have been
+renumbered to match the backlog — `S-1b` (the browser half of `S-1`) and `S-8` (the paired-sender
+scope, which had no backlog entry until now).
+
 ### Credential design
 
 | ID | Status | Finding |
 | --- | --- | --- |
-| **S-1** | **Fixed** | Was: the PIN *was* the session token (`pinCode ?: "ok"`), with no expiry, no revocation and no per-session identity. Now: `SessionStore` (`app/security/SessionStore.kt`) mints a 256-bit random session, keeps only its SHA-256, expires it after 12 hours, caps the store at 64 live sessions, revokes singly or all, and clears on PIN rotation (`updatePinSecurity`). In-memory is the policy: a server restart logs every browser out. Proved by `SessionStoreTest` (9) and `ServerSessionAuthTest` (12) — including that the token is not the PIN, that logout kills it, and that rotating the PIN kills every tab. |
+| **S-1** | **Fixed** | Was: the PIN *was* the session token (`pinCode ?: "ok"`), with no expiry, no revocation and no per-session identity. Now: `SessionStore` (`app/security/SessionStore.kt`) mints a 256-bit random session, keeps only its SHA-256, expires it after 12 hours, caps the store at 64 live sessions, revokes singly or all, and clears on PIN rotation (`updatePinSecurity`). In-memory is the policy: a server restart logs every browser out. Proved by `SessionStoreTest` (9) and `ServerSessionAuthTest` (13) — including that the token is not the PIN, that logout kills it, and that rotating the PIN kills every tab. |
 | **S-2** | Half fixed | The server **no longer accepts the PIN in a query string**, which was the leak that mattered: history, the SSE URL, link markup and `Referer` were all carrying a long-lived room secret. A tab that still holds one gets 401, runs its own `lockOut()`, and re-authenticates. Still open: the tab continues to build `?auth=<session>` for anchor-triggered downloads (`WebClientHtml.kt:2097, 2161, 2405, 3042, 3534, 3893`), so a *session* — not the PIN — appears in URLs. Closing that needs short-lived single-use download tickets scoped to one file id and action, which is the next PR. |
-| **S-3** | **Fixed** | Was: `authToken = data.token \|\| pin` — the tab cached the typed PIN whenever a response had no token. Now the tab refuses to proceed without a real session and shows an error instead, so nothing in `localStorage` is the PIN. `lockOut()` also posts `/api/auth/logout` first, so closing a tab does not leave a session alive on the phone until expiry. |
-| **S-4** | Confirmed | `pairedSenderIsAuthorized` covers `/upload` only (`:1009`), so a paired phone with the PIN rotated on the host can send files but cannot pull its own messages or thread list. Product gap worth documenting either way. |
+| **S-1b** | **Fixed** | Was: `authToken = data.token \|\| pin` — the tab cached the typed PIN whenever a response had no token. Now the tab refuses to proceed without a real session and shows an error instead, so nothing in `localStorage` is the PIN. `lockOut()` also posts `/api/auth/logout` first, so closing a tab does not leave a session alive on the phone until expiry. This is item 6 of the backlog's `S-1` fix list, not a separate finding. |
+| **S-8** | Confirmed | `pairedSenderIsAuthorized` covers `/upload` only (`:1009`), so a paired phone with the PIN rotated on the host can send files but cannot pull its own messages or thread list. Product gap worth documenting either way. |
 
 ### Access-control scope
 
 | ID | Status | Finding |
 | --- | --- | --- |
 | **A-1** | Confirmed | `/chatfile/{id}` has no ownership check (`:2063-2075`) while `/download/` and `/preview/` both do. Cross-client attachment read. |
-| **A-2** | Confirmed | `/download-folder?path=` has no ownership check (`:1560`, `:1733`). Any authenticated client can zip any received folder. |
-| **A-3** | Confirmed | `POST /api/call/web action=end` ends another client's call (`:1309-1311`); accept/decline correctly bind to `c.ip` (`:1302`). |
+| **A-2** | **Fixed** | `/download-folder?path=` had no ownership check at all — any authenticated client could zip any received folder, including one another visitor's directed downloads. A folder is not a record, so the check is derived from the records inside it: any `SharedFile` under the canonical prefix that `receivedFileIsVisibleTo` rejects makes the whole request 403 (`:1852-1861`). Covered by `ObjectScopeTest`; the uploader-of-records case is asserted as *allowed*, because over loopback the requester is always also the recorded owner and the forbid branch cannot be reached honestly. |
+| **A-3** | **Fixed** | `POST /api/call/web action=end` ended another client's call, and a blank `cid` ended whichever call was running. `end` now asks the same three questions accept/decline asked — is there a live call, does the `cid` match it, is this tab the one it was made for (`:1384`) — and reports failure rather than `success` when there is nothing to end. `/api/webcall/down` and `/api/webcall/up` gained the same `sameAddr` binding, since `GET /api/call/web` publishes the cid to every authorized tab. |
 | **A-4** | Confirmed | `/api/relay/pair-poll` returns before the relay proof check (`:261-266`) on a caller-supplied `reqId`. |
 | **A-5** | Needs test | Everything above `:1508` is unauthenticated — the chain position *is* the policy. A route inserted in the wrong place is public with no signal. This is what the `RouteRegistry`/`AuthorizationPolicy` refactor in the PRD exists to replace. |
 
@@ -221,7 +233,7 @@ source and actionable now; **Needs test** = the code does not prove it is broken
 
 | ID | Status | Finding |
 | --- | --- | --- |
-| **P-1** | Confirmed | No rate limit anywhere except the PIN-guess counter. Tier A POST bodies are parsed and buffered (`session.parseBody`, `:1165`, `:1266`, `:1437`, `:1469`) before any size test — unauthenticated disk-fill in `cacheDir`. Only the relay envelope is capped (`MAX_RELAY_ENVELOPE`, `:298`). |
+| **P-1** | Partially fixed | No rate limit anywhere except the PIN-guess counter. **The two bodies that could be filled from a browser tab are now capped from the declared `Content-Length` before `parseBody` runs** — `JSON_BODY_LIMIT` 64 KiB on `/api/call/web` (`:1324`) and `WEB_CALL_BODY_LIMIT` 256 KiB on `/api/webcall/up` (`:1431`), answering 413. Still open: tier A POST bodies (`:1165` and its neighbours) are parsed and buffered with no size test, which is unauthenticated disk-fill in `cacheDir`, and a client may lie about `Content-Length` and stream less — the cap bounds the buffer, not the liar. Only the relay envelope was capped before (`MAX_RELAY_ENVELOPE`). |
 | **P-2** | Confirmed | `POST /api/typing` accepts a self-declared `sender` with no authentication (`:1167`) and lets any host evict another's presence by name (`:1173-1176`); 64 entries is the only bound. |
 | **P-3** | Needs test | `/api/info` discloses `tlsError` text (`:1137`) and `deviceId` (`:1140`) to any LAN host. |
 
@@ -249,14 +261,26 @@ The table-driven suite must, for **each row above**, assert status and body-shap
 7. wrong `pid` / replayed proof / proof bound to a different `Content-Length`;
 8. relay `post` proof used on `pull` and vice versa (role binding, `:269-270`);
 9. **two clients, A and B**: A writes, A targets B, B reads, A reads B's directed
-   file/thread/attachment. Expect 403 or absence — this is the suite that catches A-1, A-2, A-3;
+   file/thread/attachment. Expect 403 or absence — this is the suite that catches A-1, A-2, A-3.
+   *Partly written:* `ObjectScopeTest` (15) covers the call-object half completely (A cannot end,
+   subscribe to, or feed B's call) and the folder half as far as loopback allows — see the caveat in
+   backlog `S-5`. What it cannot do from `127.0.0.1` is present as *two distinct addresses*, which is
+   exactly what A-1/A-2 and item 16 need; the honest way to get that is an injected resolver or a
+   second stack, not a faked assertion.
 10. `/api/relay/pair-poll` with a `reqId` the caller never requested;
 11. oversized body on every tier A and tier C POST: 1 MiB over cap on `/api/typing`,
     `/api/messages`, `/api/pair/*`, `/api/webcall/up`, `/upload`, `/chatupload` — assert a
-    bounded rejection, not a buffered temp file and not a crash;
+    bounded rejection, not a buffered temp file and not a crash.
+    *Partly written:* `ObjectScopeTest` asserts 413 on `/api/webcall/up` and `/api/call/web` from a
+    declared 400 MB `Content-Length`, *and* that a normal-sized action still passes — a ceiling test
+    that only checks the refusal cannot tell a cap from a block. Tier A and `/upload` remain uncapped
+    (`R-2`).
 12. path traversal on `/download-folder?path=`: `../../`, `%2e%2e%2f`, absolute paths, `\`
     separators, NUL, `..%00`, Unicode-normalised fullwidth `．．／`, symlink under
-    `WebDrop_Received`, depth beyond 4 segments;
+    `WebDrop_Received`, depth beyond 4 segments.
+    *One case written* (`ObjectScopeTest`: a folder outside the received directory is refused). The
+    rest of the encodings still need asserting against `sanitizeRelativePath` directly — the
+    canonical check is a defence in depth, and only one of the two layers is currently tested.
 13. filename adversaria on `/upload?path=`: control characters, `\r\n` header injection into
     `Content-Disposition`, HTML/JS payloads, bidirectional overrides, 300-char names, reserved
     names, duplicate concurrent uploads of the same name;
@@ -285,6 +309,15 @@ Where a test contradicts this matrix, the code is wrong until proven otherwise �
 - Do not rename the pairing aliases, preference keys (`localdrop_identity`,
   `localdrop_e2e_identity`), or `WebDrop_Received` — every existing pairing and received-file
   index points at those strings (`IdentityKeyPair.kt:23-24`, `:2237`).
-- IP-scoping (`sameAddr`/`normalizeAddr`) is load-bearing for four routes. Replacing it with
-  session scoping is the right direction, but it changes who can read history — write the
-  migration before the code.
+- IP-scoping (`sameAddr`/`normalizeAddr`) is load-bearing for every file and call route, and after
+  `security/object-scope` it is expressed in exactly one place (`receivedFileIsVisibleTo`, `:526`)
+  rather than four hand-written copies. Replacing it with session scoping is the right direction, but
+  it changes who can read history — write the migration before the code.
+- **The `end` refusal is a deliberate response-shape change** and the only one in §§3-4. `action=end`
+  used to answer `success:true` for any authenticated caller and for no call at all; it now answers
+  400 `No open call` / `Unknown call` / `Not your call`. The shipped tab ignores this (`callAction`
+  is fire-and-forget with a `.catch`), so nothing in the APK breaks, but a client written against the
+  old always-success cannot be told apart from a caller that was refused — say so in the release
+  notes rather than pretending the shape was stable.
+- Folder zips can now fail with 413 (`Too many files to zip`, `Folder is too large to zip`) where they
+  previously either succeeded or filled `cacheDir`. Both carry `Cache-Control: no-store`.

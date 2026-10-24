@@ -2,10 +2,6 @@ package com.pulsedrop.app.server
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
-import java.io.IOException
-import java.net.InetAddress
-import java.net.ServerSocket
-import java.net.Socket
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -39,33 +35,12 @@ class ServerSessionAuthTest {
     private val pin = "424242"
     private lateinit var server: PulseDropServer
     private var port = 0
-
-    private object SilentListener : ServerTransferListener {
-        override fun onTransferStarted(
-            transferId: String, fileName: String, fileSize: Long,
-            direction: com.pulsedrop.app.model.TransferDirection, remoteDevice: String, clientIp: String
-        ) {}
-
-        override fun onTransferProgress(transferId: String, bytes: Long, total: Long, speed: Long) {}
-
-        override fun onTransferCompleted(
-            transferId: String, fileName: String, fileSize: Long, localFilePath: String?,
-            direction: com.pulsedrop.app.model.TransferDirection, remoteDevice: String, clientIp: String
-        ) {}
-
-        override fun onTransferFailed(
-            transferId: String, fileName: String, error: String,
-            direction: com.pulsedrop.app.model.TransferDirection
-        ) {}
-
-        override fun onNewMessage(message: com.pulsedrop.app.model.ClipMessage) {}
-        override fun onWebCall(call: WebCall) {}
-    }
+    private lateinit var http: RoomHttp
 
     @Before
     fun startServerOnLoopback() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        port = ServerSocket(0, 4, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+        port = RoomHttp.freePort()
         server = PulseDropServer(
             port = port,
             bindAddress = "127.0.0.1",
@@ -76,7 +51,8 @@ class ServerSessionAuthTest {
             initialListener = SilentListener
         )
         server.start()
-        awaitListening()
+        RoomHttp.awaitListening(port)
+        http = RoomHttp(port)
     }
 
     @After
@@ -84,64 +60,26 @@ class ServerSessionAuthTest {
         server.stop()
     }
 
-    // -- the transport --------------------------------------------------------
-
-    private class Answer(val status: Int, val body: String, val headers: String)
+    // -- the transport: shared with ObjectScopeTest through RoomHttp ----------
+    //
+    // Kept under the same names so the tests below read exactly as they did when the harness was
+    // local; only the implementation moved.
 
     private fun call(
         method: String,
         path: String,
         headers: Map<String, String> = emptyMap(),
         body: String? = null
-    ): Answer {
-        val payload = body?.toByteArray() ?: ByteArray(0)
-        val request = StringBuilder()
-            .append("$method $path HTTP/1.1\r\n")
-            .append("Host: 127.0.0.1:$port\r\n")
-        headers.forEach { (k, v) -> request.append("$k: $v\r\n") }
-        if (body != null) request.append("Content-Length: ${payload.size}\r\n")
-        request.append("Connection: close\r\n\r\n")
-        val bytes = request.toString().toByteArray() + payload
-        Socket("127.0.0.1", port).use { socket ->
-            socket.soTimeout = 8000
-            socket.getOutputStream().apply { write(bytes); flush() }
-            val text = socket.getInputStream().reader().readText()
-            // NanoHTTPD answers HTTP/1.0, so read the version-independent status field rather than
-            // assuming a literal prefix.
-            val statusLine = text.lineSequence().firstOrNull().orEmpty()
-            val code = statusLine.split(" ").getOrNull(1)?.toIntOrNull() ?: -1
-            val head = text.substringBefore("\r\n\r\n")
-            return Answer(code, text.substringAfter("\r\n\r\n", ""), head)
-        }
-    }
-
-    private fun awaitListening() {
-        var waited = 0
-        while (waited < 5000) {
-            try {
-                Socket("127.0.0.1", port).close()
-                return
-            } catch (e: IOException) {
-                Thread.sleep(50); waited += 50
-            }
-        }
-        throw AssertionError("the test server never bound to 127.0.0.1:$port")
-    }
+    ) = http.call(method, path, headers, body)
 
     /** The login a browser performs, returning whatever the phone gave it. */
-    private fun login(submitted: String): String? {
-        val answer = call("POST", "/api/auth", mapOf("Content-Type" to "application/json"), "{\"pin\":\"$submitted\"}")
-        assertEquals("login itself must always answer 200", 200, answer.status)
-        val token = Regex("\"token\"\\s*:\\s*\"([^\"]+)\"").find(answer.body)?.groupValues?.get(1)
-        return token
-    }
+    private fun login(submitted: String): String? = http.login(submitted)
 
     /**
      * A login that must succeed. `Assert.fail` returns void rather than Nothing, so an elvis on it
      * would leave the token nullable — this throws instead and hands back a real String.
      */
-    private fun requireLogin(submitted: String): String =
-        login(submitted) ?: throw AssertionError("a correct PIN must return a session token")
+    private fun requireLogin(submitted: String): String = http.requireLogin(submitted)
 
     // -- S-1: the PIN must stop being the credential --------------------------
 
