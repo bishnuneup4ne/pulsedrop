@@ -54,9 +54,9 @@ route rejects invalid/expired/revoked tokens.
 it, which is `U-1`. The token is hex rather than base64url: `java.util.Base64` is API 26 and
 `lintRelease` fails the build on `minSdk 24`.
 
-### S-2 [partly fixed] PIN credentials travel in URLs
+### S-2 [fixed] PIN credentials travel in URLs
 
-`isAuthorized:987` reads `session.parameters["auth"]`, and the browser builds it in six places —
+`isAuthorized:987` read `session.parameters["auth"]`, and the browser built it in six places —
 `WebClientHtml.kt:2097, 2161, 2405, 3042, 3534, 3893` (including `/api/events`, an SSE URL that a
 proxy and the browser history both retain).
 
@@ -64,13 +64,18 @@ proxy and the browser history both retain).
 in any diagnostics/proxy log, and shoulder-surfable in an address bar. Combined with S-1 it means
 history is a credential store.
 
-*Fix:* delete the `parameters["auth"]` branch; header-only for `fetch`; for anchor-triggered
-downloads issue a **short-lived single-use ticket** bound to one file id + one action, minted by an
-authenticated call; add `Cache-Control: no-store` and `Referrer-Policy: no-referrer` to sensitive
-responses.
-*Tests:* a ticket cannot fetch a different file; a ticket cannot be replayed; no `?auth=` remains
-anywhere in the served HTML/JS; grep gate in CI for `auth=`.
-*Depends:* **must follow S-1** — a ticket is theatre while the token is the PIN.
+*Fix:* `isAuthorized` is header-only; the browser builds plain URLs. The requests a header cannot
+reach carry a **ticket** instead (`UrlTicket.kt`, `POST /api/ticket`): HMAC-SHA256 over the exact
+scope, the caller's normalized address and a five-minute expiry, minted only by an authenticated caller,
+rotated on PIN change, and gone on restart. Scopes are `events`, `download:<id>`, `folder:<path>`,
+`chatfile:<id>` and `preview:<id>`, and no state-changing route accepts one. Tickets are
+short-lived rather than single-use so a retried or ranged download still works inside the window.
+*Tests:* `UrlTicketTest` (roundtrip, expiry, scope mismatch, address mismatch, stretched expiry,
+flipped signature, rotation, malformed) and seven new `ServerSessionAuthTest` cases: a session in a
+query string is 401; a ticket opens exactly its object and no other; a ticket is not a way into the
+API (GET or POST); the event stream accepts a ticket and refuses `?auth=`; minting needs a live
+session; an unknown scope is refused; a PIN change kills tickets already in flight.
+*Depends:* followed S-1, as required.
 
 ### S-3 [confirmed] Authorization is positional, not policy
 

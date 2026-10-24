@@ -2,6 +2,7 @@ package com.pulsedrop.app.server
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -12,6 +13,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.net.Socket
 
 /**
  * What a browser is allowed to carry, proved over a real socket instead of by reading the chain.
@@ -141,6 +143,129 @@ class ServerSessionAuthTest {
         val session = requireLogin(pin)
         val withSession = call("GET", "/api/files", mapOf("X-Pulse-Auth" to session))
         assertTrue("a session in a header still works", withSession.status in 200..299)
+    }
+
+    /** A ticket for the exact scope a browser would name, or a failure that names the response. */
+    private fun mintTicket(scope: String, session: String): String {
+        val out = call(
+            "POST",
+            "/api/ticket",
+            mapOf("X-Pulse-Auth" to session, "Content-Type" to "application/json"),
+            JSONObject().put("scope", scope).toString()
+        )
+        assertEquals("minting $scope got ${out.status}: ${out.body}", 200, out.status)
+        val ticket = JSONObject(out.body).optString("ticket", "")
+        assertTrue("a ticket must come back", ticket.isNotBlank())
+        return ticket
+    }
+
+    /**
+     * The status line only. `/api/events` is a chunked stream that stays open, so the shared client
+     * — which reads to EOF — would wait for the server to end a connection that never ends.
+     */
+    private fun statusOnly(method: String, path: String): Int {
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 5000
+            val request = "$method $path HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nConnection: close\r\n\r\n"
+            socket.getOutputStream().apply { write(request.toByteArray()); flush() }
+            val line = socket.getInputStream().bufferedReader().readLine().orEmpty()
+            return line.split(" ").getOrNull(1)?.toIntOrNull() ?: -1
+        }
+    }
+
+    @Test
+    fun `a session token is not accepted in a query string either`() {
+        // The PIN stopped travelling in URLs first; the session that replaced it inherited the
+        // same three places. A session is a twelve-hour bearer credential, so where it sits matters
+        // as much as what it is.
+        val session = requireLogin(pin)
+        assertEquals(401, call("GET", "/api/files?auth=$session").status)
+        assertEquals(401, call("GET", "/download/whatever?auth=$session").status)
+    }
+
+    @Test
+    fun `the served page never puts a credential in a URL`() {
+        // The other half of the server-side refusal: a page that still built `?auth=` would work
+        // against nothing but would keep putting a twelve-hour token in history and referrers.
+        val html = WebClientHtml.getHtml("Test Phone", true)
+        assertTrue("the page still appends `auth=`", "auth=" !in html)
+        assertTrue("the page never mints the ticket its media routes need", "/api/ticket" in html)
+        assertTrue("the page never reads a ticket back out of a URL", "ticket=" in html)
+    }
+
+    @Test
+    fun `a ticket opens exactly the object it was minted for`() {
+        val session = requireLogin(pin)
+        val ticket = mintTicket("download:abc", session)
+        // There is no such file, so the route answers 404 rather than 401: the credential passed.
+        assertNotEquals("a ticket for this id was accepted", 401, call("GET", "/download/abc?ticket=$ticket").status)
+        assertEquals(
+            "the same ticket must not open a different file",
+            401,
+            call("GET", "/download/def?ticket=$ticket").status
+        )
+    }
+
+    @Test
+    fun `a ticket is not a way into the API`() {
+        val ticket = mintTicket("events", requireLogin(pin))
+        assertEquals(401, call("GET", "/api/files?ticket=$ticket").status)
+        assertEquals(401, call("POST", "/api/delete?ticket=$ticket", mapOf("Content-Type" to "application/json"), "{\"id\":\"x\"}").status)
+    }
+
+    @Test
+    fun `the event stream opens with a ticket, not with a session in the URL`() {
+        val ticket = mintTicket("events", requireLogin(pin))
+        assertEquals("a minted ticket is the only URL credential the stream takes", 200, statusOnly("GET", "/api/events?ticket=$ticket"))
+        assertEquals(401, statusOnly("GET", "/api/events?auth=" + requireLogin(pin)))
+    }
+
+    @Test
+    fun `a ticket can be minted only with a valid credential`() {
+        assertEquals(
+            401,
+            call("POST", "/api/ticket", mapOf("Content-Type" to "application/json"), "{\"scope\":\"events\"}").status
+        )
+        val session = requireLogin(pin)
+        val forged = "0".repeat(64)
+        assertEquals(
+            401,
+            call(
+                "POST", "/api/ticket",
+                mapOf("X-Pulse-Auth" to forged, "Content-Type" to "application/json"),
+                "{\"scope\":\"events\"}"
+            ).status
+        )
+        // The same request with the session it is supposed to require: the difference is the
+        // credential, not the shape of the request.
+        assertEquals(
+            200,
+            call(
+                "POST", "/api/ticket",
+                mapOf("X-Pulse-Auth" to session, "Content-Type" to "application/json"),
+                "{\"scope\":\"events\"}"
+            ).status
+        )
+    }
+
+    @Test
+    fun `a scope the phone does not serve is refused`() {
+        val session = requireLogin(pin)
+        val out = call(
+            "POST", "/api/ticket",
+            mapOf("X-Pulse-Auth" to session, "Content-Type" to "application/json"),
+            "{\"scope\":\"admin:everything\"}"
+        )
+        assertEquals(400, out.status)
+        assertTrue("and it says no", out.body.contains("\"success\":false"))
+    }
+
+    @Test
+    fun `a pin change kills tickets that are already in flight`() {
+        val session = requireLogin(pin)
+        val ticket = mintTicket("download:abc", session)
+        server.updatePinSecurity(true, "999999")
+        assertEquals(401, call("GET", "/download/abc?ticket=$ticket").status)
     }
 
     @Test

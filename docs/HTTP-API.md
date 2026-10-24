@@ -16,6 +16,7 @@ required for browser media).
 | GET | `/api/info` | Device name, PIN requirement, version, capability list, server stats |
 | POST | `/api/auth` | PIN check → **session token** (never the PIN) |
 | POST | `/api/auth/logout` | Revoke the session the caller is holding |
+| POST | `/api/ticket` | Mint a short-lived ticket for a URL that cannot carry a header |
 | GET | `/api/files` | Browse received-file list |
 | GET | `/download/{id}` | Fetch a file |
 | GET | `/preview/{id}` | Thumbnail / inline view |
@@ -160,9 +161,31 @@ its SHA-256, it expires after 12 hours, `POST /api/auth/logout` drops the one pr
 generating a new PIN drops all of them. Sessions live in memory: restarting the server logs every
 browser out, which is the intended policy.
 
-Send it in `X-Pulse-Auth`. `?auth=` is accepted for a *session* only, on the routes a browser cannot
-attach a header to (anchor downloads, the `/api/events` stream); **the PIN itself is not accepted in a
-query string any more**, and short-lived per-file tickets are scheduled to replace that path too.
+Send it in `X-Pulse-Auth`. No route accepts a credential in the query string any more, for a
+session or for the PIN: a URL ends up in history, in `Referer`, in screenshots of a network
+panel, and in any proxy log on the way. The few requests a browser cannot attach a header to —
+`<img>` and media sources, `<a download>` links, and the `EventSource` stream — carry a ticket
+instead.
+
+### URL tickets
+
+`POST /api/ticket` with an authenticated caller and a JSON body `{"scope": "<scope>"}` returns
+`{"success": true, "ticket": "<expiry>.<mac>"}`. The ticket is an HMAC-SHA256 over the scope,
+the caller's normalized address and an expiry; the phone stores nothing. It is valid for five
+minutes, works only from the address that minted it, and dies immediately on a server restart
+or a PIN change. The phone rejects a minted scope it has no route for.
+
+| Scope | Opens |
+| --- | --- |
+| `events` | `GET /api/events?ticket=…` |
+| `download:<id>` | `GET /download/<id>?ticket=…` |
+| `folder:<path>` | `GET /download-folder?path=<path>&ticket=…` |
+| `chatfile:<id>` | `GET /chatfile/<id>?ticket=…` |
+| `preview:<id>` | `GET /preview/<id>?ticket=…` |
+
+A ticket names one object and opens only that object: a ticket for one file id answers 401 on
+any other, and no state-changing route accepts one at all. Tickets are short-lived rather than
+single-use, so a range request or a retried download inside the window still works.
 
 One deliberate exception: the PIN is still accepted in `X-Pulse-Auth` from another **PulseDrop app**.
 A phone uploading to a peer presents the room PIN and an older build cannot negotiate a session
@@ -205,7 +228,7 @@ a ceiling first, from the declared `Content-Length`, with `413` and `Cache-Contr
 | `POST /api/typing` (no credential) | 4 KiB |
 | `POST /api/auth` (no credential) | 8 KiB |
 | `POST /api/pair/*`, `/api/call/*`, `/api/relay/*` (key-gated, not PIN-gated) | 64 KiB |
-| `POST /api/call/web`, `/api/delete`, `/api/messages` | 64 KiB |
+| `POST /api/call/web`, `/api/delete`, `/api/messages`, `/api/ticket` | 64 KiB |
 | `POST /api/webcall/up` | 256 KiB — one ~10 Hz batch of base64 frames |
 | `POST /upload`, `POST /chatupload` | free space on the cache volume less 64 MiB headroom, floored at 32 MiB |
 

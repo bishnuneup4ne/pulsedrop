@@ -1628,6 +1628,77 @@ object WebClientHtml {
       return h;
     }
 
+    /* ---- URL tickets ----
+       `<img>`, `<a download>` and EventSource cannot attach a header, so they carry a ticket in the
+       URL instead: it names exactly one object, works only from this address, and dies in minutes.
+       The session token that used to sit in these URLs was good for twelve hours. */
+    var ticketCache = {};
+    function ticketScopeOf(url) {
+      var path = String(url || '').split('?')[0];
+      var q = String(url || '').indexOf('?') >= 0 ? String(url).slice(String(url).indexOf('?') + 1) : '';
+      if (path === '/download-folder') {
+        var at = q.indexOf('path=');
+        var raw = at >= 0 ? q.slice(at + 5).split('&')[0] : '';
+        try { raw = decodeURIComponent(raw); } catch (e) {}
+        return 'folder:' + raw;
+      }
+      if (path.indexOf('/download/') === 0) return 'download:' + decodeURIComponent(path.slice(10));
+      if (path.indexOf('/chatfile/') === 0) return 'chatfile:' + decodeURIComponent(path.slice(10));
+      if (path.indexOf('/preview/') === 0) return 'preview:' + decodeURIComponent(path.slice(9));
+      return null;
+    }
+    function ticketFor(scope) {
+      var now = Date.now();
+      var hit = ticketCache[scope];
+      if (hit && hit.until > now + 15000) return Promise.resolve(hit.ticket);
+      return fetch('/api/ticket', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ scope: scope })
+      }).then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (out) {
+          if (!out || !out.ticket) return null;
+          // A little inside the phone's five minutes, so a URL handed over a beat late still works.
+          ticketCache[scope] = { ticket: out.ticket, until: now + 210000 };
+          return out.ticket;
+        })
+        .catch(function () { return null; });
+    }
+    function withTicket(url, scope) {
+      if (!scope) return Promise.resolve(url);
+      return ticketFor(scope).then(function (t) {
+        return t ? url + (url.indexOf('?') >= 0 ? '&' : '?') + 'ticket=' + encodeURIComponent(t) : url;
+      });
+    }
+    function setMediaUrl(node, url) {
+      var scope = ticketScopeOf(url);
+      if (!scope || !authToken) { node.src = url; return; }
+      withTicket(url, scope).then(function (u) { node.src = u; });
+    }
+    /* One listener instead of every download link learning about tickets: the href already names
+       the object, and that is the only thing a ticket is scoped to. */
+    document.addEventListener('click', function (e) {
+      if (!e.target || !e.target.closest) return;
+      var a = e.target.closest('a[href]');
+      if (!a || !authToken) return;
+      var href = a.getAttribute('href') || '';
+      // The anchor this handler creates already carries its ticket; intercepting it again would
+      // mint in a loop.
+      if (href.indexOf('ticket=') >= 0) return;
+      var scope = ticketScopeOf(href);
+      if (!scope) return;
+      e.preventDefault();
+      withTicket(href, scope).then(function (url) {
+        var go = document.createElement('a');
+        go.href = url;
+        var dl = a.getAttribute('download');
+        if (dl !== null) go.setAttribute('download', dl);
+        document.body.appendChild(go);
+        go.click();
+        go.remove();
+      });
+    });
+
     function revealApp() {
       el('appRoot').style.display = 'flex';
       var i = el('selfNameInput');
@@ -1649,6 +1720,12 @@ object WebClientHtml {
       }
       localStorage.removeItem('pulse_token');
       authToken = '';
+      // A dead session cannot mint a ticket, so stop reconnecting until a new login succeeds.
+      eventsStopped = true;
+      try { if (eventsStream) eventsStream.close(); } catch (e) {}
+      // Tickets outlive the session that minted them by a few minutes. That is fine on the phone
+      // and wrong here: the tab would spend an invalid one before checking.
+      ticketCache = {};
       el('appRoot').style.display = 'none';
       showAuth();
     }
@@ -1686,6 +1763,9 @@ object WebClientHtml {
           fetchFiles();
           fetchInfo();
           fetchMessages();
+          // The stream was stopped when the old session died; a fresh one can mint a fresh ticket.
+          eventsStopped = false;
+          connectEvents();
         } else {
           var errEl = el('pinError');
           errEl.textContent = data.locked
@@ -2113,9 +2193,10 @@ object WebClientHtml {
     }
 
     function downloadHref(id) {
-      var href = '/download/' + encodeURIComponent(id);
-      if (authToken) href += '?auth=' + encodeURIComponent(authToken);
-      return href;
+      // No credential in the URL. `/download/{id}` is scoped to the address that uploaded or was
+      // sent the file, and a session token in an href is copied into history and into the next
+      // page's referrer, where nothing needs it.
+      return '/download/' + encodeURIComponent(id);
     }
 
     function buildFolderCard(root, files) {
@@ -2178,7 +2259,6 @@ object WebClientHtml {
       var dl = document.createElement('a');
       dl.className = 'dl-btn';
       var href = '/download-folder?path=' + encodeURIComponent(root);
-      if (authToken) href += '&auth=' + encodeURIComponent(authToken);
       dl.href = href;
       dl.setAttribute('download', root + '.zip');
       dl.innerHTML = ICON.download + '<span>Download folder</span>';
@@ -2422,7 +2502,6 @@ object WebClientHtml {
         if (file._relPath) url += '&path=' + encodeURIComponent(file._relPath);
         var target = el('targetSelect') ? el('targetSelect').value : '';
         if (/^(\d{1,3}\.){3}\d{1,3}$/.test(target)) url += '&to=' + encodeURIComponent(target);
-        if (authToken) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'auth=' + encodeURIComponent(authToken);
         xhr.open('POST', url, true);
         if (authToken) xhr.setRequestHeader('X-Pulse-Auth', authToken);
 
@@ -3057,14 +3136,13 @@ object WebClientHtml {
     }
 
     /* ===== Chat attachments: the file itself lives in the bubble ===== */
-    function withAuth(url) {
-      if (!authToken) return url;
-      return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'auth=' + encodeURIComponent(authToken);
-    }
+    /* Attachment bytes are read by `<img>` and `<a>`, which cannot send a header, so the routes
+       themselves authorise by address and ownership — see `chatFileIsVisibleTo` on the phone.
+       Nothing here appends a credential. */
     function chatFileUrl(id, asDownload) {
-      return withAuth('/chatfile/' + encodeURIComponent(id) + (asDownload ? '?dl=1' : ''));
+      return '/chatfile/' + encodeURIComponent(id) + (asDownload ? '?dl=1' : '');
     }
-    function hostedPreviewUrl(id) { return withAuth('/preview/' + encodeURIComponent(id)); }
+    function hostedPreviewUrl(id) { return '/preview/' + encodeURIComponent(id); }
 
     function kindLabel(name) {
       var kind = fileKind(name);
@@ -3086,7 +3164,7 @@ object WebClientHtml {
       thumb.setAttribute('aria-hidden', 'true');
       if (fileKind(att.name) === 'images') {
         var im = document.createElement('img');
-        im.src = chatFileUrl(att.id, false);
+        setMediaUrl(im, chatFileUrl(att.id, false));
         im.alt = '';
         im.addEventListener('error', function () { thumb.innerHTML = meta.svg; });
         thumb.appendChild(im);
@@ -3275,13 +3353,13 @@ object WebClientHtml {
         lb.zoomable = true;
         var img = lbShell('lb-img pan', 'img');
         img.alt = it.name;
-        img.src = it.url;
+        setMediaUrl(img, it.url);
         img.addEventListener('error', function () { showLbFallback(it, 'preview failed'); });
         stage.appendChild(img);
       } else if (kind === 'videos') {
         lb.zoomable = true;
         var vid = lbShell('lb-video', 'video');
-        vid.src = it.url;
+        setMediaUrl(vid, it.url);
         vid.controls = true;
         vid.setAttribute('playsinline', '');
         vid.preload = 'metadata';
@@ -3296,7 +3374,7 @@ object WebClientHtml {
         disc.style.cssText = 'width:64px;height:64px;border-radius:20px;';
         var au = document.createElement('audio');
         au.className = 'lb-audio';
-        au.src = it.url;
+        setMediaUrl(au, it.url);
         au.controls = true;
         var cap = document.createElement('div');
         cap.className = 'lb-sub';
@@ -3312,7 +3390,7 @@ object WebClientHtml {
       } else if (ext === 'pdf') {
         lb.zoomable = true;
         var frame = lbShell('lb-pdf', 'iframe');
-        frame.src = it.url;
+        setMediaUrl(frame, it.url);
         frame.title = it.name;
         stage.appendChild(frame);
       } else if (TEXTY.indexOf(ext) >= 0) {
@@ -3550,8 +3628,7 @@ object WebClientHtml {
     function uploadChatFile(file) {
       return new Promise(function (resolve) {
         var xhr = new XMLHttpRequest();
-        xhr.open('POST', '/chatupload?filename=' + encodeURIComponent(file.name) +
-          (authToken ? '&auth=' + encodeURIComponent(authToken) : ''), true);
+        xhr.open('POST', '/chatupload?filename=' + encodeURIComponent(file.name), true);
         if (authToken) xhr.setRequestHeader('X-Pulse-Auth', authToken);
         xhr.onload = function () {
           var att = null;
@@ -3907,31 +3984,68 @@ object WebClientHtml {
 
     /* ---- server push ----
        The 2 s poll is the fallback; this is the fast path. EventSource is not a timer, so a
-       background tab still gets the frame the moment the phone dials. */
-    (function connectEvents() {
-      if (!window.EventSource) return;
-      var url = '/api/events' + (authToken ? ('?auth=' + encodeURIComponent(authToken)) : '');
-      var es;
-      try { es = new EventSource(url); } catch (e) { return; }
-      var on = function (name, fn) { try { es.addEventListener(name, fn); } catch (e) {} };
-      on('call', function () { pollCall(); });
-      on('callstate', function () { if (call.cid) pollCall(); else pollCall(); });
-      on('message', function () { try { fetchMessages(); } catch (e) {} });
-      on('deleted', function () {
-        // The store keeps a tombstone rather than dropping the row, so re-read rather than hide.
-        chatRev++;
-        try { fetchMessages(); } catch (e) {}
+       background tab still gets the frame the moment the phone dials.
+
+       EventSource cannot send a header, and the session token that used to ride in this URL was a
+       twelve-hour bearer credential sitting in history. The tab trades it for a ticket that lives
+       minutes and names only this stream. Because that also expires under a long-lived connection,
+       an error closes the connection and re-mints rather than leaving EventSource retrying a dead
+       URL; the poll covers the gap in between. */
+    var eventsStopped = false;
+    var eventsStream = null;
+    function eventTicket() {
+      return fetch('/api/ticket', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ scope: 'events' })
+      }).then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (out) { return out && out.ticket ? out.ticket : null; })
+        .catch(function () { return null; });
+    }
+    function connectEvents() {
+      if (!window.EventSource || eventsStopped) return;
+      try { if (eventsStream) eventsStream.close(); } catch (e) {}
+      eventsStream = null;
+      var start = function (url) {
+        if (eventsStopped) return;
+        var es;
+        try { es = new EventSource(url); } catch (e) { return; }
+        eventsStream = es;
+        var retry = null;
+        var on = function (name, fn) { try { es.addEventListener(name, fn); } catch (e) {} };
+        on('call', function () { pollCall(); });
+        on('callstate', function () { if (call.cid) pollCall(); else pollCall(); });
+        on('message', function () { try { fetchMessages(); } catch (e) {} });
+        on('deleted', function () {
+          // The store keeps a tombstone rather than dropping the row, so re-read rather than hide.
+          chatRev++;
+          try { fetchMessages(); } catch (e) {}
+        });
+        on('file', function (ev) {
+          var d = {}; try { d = JSON.parse(ev.data || '{}'); } catch (e) {}
+          try { fetchFiles(); } catch (e) {}
+          if (d.name) browserNotify('File received', d.name + ' from ' + (d.from || 'a device'), 'pulse-file');
+        });
+        on('pair', function () { try { fetchThreads(); fetchInfo(); } catch (e) {} });
+        es.onerror = function () {
+          // Covers both a lost connection and a ticket that has expired under it. One timer per
+          // connection, or EventSource's repeated error events would multiply the reconnects.
+          try { es.close(); } catch (e) {}
+          if (retry) return;
+          retry = setTimeout(function () { retry = null; connectEvents(); }, 8000);
+        };
+      };
+      if (!authToken) { start('/api/events'); return; }
+      eventTicket().then(function (t) {
+        start(t ? '/api/events?ticket=' + encodeURIComponent(t) : '/api/events');
       });
-      on('file', function (ev) {
-        var d = {}; try { d = JSON.parse(ev.data || '{}'); } catch (e) {}
-        try { fetchFiles(); } catch (e) {}
-        if (d.name) browserNotify('File received', d.name + ' from ' + (d.from || 'a device'), 'pulse-file');
-      });
-      on('pair', function () { try { fetchThreads(); fetchInfo(); } catch (e) {} });
-      es.onerror = function () { /* EventSource reconnects by itself; the poll covers the gap. */ };
-      // The stream dies on a PIN change or a server restart; the existing polls keep working.
-      window.addEventListener('beforeunload', function () { try { es.close(); } catch (e) {} });
-    })();
+    }
+    connectEvents();
+    // The tab is going away; stop the timer too, or a pending reconnect outlives the page.
+    window.addEventListener('beforeunload', function () {
+      eventsStopped = true;
+      try { if (eventsStream) eventsStream.close(); } catch (e) {}
+    });
 
     function peerName() {
       var t = el('topbarDevice').textContent.trim();

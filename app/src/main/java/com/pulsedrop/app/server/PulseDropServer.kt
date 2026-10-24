@@ -87,6 +87,9 @@ private const val PAIR_ANSWER_TTL_MS = 10 * 60_000L
 // Internal so a test can assert the dispatcher's ceiling clears the envelope it carries.
 internal const val MAX_RELAY_ENVELOPE = 64 * 1024
 private const val RELAY_VISITOR_TTL_MS = 90_000L
+// The event stream's ticket scope; the other families are named after the object they open, so a
+// ticket minted for one scope cannot spend it on another.
+private const val EVENT_TICKET_SCOPE = "events"
 
 class PulseDropServer(
     val port: Int,
@@ -134,6 +137,13 @@ class PulseDropServer(
      * at a time, and die with the PIN or the process.
      */
     private val sessions = com.pulsedrop.app.security.SessionStore()
+
+    /**
+     * The one credential a URL may carry. `EventSource` cannot attach a header, and `<img>` and
+     * `<a download>` cannot either, so those requests ask for a minutes-long ticket bound to their
+     * address instead of putting a session token into history and referrers.
+     */
+    private val urlTickets = com.pulsedrop.app.security.UrlTicket()
 
     @Volatile
     var lastActivityAt: Long = System.currentTimeMillis()
@@ -792,6 +802,9 @@ class PulseDropServer(
         // rotates. A rotation is not a credential rotation.
         if (required && pin != null && pin.isNotBlank() && previousPin != null && previousPin != pin) {
             sessions.revokeAll()
+            // A ticket outlives the request that minted it; revoking sessions must not leave a
+            // five-minute tail of stream access behind.
+            urlTickets.rotate()
         }
     }
 
@@ -1087,23 +1100,57 @@ class PulseDropServer(
         val clientIp = session.remoteIpAddress ?: "127.0.0.1"
         if (isLockedOut(clientIp)) return false
         val headerAuth = session.headers["x-pulse-auth"]
-        val queryAuth = session.parameters["auth"]?.firstOrNull()
-        // A session token is accepted wherever a credential may travel; the PIN itself is accepted
-        // in the header only, because `TransferManager` authenticates a phone-to-phone upload that
-        // way and an older phone must still reach a newer one. The PIN is no longer accepted in a
-        // query string, which is where it was leaking into history, links and referrers. A tab still
-        // holding one gets 401, runs its own `lockOut()`, and asks for the PIN again.
+        // A session token is accepted in the header only. It used to be accepted in a query string
+        // too, for the event stream, which put a 12-hour bearer credential in history, in referrers
+        // and in link previews. `/api/events` now takes a short-lived ticket instead, and no route
+        // reads a credential from the URL. The PIN itself is accepted in the header because
+        // `TransferManager` authenticates a phone-to-phone upload that way and an older phone must
+        // still reach a newer one.
         if (sessions.isValid(headerAuth ?: "")) return true
         if (headerAuth != null && headerAuth == pinCode) return true
-        if (sessions.isValid(queryAuth ?: "")) return true
         // A paired app authenticates with the end-to-end key it already shares with us, so
         // paired sends keep working against a phone that requires a PIN.
         if (pairedSenderIsAuthorized(session)) return true
         // Only a *wrong* credential counts as a guess: visitors that have not been asked
         // for the PIN yet send nothing, so they must not be penalised.
-        val submitted = headerAuth?.takeIf { it.isNotBlank() } ?: queryAuth?.takeIf { it.isNotBlank() }
+        val submitted = headerAuth?.takeIf { it.isNotBlank() }
         if (submitted != null) recordPinFailure(clientIp, submitted)
         return false
+    }
+
+    private fun ticketAllows(session: IHTTPSession, scope: String, clientIp: String): Boolean {
+        val ticket = session.parameters["ticket"]?.firstOrNull() ?: return false
+        return urlTickets.allows(ticket, scope, normalizeAddr(clientIp))
+    }
+
+    /** The scope families [ticketAuthenticates] will spend; minting anything else is a mistake. */
+    private fun ticketScopeIsServable(scope: String): Boolean =
+        scope == EVENT_TICKET_SCOPE ||
+            scope.startsWith("download:") ||
+            scope.startsWith("folder:") ||
+            scope.startsWith("chatfile:") ||
+            scope.startsWith("preview:")
+
+    /**
+     * A URL credential for the four things a browser cannot put a header on: `<img>` and media
+     * sources, `<a download>` links, and the event stream. The scope names the exact object the
+     * route is about to read, so a ticket for one file cannot open another, and only these GET
+     * routes accept one — a ticket is never a way into an API that changes state.
+     */
+    private fun ticketAuthenticates(session: IHTTPSession, clientIp: String): Boolean {
+        if (session.method != Method.GET) return false
+        val scope = when {
+            session.uri.startsWith("/download/") ->
+                "download:" + session.uri.removePrefix("/download/").substringBefore("?")
+            session.uri == "/download-folder" ->
+                "folder:" + (session.parameters["path"]?.firstOrNull() ?: "")
+            session.uri.startsWith("/chatfile/") ->
+                "chatfile:" + session.uri.removePrefix("/chatfile/").substringBefore("?")
+            session.uri.startsWith("/preview/") ->
+                "preview:" + session.uri.removePrefix("/preview/").substringBefore("?")
+            else -> return false
+        }
+        return ticketAllows(session, scope, clientIp)
     }
 
     private fun unauthorized(): Response {
@@ -1319,7 +1366,10 @@ class PulseDropServer(
 
         // Browser-initiated call: drives the ringing popup on the phone.
         if (uri == "/api/events" && method == Method.GET) {
-            if (!isAuthorized(session)) return unauthorized()
+            // A header when the browser can send one; a ticket when `EventSource` is the client.
+            if (!isAuthorized(session) && !ticketAllows(session, EVENT_TICKET_SCOPE, clientIp)) {
+                return unauthorized()
+            }
             markActivity()
             val stream = EventStream(clientIp)
             // Cap the fan-out: a page left open for days must not accumulate streams.
@@ -1628,6 +1678,28 @@ class PulseDropServer(
             return res
         }
 
+        // A ticket is what a URL may carry when the request cannot carry a header. Minting one
+        // requires an authenticated caller, so a URL lifted from history cannot mint more of them.
+        if (uri == "/api/ticket" && method == Method.POST) {
+            if (!isAuthorized(session)) return unauthorized()
+            return try {
+                bodyTooLarge(session, JSON_BODY_LIMIT)?.let { return it }
+                val map = HashMap<String, String>()
+                session.parseBody(map)
+                val scope = JSONObject(map["postData"] ?: "{}").optString("scope", "")
+                if (!ticketScopeIsServable(scope)) {
+                    jsonResponse(false, "error" to "Unknown scope")
+                } else {
+                    val ticket = urlTickets.issue(scope, normalizeAddr(clientIp))
+                    val res = jsonResponse(true, "ticket" to ticket)
+                    res.addHeader("Cache-Control", "no-store")
+                    res
+                }
+            } catch (e: Exception) {
+                jsonResponse(false, "error" to "Invalid request")
+            }
+        }
+
         // Pairing + call signaling between PulseDrop apps — PIN-exempt but key-gated:
         // payloads without a known pairing id or valid ciphertext are rejected.
         if ((uri.startsWith("/api/pair/") || uri.startsWith("/api/call/") || uri.startsWith("/api/relay/")) && method == Method.POST) {
@@ -1683,7 +1755,7 @@ class PulseDropServer(
         }
 
         // Security check for protected endpoints
-        if (!isAuthorized(session)) return unauthorized()
+        if (!isAuthorized(session) && !ticketAuthenticates(session, clientIp)) return unauthorized()
 
         // API Files List with IP Isolation
         if (uri == "/api/files" && method == Method.GET) {
