@@ -102,9 +102,9 @@ This is the practical blocker for "run the tests".
 | sudo | Available passwordless | Package installs are possible — **I have not installed anything yet.** |
 | Outbound network | `services.gradle.org` 200, `dl.google.com` 200 | Provenance for JDK + SDK is reachable, so a real build is achievable here. |
 
-Reproducible build requirement, read off the project rather than guessed: Gradle 9.3.1 (wrapper),
+Reproducible build requirement, read off the project rather than guessed: Gradle 9.6.0 (wrapper),
 `compileSdk 36.1`, `minSdk 24`, `targetSdk 36`, `sourceCompatibility/targetCompatibility Java 11`,
-CI JDK **21**, `app.versionName = "2.1.0"`, `versionCode = 13`.
+CI JDK **21**, `app.versionName = "2.1.1"`, `versionCode = 14`.
 
 ---
 
