@@ -177,7 +177,18 @@ value still throws to the caller instead of being silently replaced, which is wh
 not surfaced anywhere but `Log.w("PulseDropIdentity")` — a phone running on an ephemeral identity
 should say so on the pairing screen rather than let the safety code mismatch. The prefs file is already
 excluded from backup in both `backup_rules.xml` and `data_extraction_rules.xml:8`, so that half of the
-suggested fix needed no work.
+suggested fix needed no work, and `diag/CrashReporter.kt` reads no preferences and no encoded key at
+all, which is issue #20 item 5 satisfied by there being nothing to redact.
+
+Item 4 — *"when the keystore later becomes available, move the fallback key in and delete the
+plaintext"* — cannot be implemented as written, and the reason is worth keeping: every import path
+`AndroidKeyStore` has — including the wrapped-key ones, which need the bytes pre-encrypted under a
+hardware key — *is* a keystore API, so a device with no keystore cannot use it, and a device that
+grows one has no way to hand it a raw EC private key it did not generate there. Promotion is
+re-pairing, which is what item 4 was reaching for anyway; the missing piece is telling the user that,
+not moving bytes. `Empty` is written to reflect it: with a stored identity present it serves that key
+rather than minting a hardware one, so the pairings a phone already has survive the install of a
+keystore it never had.
 
 *Rollback:* safe. The only thing this branch destroys is a prefs copy written alongside a hardware key
 that is still in the alias, so a reverted build reads that alias and presents the same identity.
