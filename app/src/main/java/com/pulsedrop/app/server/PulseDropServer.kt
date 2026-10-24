@@ -84,7 +84,8 @@ private const val WEB_RING_TIMEOUT_MS = 35_000L
 // How long a relay-mode phone may come back for the pairing answer it was never handed.
 private const val PAIR_ANSWER_TTL_MS = 10 * 60_000L
 // A chat envelope is text; anything larger belongs in a file transfer, not carried mail.
-private const val MAX_RELAY_ENVELOPE = 64 * 1024
+// Internal so a test can assert the dispatcher's ceiling clears the envelope it carries.
+internal const val MAX_RELAY_ENVELOPE = 64 * 1024
 private const val RELAY_VISITOR_TTL_MS = 90_000L
 
 class PulseDropServer(
@@ -1633,8 +1634,9 @@ class PulseDropServer(
             return try {
                 // Key-gated, not PIN-gated: whoever holds a pairing id — or nobody, for `poll` —
                 // reaches `parseBody`. An SDP offer with a full candidate set is a few KiB, so the
-                // same ceiling as any other JSON route is generous rather than tight.
-                bodyTooLarge(session, JSON_BODY_LIMIT)?.let { return it }
+                // JSON ceiling would be generous for `/api/call/*` and `/api/pair/*`. The relay
+                // routes share this line and need more: see [RELAY_BODY_LIMIT].
+                bodyTooLarge(session, RELAY_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
                 session.parseBody(map)
                 val json = JSONObject(map["postData"] ?: "{}")
@@ -1838,9 +1840,17 @@ class PulseDropServer(
                         else -> "ip:$to"
                     }
                     val attachmentId = json.optString("attachmentId", "").trim()
-                    val attachment = attachmentId.takeIf { it.isNotEmpty() }?.let { id ->
-                        synchronized(chatAttachments) { chatAttachments[id] }?.attachment
+                    // Naming an attachment is how its bytes reach people who never uploaded them:
+                    // the download route asks whose attachment this is, and publishing one has to
+                    // ask the same question of the same rule, or the refusal downstream is only a
+                    // second way to deliver the file. An id this server has never seen stays
+                    // ignored rather than refused, which is what it did before.
+                    val held = attachmentId.takeIf { it.isNotEmpty() }
+                        ?.let { id -> synchronized(chatAttachments) { chatAttachments[id] } }
+                    if (held != null && !chatFileIsVisibleTo(attachmentId, clientIp)) {
+                        return jsonResponse(false, "error" to "Attachment not yours")
                     }
+                    val attachment = held?.attachment
                     val quoted = json.optString("replyTo").takeIf { it.isNotBlank() }?.let { findMessage(it) }
                     if (text.isNotBlank() || attachment != null) {
                         addMessage(
@@ -2474,19 +2484,33 @@ class PulseDropServer(
          * Ceiling for a JSON POST. The largest legitimate one carries a device name, a call id and
          * an SDP offer, so this is orders of magnitude above what any client sends; it exists because
          * `parseBody` reads whatever `Content-Length` claims and hands the result over as a Java
-         * String. Covers every JSON route, including the pairing and relay ones that answer to a
-         * key rather than a PIN.
+         * String. Covers every JSON route except the signaling dispatcher, which needs
+         * [RELAY_BODY_LIMIT] instead.
+         *
+         * Internal so a test can drive a route to the byte either side of its ceiling: the numbers
+         * are the contract, and literals repeated in the test would keep passing quietly if these
+         * moved.
          */
-        private const val JSON_BODY_LIMIT = 64L * 1024
+        internal const val JSON_BODY_LIMIT = 64L * 1024
 
         /** Ceiling for `/api/auth`, whose whole body is `{"pin":"123456"}`. */
-        private const val LOGIN_BODY_LIMIT = 8L * 1024
+        internal const val LOGIN_BODY_LIMIT = 8L * 1024
 
         /** Ceiling for one typing-presence ping: a sender name and a boolean. */
-        private const val TYPING_BODY_LIMIT = 4L * 1024
+        internal const val TYPING_BODY_LIMIT = 4L * 1024
 
         /** Ceiling for one ~10 Hz batch of base64 media frames on `/api/webcall/up`. */
-        private const val WEB_CALL_BODY_LIMIT = 256L * 1024
+        internal const val WEB_CALL_BODY_LIMIT = 256L * 1024
+
+        /**
+         * Ceiling for the pair/call/relay dispatcher, and it has to be above [JSON_BODY_LIMIT] for
+         * the relay half of that route. A relay POST is a *wrapper*: the envelope inside it is
+         * accepted up to [MAX_RELAY_ENVELOPE] by the rule that knows how to say "too large" usefully,
+         * and `role`, `to` and the quoting make the body carrying it strictly larger than the
+         * envelope. Two equal ceilings therefore refuse the last few dozen bytes of the relay's own
+         * budget before that rule ever runs. Four envelopes is room without being unlimited.
+         */
+        internal const val RELAY_BODY_LIMIT = 4L * MAX_RELAY_ENVELOPE
 
         /** A folder zip is built in cacheDir, so its cost is paid twice: read, then written. */
         private const val FOLDER_ZIP_MAX_ENTRIES = 2_000

@@ -131,7 +131,7 @@ memory: it resets on process death.
 | POST | `/api/call/invite` | `:1486` | key-gated downstream | calls | by design | PIN-exempt; a LAN host can attempt to raise the incoming-call UI. Must confirm `CallEngine.handleInvite` rejects unknown pairing ids. |
 | POST | `/api/call/response` | `:1487` | key-gated downstream | calls | by design | |
 | POST | `/api/call/end` | `:1491` | key-gated downstream | calls | by design | |
-| POST | `/api/relay/post` | `:1474`, `handleRelay` `:260` | per-device relay proof | mailbox | by design | `verifyRelayAuth(pid, "post", proof)` (`:270`) — role-scoped proof, 64 KiB envelope cap (`:298`). Sound shape. |
+| POST | `/api/relay/post` | `:1474`, `handleRelay` `:260` | per-device relay proof | mailbox | by design | `verifyRelayAuth(pid, "post", proof)` (`:270`) — role-scoped proof, 64 KiB envelope cap (`:298`). Sound shape. The POST carrying an envelope is bounded separately, at four envelopes (`:1639`): the body is the envelope plus `role`, `to` and quoting, so a ceiling equal to the envelope's own refuses the last few dozen bytes of mail the relay would have accepted — and refuses them with a status the sender cannot act on, rather than the relay's own `too large`. |
 | POST | `/api/relay/pull` | as above | per-device relay proof | own mailbox | by design | `role = "pull"`; returns only `relayMailbox.pending(senderDid)` (`:280`) — the proof's device id, not the caller's. Correct isolation. |
 | POST | `/api/relay/pair-poll` | `:261-266` | **none** | pair answers | **gap** | This is the one relay sub-route that returns before `pairManager` is consulted (`:267` is below it). `takePairAnswer(json.optString("reqId"))` is driven by a caller-supplied `reqId` with no proof of any kind. Whether that is exploitable depends on what a pair answer contains and how guessable `reqId` is — it must be tested, not assumed. |
 
@@ -170,7 +170,7 @@ then 404s.
 | GET | `/preview/{id}` | `:1685` | same predicate (`:1689`) | Inline serving: no `Content-Disposition: attachment`, and `serveFileInline` passes the stored `mimeType` straight through. **Correction, on `security/upload-names`:** this row used to claim an uploaded HTML/SVG file is served "with its own declared type", which is not what the code does — the type of a web upload is *guessed from the saved extension* by `guessMimeType`, a table with no HTML and no SVG row, so `page.html` is offered as `application/octet-stream` (`FileNameAdversarialTest`). What is still true: a file whose recorded type is active — a phone-side share whose content URI reports `text/html` — is served inline, with no `X-Content-Type-Options: nosniff` and no CSP anywhere. Range requests are honoured. |
 | POST | `/api/delete` | `:1696` | `receivedFileIsVisibleTo` (`:2355`) + must live under `WebDrop_Received` | Two-layer check: visibility then canonical root prefix. Deleting a file outside the received dir is refused. Correct. |
 | GET | `/api/messages` | `:1755` | `threadIsVisibleTo` (`:542`) | The subtlest scoping in the server, now in **one function** instead of four locals inside the loop — hoisted because `/chatfile/{id}` has to answer the identical question and did not. Depends on `sameAddr`/`normalizeAddr` (IPv4/IPv6 folding) being right; a client that presents as the host address reads the host's private threads. `fromWeb` and `mine` flags decide what the tab may retract. |
-| POST | `/api/messages` | `:1662` | `thread` restricted to known groups or `ip:` form, else broadcast (`:1675-1681`) | A client can address a thread to *any* IP (`"ip:$to"`), i.e. write into a conversation it will not read but another host will. Sender name is self-declared (`:1669`). No body-size cap. |
+| POST | `/api/messages` | `:1821` | `thread` restricted to known groups or `ip:` form, else broadcast (`:1831-1841`) | A client can address a thread to *any* IP (`"ip:$to"`), i.e. write into a conversation it will not read but another host will. Sender name is self-declared (`:1829`). Body capped at `JSON_BODY_LIMIT` (`:1823`) — see §6 P-1 for why 64 KiB on the app's most text-shaped route is a decision worth revisiting. `attachmentId` is checked against `chatFileIsVisibleTo`: attaching is publishing, so it cannot be a way around the read rule (A-6). |
 | DELETE | `/api/messages?id=` | `:1699` | `sameAddr(owner.clientIp, clientIp)` (`:1707`) | 403 on mismatch. Id must be in the query string because NanoHTTPD discards a DELETE body (`:1701-1703`) — a legitimate exception to the "no meaningful data in query strings" rule, but note that `id` is a message id, not a credential. |
 
 Anything else reaching `:1728` → 404, CORS headers, after having been authenticated.
@@ -235,12 +235,13 @@ scope, which had no backlog entry until now).
 | **A-3** | **Fixed** | `POST /api/call/web action=end` ended another client's call, and a blank `cid` ended whichever call was running. `end` now asks the same three questions accept/decline asked — is there a live call, does the `cid` match it, is this tab the one it was made for (`:1384`) — and reports failure rather than `success` when there is nothing to end. `/api/webcall/down` and `/api/webcall/up` gained the same `sameAddr` binding, since `GET /api/call/web` publishes the cid to every authorized tab. |
 | **A-4** | Confirmed | `/api/relay/pair-poll` returns before the relay proof check (`:261-266`) on a caller-supplied `reqId`. |
 | **A-5** | Needs test | Everything above `:1508` is unauthenticated — the chain position *is* the policy. A route inserted in the wrong place is public with no signal. This is what the `RouteRegistry`/`AuthorizationPolicy` refactor in the PRD exists to replace. |
+| **A-6** | **Fixed** | A-1's escalation path, left open by the fix itself: `chatFileIsVisibleTo` was asked by the download route and by nothing else, so `POST /api/messages` attached *any* id the caller named to its own message — and because the read rule follows the message, publishing was a second way to deliver the bytes. Attaching now asks the same predicate as reading (`:1850`). An id this server has never seen stays ignored rather than refused, which is what it did before, so the response shape does not move. Found by `CrossAddressScopeTest`, which is the only suite here with two addresses to point at the question. |
 
 ### Public-surface abuse
 
 | ID | Status | Finding |
 | --- | --- | --- |
-| **P-1** | Partially fixed | No rate limit anywhere except the PIN-guess counter. **Every route that reads a body now answers a ceiling first, from the declared `Content-Length` and before `parseBody` runs:** `TYPING_BODY_LIMIT` 4 KiB (`:1278`) and `LOGIN_BODY_LIMIT` 8 KiB (`:1583`) on the two tier A routes that take no credential, `JSON_BODY_LIMIT` 64 KiB on the tier A pairing/call/relay group (`:1637`), on `/api/call/web` (`:1380`), `/api/delete` (`:1767`) and `POST /api/messages` (`:1821`), `WEB_CALL_BODY_LIMIT` 256 KiB on `/api/webcall/up` (`:1487`), and `uploadBudgetBytes(cacheDir)` — free space less headroom — on `/upload` (`:2057`) and `/chatupload` (`:2247`). All answer 413 with `Cache-Control: no-store`. Still open: **size is not frequency**, and nothing counts requests, so a tab inside every ceiling can still ask as often as the socket allows; and only the relay envelope (`MAX_RELAY_ENVELOPE`) was ever capped against a decoded payload. |
+| **P-1** | Partially fixed | No rate limit anywhere except the PIN-guess counter. **Every route that reads a body now answers a ceiling first, from the declared `Content-Length` and before `parseBody` runs:** `TYPING_BODY_LIMIT` 4 KiB (`:1279`) and `LOGIN_BODY_LIMIT` 8 KiB (`:1584`) on the two tier A routes that take no credential, `JSON_BODY_LIMIT` 64 KiB on `/api/call/web` (`:1381`), `/api/delete` (`:1769`) and `POST /api/messages` (`:1823`), `RELAY_BODY_LIMIT` 256 KiB — four envelopes — on the tier A pairing/call/relay group (`:1639`), `WEB_CALL_BODY_LIMIT` 256 KiB on `/api/webcall/up` (`:1488`), and `uploadBudgetBytes(cacheDir)` — free space less headroom — on `/upload` (`:2067`) and `/chatupload` (`:2265`). All answer 413 with `Cache-Control: no-store`. The dispatcher is kept off `JSON_BODY_LIMIT` because that number is *equal* to `MAX_RELAY_ENVELOPE` and a relay POST is a wrapper strictly larger than the envelope inside it: equal ceilings refuse the top of the relay's own budget before the relay rule can answer. Still open: **size is not frequency**, and nothing counts requests, so a tab inside every ceiling can still ask as often as the socket allows; and only the relay envelope (`MAX_RELAY_ENVELOPE`) was ever capped against a decoded payload. |
 | **P-2** | Confirmed | `POST /api/typing` accepts a self-declared `sender` with no authentication (`:1167`) and lets any host evict another's presence by name (`:1173-1176`); 64 entries is the only bound. |
 | **P-3** | Needs test | `/api/info` discloses `tlsError` text (`:1137`) and `deviceId` (`:1140`) to any LAN host. |
 
@@ -273,8 +274,15 @@ The table-driven suite must, for **each row above**, assert status and body-shap
    feed B's call) and the attachment half (A-1) — the latter is reachable honestly over loopback because
    the server can be told, through its own public `addMessage`, that a file the *phone* wrote belongs
    to another address's thread. What it still cannot do from `127.0.0.1` is present as two distinct
-   *sockets*, which is what A-2's forbid branch and item 16 need; the honest way to get that is an
-   injected resolver or a second stack, not a faked assertion.
+   *sockets*, which is what A-2's forbid branch and item 16 need.
+   **Solved, without an injected resolver or a second stack:** `serve()` is public and takes the
+   `IHTTPSession` interface, so `TabSession` hands a route an address of its own choosing and no
+   socket is opened at all. `CrossAddressScopeTest` runs the directed file, the direct thread and the
+   attachment against three addresses — and it was the two-address form of the attachment question
+   that surfaced A-6, which every single-address suite had passed. That this harness is load-bearing
+   rather than convenient is asserted, not assumed: inverting each rule turns exactly one test red.
+   The socket version of this file passed every test vacuously, because Robolectric reports
+   `127.0.0.1` for a client bound to `127.0.0.2`.
 10. `/api/relay/pair-poll` with a `reqId` the caller never requested;
 11. oversized body on every tier A and tier C POST: 1 MiB over cap on `/api/typing`,
     `/api/messages`, `/api/pair/*`, `/api/webcall/up`, `/upload`, `/chatupload` — assert a
@@ -288,6 +296,12 @@ The table-driven suite must, for **each row above**, assert status and body-shap
     before the read from a refusal after it. Still untested: frequency (no rate limit exists to test)
     and a body whose declared length is a lie in the under-declaring direction, which NanoHTTPD does
     not read at all.
+    *Added here, because per-route sizes do not cover the relations between them:*
+    `CeilingPrecedenceTest` asserts that the wrapper ceiling clears the envelope ceiling, that a
+    refusal at the login route is not charged to the PIN lockout — with the control that twelve
+    distinct wrong guesses are, so the loop cannot pass vacuously — and that a stranger hitting a
+    tier C route with an oversized body is refused for credentials, not told the route is
+    size-sensitive. Each case was checked to go red only when its own rule is broken.
 12. path traversal on `/download-folder?path=`: `../../`, `%2e%2e%2f`, absolute paths, `\`
     separators, NUL, `..%00`, Unicode-normalised fullwidth `．．／`, symlink under
     `WebDrop_Received`, depth beyond 4 segments.
