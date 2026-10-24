@@ -1,11 +1,42 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+# Version updates for the two ecosystems this repository actually consumes.
+#
+# The file started life as the unedited web-UI template, whose
+# `package-ecosystem: ""` is not a valid value. GitHub rejects the manifest
+# rather than falling back to something sensible, so Dependabot opened no pull
+# requests at all while the page still showed a green configuration.
+#
+# There is no npm/Yarn manifest here: the JavaScript under `site/` and
+# `dev/` is committed without one, so a Node ecosystem entry would fail to
+# find a lockfile.
+#
+# This covers version updates only. Dependabot *security* updates are a
+# repository setting, not a file in this directory, and still need to be
+# switched on by someone with repository administration.
 
 version: 2
+
 updates:
-  - package-ecosystem: "" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: gradle
+    # The wrapper, `build.gradle.kts` and `gradle/libs.versions.toml` all live
+    # under this root; the version catalog is where current pins are declared.
+    directory: "/"
     schedule:
-      interval: "daily"
+      interval: weekly
+      day: tuesday
+      time: "06:15"
+      timezone: Etc/UTC
+    # A Gradle upgrade that trips the Android toolchain should be caught here
+    # rather than in a release build, so keep the queue short and reviewable.
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "06:15"
+      timezone: Etc/UTC
+    labels:
+      - dependencies
