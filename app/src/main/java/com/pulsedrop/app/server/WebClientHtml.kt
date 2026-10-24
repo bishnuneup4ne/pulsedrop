@@ -1635,6 +1635,18 @@ object WebClientHtml {
     }
 
     function lockOut() {
+      // Tell the phone before forgetting the token, so a closed tab does not leave a session
+      // sitting in its dashboard until the 12-hour expiry. Best effort: a 401 already proved the
+      // credential is dead, and losing this call must not trap the user in a locked UI.
+      if (authToken) {
+        try {
+          fetch('/api/auth/logout', {
+            method: 'POST',
+            keepalive: true,
+            headers: { 'X-Pulse-Auth': authToken }
+          }).catch(function () {});
+        } catch (e) {}
+      }
       localStorage.removeItem('pulse_token');
       authToken = '';
       el('appRoot').style.display = 'none';
@@ -1659,7 +1671,15 @@ object WebClientHtml {
         });
         var data = await res.json();
         if (data.success) {
-          authToken = data.token || pin;
+          // The session, never the PIN: this value is what a tab keeps, and it used to be the room
+          // secret itself. A response without one means a server that has no session to give, so the
+          // tab must not fall back to caching the typed PIN.
+          if (!data.token) {
+            el('pinError').textContent = 'The phone returned no session. Reload the page and try again.';
+            el('pinError').style.display = 'block';
+            return;
+          }
+          authToken = data.token;
           localStorage.setItem('pulse_token', authToken);
           el('authOverlay').style.display = 'none';
           revealApp();

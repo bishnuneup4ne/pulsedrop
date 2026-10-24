@@ -89,12 +89,17 @@ private const val RELAY_VISITOR_TTL_MS = 90_000L
 
 class PulseDropServer(
     val port: Int,
+    /**
+     * `null` binds every interface, which is what a room served to a whole LAN needs from a phone —
+     * and what a unit test must not do on a machine that has a public address. Tests pass loopback.
+     */
+    private val bindAddress: String? = null,
     private val context: Context,
     initialDeviceName: String,
     initialPinCode: String?,
     initialIsPinRequired: Boolean,
     initialListener: ServerTransferListener
-) : NanoHTTPD(port) {
+) : NanoHTTPD(bindAddress, port) {
 
     /** Renaming the phone must not cost a live transfer, so the name is swapped in place. */
     @Volatile
@@ -120,6 +125,14 @@ class PulseDropServer(
     private var pinCode: String? = initialPinCode
     @Volatile
     private var isPinRequired: Boolean = initialIsPinRequired
+
+    /**
+     * What a browser holds after it types the PIN. The PIN used to be handed back as the token, so
+     * every tab kept the room secret in `localStorage` and in its download URLs with no expiry and no
+     * way to pull one tab without changing the PIN for everyone. Sessions expire, can be revoked one
+     * at a time, and die with the PIN or the process.
+     */
+    private val sessions = com.pulsedrop.app.security.SessionStore()
 
     @Volatile
     var lastActivityAt: Long = System.currentTimeMillis()
@@ -672,10 +685,18 @@ class PulseDropServer(
     }
 
     fun updatePinSecurity(required: Boolean, pin: String?) {
+        val previousPin = pinCode
         isPinRequired = required
         pinCode = pin
         // A freshly generated PIN invalidates any earlier lockout.
         synchronized(pinAttempts) { pinAttempts.clear() }
+        // And every browser that logged in under the old one — but only when the PIN genuinely
+        // changed. `MainViewModel` re-asserts the current PIN every time a ViewModel takes over a
+        // live server, so revoking unconditionally would log out every tab whenever the phone
+        // rotates. A rotation is not a credential rotation.
+        if (required && pin != null && pin.isNotBlank() && previousPin != null && previousPin != pin) {
+            sessions.revokeAll()
+        }
     }
 
     init {
@@ -783,7 +804,7 @@ class PulseDropServer(
                         tlsFactoryHosts = hosts
                     }
                     if (tlsStopped) return@Thread
-                    val delegate = object : NanoHTTPD(tlsPort) {
+                    val delegate = object : NanoHTTPD(bindAddress, tlsPort) {
                         override fun serve(session: IHTTPSession): Response {
                             secureOrigin.set(true)
                             try {
@@ -982,9 +1003,15 @@ class PulseDropServer(
         val clientIp = session.remoteIpAddress ?: "127.0.0.1"
         if (isLockedOut(clientIp)) return false
         val headerAuth = session.headers["x-pulse-auth"]
-        if (headerAuth == pinCode) return true
         val queryAuth = session.parameters["auth"]?.firstOrNull()
-        if (queryAuth == pinCode) return true
+        // A session token is accepted wherever a credential may travel; the PIN itself is accepted
+        // in the header only, because `TransferManager` authenticates a phone-to-phone upload that
+        // way and an older phone must still reach a newer one. The PIN is no longer accepted in a
+        // query string, which is where it was leaking into history, links and referrers. A tab still
+        // holding one gets 401, runs its own `lockOut()`, and asks for the PIN again.
+        if (sessions.isValid(headerAuth ?: "")) return true
+        if (headerAuth != null && headerAuth == pinCode) return true
+        if (sessions.isValid(queryAuth ?: "")) return true
         // A paired app authenticates with the end-to-end key it already shares with us, so
         // paired sends keep working against a phone that requires a PIN.
         if (pairedSenderIsAuthorized(session)) return true
@@ -1445,13 +1472,17 @@ class PulseDropServer(
                 if (success) clearPinFailures(clientIp)
                 val resp = JSONObject().apply {
                     put("success", success)
-                    if (success) put("token", pinCode ?: "ok")
+                    // Never the PIN: a browser that logs in gets a random session it can expire and
+                    // revoke, and a leaked `localStorage` value stops being the room secret.
+                    if (success) put("token", sessions.issue())
                     if (isLockedOut(clientIp)) {
                         put("locked", true)
                         put("retryAfterSeconds", lockoutRemainingSeconds(clientIp))
                     }
                 }
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", resp.toString())
+                // A minted session must not sit in a cache or a shared proxy.
+                res.addHeader("Cache-Control", "no-store")
                 addCorsHeaders(res)
                 res
             } catch (e: Exception) {
@@ -1459,6 +1490,20 @@ class PulseDropServer(
                 addCorsHeaders(res)
                 res
             }
+        }
+
+        // Logging out drops the session the caller is holding. It is scoped to that credential by
+        // construction, so it needs no further authority, and an already-dead token is not an error.
+        if (uri == "/api/auth/logout" && method == Method.POST) {
+            val revoked = sessions.revoke(session.headers["x-pulse-auth"] ?: "")
+            val res = newFixedLengthResponse(
+                Response.Status.OK,
+                "application/json",
+                JSONObject().put("success", true).put("revoked", revoked).toString()
+            )
+            res.addHeader("Cache-Control", "no-store")
+            addCorsHeaders(res)
+            return res
         }
 
         // Pairing + call signaling between PulseDrop apps — PIN-exempt but key-gated:
