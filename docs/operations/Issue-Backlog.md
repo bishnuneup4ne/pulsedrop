@@ -199,6 +199,19 @@ chat. **Not scheduled:** cloud accounts, cloud sync, Kubernetes, rewrite.
 
 ---
 
+## CI/CD and static analysis
+
+Found while checking whether the security automation added to `main` on 2026-10-24 does anything.
+
+| ID | Item | Status |
+| --- | --- | --- |
+| X-1 | `.github/dependabot.yml` shipped as the untouched web-UI template with `package-ecosystem: ""`. That is not a valid value, so GitHub rejects the manifest and Dependabot opened **zero** update PRs while the setup page looked configured. | **Fixed** on `ci/security-automation` (Gradle + GitHub Actions, weekly) |
+| X-2 | Every `uses:` in `ci.yml` and `codeql.yml` tracked a mutable tag, so a republished tag could change what a security-scanning workflow executes. | **Fixed** on `ci/security-automation` (full SHA + version comment) |
+| X-3 | CodeQL cannot analyse the browser client. It is JavaScript inside a Kotlin string literal (`WebClientHtml.kt`), and extractors are chosen by file extension — so the app's most exposed input-handling code gets Kotlin queries only. The `javascript-typescript` matrix entry sees `site/` and `dev/`. Fixing this properly means shipping the client as an asset file, which changes packaging: design it, do not slip it into a security PR. | [confirmed] — blind spot is documented in the workflow header meanwhile |
+| X-4 | CodeQL alert #1, CWE-927 (implicit/mutable `PendingIntent`) at `diag/CrashReporter.kt:126`. **Partly a false alarm:** `FLAG_IMMUTABLE` is set, so the receiving app cannot rewrite the intent, which is the escalation the rule describes. What is real: the intent is *implicit* (`ACTION_VIEW` + `https://github.com/...`) so it resolves to whichever app claims that URL, and that app receives the crash markdown — device model, Android version, stack trace — in the query string. It also lands in browser history. Route the notification through an explicit in-app component that shows the report and offers to send it. | [verified, downgraded] P2 |
+| X-5 | Dependabot *security* updates (the ones that patch a known-vulnerable dependency) are a repository setting under Code security, not something this file can turn on. Needs someone with administration. | [recommendation] owner action |
+| X-6 | `actions/setup-java@v4`'s current tip commit is literally "Deprecate setup-java v4", and checkout/upload-artifact/setup-android/setup-gradle are one to three majors behind. Deliberately **not** bumped here: pinning preserves behaviour exactly, a major bump does not, and it can only be judged on a real runner. | [recommendation] separate PR |
+
 ## Corrections to the PRD (verified, not assumed)
 
 1. **`/api/relay/pair-poll` is not an authentication bypass.** I initially flagged it from
