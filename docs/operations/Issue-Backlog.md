@@ -352,12 +352,24 @@ presence to an authenticated session or bound/normalize/rate-limit the public fo
 and 404. Document what cross-origin access is actually required and narrow it; keep state-changing
 operations off ambient credentials; validate `Origin` where browser semantics allow.
 
-### R-5 [needs test] XSS via caller-controlled strings
-`deviceName`, `X-Pulse-Client`, `sender`, filenames, thread titles and `action=ring`'s `name`
-(`:1287`) are all caller-supplied and reach the browser UI. Audit every `innerHTML` in
-`WebClientHtml.kt`; dynamic values must go through `textContent`. `/api/info` also returns `tlsError`
-free text (`:1137`) that must be proven free of paths/key material.
-*Tests:* payload in filename / device name / message body / attachment metadata renders as text.
+### R-5 [fixed] XSS via caller-controlled strings
+`deviceName`, `X-Pulse-Client`, `sender`, filenames, thread titles and `action=ring`'s `name` are all
+caller-supplied and reach the browser UI.
+*Audit:* every one of those reaches the DOM through `textContent`, `createTextNode` or an input
+value. All 15 `innerHTML` assignments receive SVG constants defined in the same file, and the only
+helper that accepts markup as an argument (`feBtn`) is called with `FE_*` constants. There is no
+`eval`, `new Function`, `document.write`, `insertAdjacentHTML`, `outerHTML`, `srcdoc` or
+`javascript:` sink. The server-rendered `deviceName` goes through `esc()` at all three insertion
+points.
+*Also fixed here:* `/api/info`'s `tlsError` is no longer exception free text. `describeTlsFailure`
+keeps the exception class, replaces path-shaped runs with `<path>`, and caps the message at 200
+characters; the full exception still reaches Logcat. Inline `/preview/` and `/chatfile/` responses
+now carry `nosniff` and `Referrer-Policy`, plus a `sandbox` CSP when the recorded type is a document
+(H-1).
+*Tests:* `WebClientSafetyTest` — hostile device name is escaped, a quote cannot leave its text node,
+`innerHTML` receives only constant markup, `feBtn` is only handed icon constants, no script sink
+exists, and a TLS failure shown to a browser never names a private path and stays bounded.
+`FileNameAdversarialTest` asserts the inline-safety headers on `/preview/{id}`.
 
 ### R-6 [recommendation] CSP, security headers, and request-hardening baseline
 Add `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on

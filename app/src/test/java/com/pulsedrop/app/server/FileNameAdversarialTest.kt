@@ -1,5 +1,6 @@
 package com.pulsedrop.app.server
 
+import com.pulsedrop.app.model.SharedFile
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.CountDownLatch
@@ -244,6 +245,61 @@ class FileNameAdversarialTest {
         assertTrue("and it is not the phone's guess either: " + preview.headers,
             preview.headers.contains("application/octet-stream"))
         assertEquals("<h1>not a document</h1>", preview.body)
+    }
+
+    @Test
+    fun `an inline preview of an active type is sandboxed as a document`() {
+        // The MIME guess is not the last line of defence: a file the *phone* shared can carry
+        // `text/html` or `image/svg+xml` in its own record, and a tab navigated straight to
+        // `/preview/{id}` would run it on this origin. `sandbox` denies script and same-origin
+        // access when the response is a document, and is ignored when it is an image source.
+        val dir = RoomHttp.appContext().cacheDir.apply { mkdirs() }
+        val page = File(dir, "shared-page.html").apply { writeText("<script>alert(1)</script>") }
+        server.setSharedFiles(
+            listOf(
+                SharedFile(
+                    id = "active-doc",
+                    name = "shared-page.html",
+                    size = page.length(),
+                    mimeType = "text/html; charset=utf-8",
+                    uriString = page.absolutePath
+                )
+            )
+        )
+        val preview = http.call("GET", "/preview/active-doc", mapOf("X-Pulse-Auth" to token))
+        assertEquals(200, preview.status)
+        assertTrue("no nosniff: " + preview.headers,
+            preview.headers.contains("X-Content-Type-Options", ignoreCase = true))
+        assertTrue("an active document was served without a sandbox: " + preview.headers,
+            preview.headers.contains("sandbox", ignoreCase = true))
+        assertTrue("no referrer policy: " + preview.headers,
+            preview.headers.contains("Referrer-Policy", ignoreCase = true))
+        assertEquals("<script>alert(1)</script>", preview.body)
+    }
+
+    @Test
+    fun `media previews are not sandboxed, so the viewer still works`() {
+        // The sandbox is for documents. Applying it to every inline response risks the PDF viewer
+        // and media elements for no gain, because a JPEG is not a script.
+        val dir = RoomHttp.appContext().cacheDir.apply { mkdirs() }
+        val png = File(dir, "shot.png").apply { writeBytes(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)) }
+        server.setSharedFiles(
+            listOf(
+                SharedFile(
+                    id = "an-image",
+                    name = "shot.png",
+                    size = png.length(),
+                    mimeType = "image/png",
+                    uriString = png.absolutePath
+                )
+            )
+        )
+        val preview = http.call("GET", "/preview/an-image", mapOf("X-Pulse-Auth" to token))
+        assertEquals(200, preview.status)
+        assertFalse("an image was sandboxed: " + preview.headers,
+            preview.headers.contains("sandbox", ignoreCase = true))
+        assertTrue("no nosniff: " + preview.headers,
+            preview.headers.contains("X-Content-Type-Options", ignoreCase = true))
     }
 
     @Test
