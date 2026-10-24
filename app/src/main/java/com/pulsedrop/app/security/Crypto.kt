@@ -42,7 +42,7 @@ object Crypto {
     @Volatile
     private var cachedKeyPair: KeyPair? = null
 
-    /** Stable device identity. Keystore-backed; falls back to prefs-stored raw keys. */
+    /** Stable device identity. Keystore-backed; raw prefs keys only where there is no keystore. */
     fun getIdentity(context: Context): KeyPair {
         cachedKeyPair?.let { return it }
         synchronized(this) {
