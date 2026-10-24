@@ -2104,7 +2104,15 @@ class PulseDropServer(
                 // Land the bytes under a name the received listing cannot match, then rename. Copied
                 // straight onto the final name, an interrupted transfer leaves a file that looks
                 // complete and is half empty — and nothing in this folder says which one it is.
-                val partFile = File(finalFile.parentFile, ".${finalFile.name}.part")
+                //
+                // The landing name is random rather than derived from the final name, because `?path=` is
+                // not unique: two tabs sending to one name both find it free, both compute the same
+                // landing file, and two concurrent copies into one path interleave. A `renameTo` of the
+                // result would then hand the room a whole file that is half of each send — and after the
+                // first rename the second has no source left, which the catch below reports as a failed
+                // upload of bytes that arrived fine. Whoever writes last wins the name; the bytes each
+                // client sent stay whole either way.
+                val partFile = File(finalFile.parentFile, ".${UUID.randomUUID()}.part")
                 try {
                     if (pairCrypt && pairedSender != null) {
                         val pm = pairManager
@@ -2362,8 +2370,14 @@ class PulseDropServer(
         val cleaned = base.replace(Regex("[^A-Za-z0-9 ._\\-()\\[\\]{}]"), "_").trim('.', ' ')
         return if (cleaned.length > 120) {
             val ext = cleaned.substringAfterLast(".", "")
-            val prefix = cleaned.substringBeforeLast(".").take(if (ext.isNotEmpty()) 120 - ext.length - 1 else 120)
-            if (ext.isNotEmpty()) "$prefix.$ext" else prefix
+            // The budget is spent on the extension first, because the extension is what a receiver uses
+            // to decide how to open the file. But an extension can be longer than the whole budget, and
+            // then `120 - ext - 1` is negative: that threw here, and the throw was caught by the upload
+            // handler as an ordinary failure — so a caller who named a file `a.<300 chars>` could not
+            // send it at all. With no room left for a stem there is no name worth assembling, and the
+            // plain truncation is what any other over-long name gets.
+            val stem = cleaned.substringBeforeLast(".").take((120 - ext.length - 1).coerceAtLeast(0))
+            if (ext.isEmpty() || stem.isBlank()) cleaned.take(120) else "$stem.$ext"
         } else cleaned
     }
 
