@@ -102,11 +102,14 @@ memory: it resets on process death.
 - **`sender` in `/api/messages` POST and `/api/typing` POST is caller-supplied** (`:1669`,
   `:1167`) and is used as the typing map key (`:1173`). Typing presence can therefore be
   forged or evicted by name collision. See §6 P-2.
-- **`?path=` on `/upload` is taken from the query string** (`:1873`), passed through
-  `sanitizeRelativePath` (`:2160`), and used as a relative write target under
-  `WebDrop_Received` (`:1882`). Traversal and absolute paths are stripped and the result is
-  clamped to the last four segments, so it cannot escape the root — but it can create
-  subdirectories anywhere inside it.
+- **`?path=` on `/upload` is taken from the query string** (dispatched by `uri == "/upload"`, handled in
+  `handleFileUpload`), passed through `sanitizeRelativePath`, and used as a relative write target under
+  `WebDrop_Received`. Traversal and absolute paths are stripped and the result is clamped to the last
+  four segments, so it cannot escape the root — but it can create subdirectories anywhere inside it.
+  The character class is what answers the rest: everything outside `A-Z a-z 0-9 space . _ - ( ) [ ] { }`
+  becomes `_`, leading and trailing dots are trimmed, and each segment is truncated to 120 characters.
+  That single function is also the only thing between a query string and a `Content-Disposition`, so its
+  rules are pinned by name rather than by line number in `HTTP-API.md` §Names.
 
 ---
 
@@ -164,7 +167,7 @@ then 404s.
 | POST | `/upload` | `:1732`, `handleFileUpload` `:2046` | writes under `WebDrop_Received` | Two credentials: PIN, or a pairing upload proof bound to `Content-Length` (`:1117-1127`). `uploadBudgetBytes(cacheDir)` is tested against the declared length before `parseBody` (`:2057`), so a file this phone cannot hold is refused instead of buffered. `?path=` controls the subdirectory (`:2074`). Duplicate names get a timestamp suffix rather than overwrite (`:2086-2093`). Free-space preflight for the destination (`:2096`) — a second, different measurement of a different volume. Paired uploads are decrypted to `.{name}.part` (`:2111`) and plain copies land there too (`:2118`), renamed onto the final name only after the write completes (`:2120`); a refusal therefore leaves nothing that looks like a received file. The failure reply no longer quotes `e.message`, which used to name a path under the app's private storage. |
 | POST | `/chatupload` | `:1737`, `handleChatUpload` `:2245` | attachment store | Same bytes, never enters the hosted file list, and the same cache-volume ceiling (`:2247`). `tempFile.copyTo(target, overwrite = true)` (`:2261`) is the only `overwrite = true` in the file, and it is safe: `target` is prefixed with a freshly generated UUID (`:2260`), so the name it could overwrite is one this request made milliseconds earlier. A second client cannot clobber a first one's attachment. |
 | GET | `/chatfile/{id}` | `:1719` | `chatFileIsVisibleTo` (`:564`) | **Fixed.** This route checked nothing: any client that passed the room gate could read any attachment whose id it knew, including one still unsent in the phone's own composer. The rule is now the one `/api/messages` already applied to *text* — an attachment is readable by the tab that uploaded it, or by anyone who may read a message that carries it (`threadIsVisibleTo`, `:542`: open room, the reader's own address book, the host's book when watching it, a group the phone opened). 404 rather than 403, because a UUID id that answers "real but not yours" tells a probing tab who is chatting. |
-| GET | `/preview/{id}` | `:1685` | same predicate (`:1689`) | Inline serving: no `Content-Disposition: attachment`, and `serveFileInline` (`:2219`) passes the stored `mimeType` straight through. **An uploaded HTML/SVG file is served inline with its own declared type.** Needs `X-Content-Type-Options: nosniff` and a forced-octet-stream rule for active content. Range requests are honoured. |
+| GET | `/preview/{id}` | `:1685` | same predicate (`:1689`) | Inline serving: no `Content-Disposition: attachment`, and `serveFileInline` passes the stored `mimeType` straight through. **Correction, on `security/upload-names`:** this row used to claim an uploaded HTML/SVG file is served "with its own declared type", which is not what the code does — the type of a web upload is *guessed from the saved extension* by `guessMimeType`, a table with no HTML and no SVG row, so `page.html` is offered as `application/octet-stream` (`FileNameAdversarialTest`). What is still true: a file whose recorded type is active — a phone-side share whose content URI reports `text/html` — is served inline, with no `X-Content-Type-Options: nosniff` and no CSP anywhere. Range requests are honoured. |
 | POST | `/api/delete` | `:1696` | `receivedFileIsVisibleTo` (`:2355`) + must live under `WebDrop_Received` | Two-layer check: visibility then canonical root prefix. Deleting a file outside the received dir is refused. Correct. |
 | GET | `/api/messages` | `:1755` | `threadIsVisibleTo` (`:542`) | The subtlest scoping in the server, now in **one function** instead of four locals inside the loop — hoisted because `/chatfile/{id}` has to answer the identical question and did not. Depends on `sameAddr`/`normalizeAddr` (IPv4/IPv6 folding) being right; a client that presents as the host address reads the host's private threads. `fromWeb` and `mine` flags decide what the tab may retract. |
 | POST | `/api/messages` | `:1662` | `thread` restricted to known groups or `ip:` form, else broadcast (`:1675-1681`) | A client can address a thread to *any* IP (`"ip:$to"`), i.e. write into a conversation it will not read but another host will. Sender name is self-declared (`:1669`). No body-size cap. |
@@ -288,14 +291,31 @@ The table-driven suite must, for **each row above**, assert status and body-shap
 12. path traversal on `/download-folder?path=`: `../../`, `%2e%2e%2f`, absolute paths, `\`
     separators, NUL, `..%00`, Unicode-normalised fullwidth `．．／`, symlink under
     `WebDrop_Received`, depth beyond 4 segments.
-    *One case written* (`ObjectScopeTest`: a folder outside the received directory is refused). The
-    rest of the encodings still need asserting against `sanitizeRelativePath` directly — the
-    canonical check is a defence in depth, and only one of the two layers is currently tested.
+    *Written:* `FileNameAdversarialTest` now walks both layers — every encoding above is offered to
+    `/upload?path=` and to `/download-folder?path=`, and each is asserted to land as a printable-ASCII
+    relative name inside `WebDrop_Received` with its payload intact. A symlink into the received folder
+    is refused by the canonical check, which is the layer the sanitizer cannot reach.
+    `ObjectScopeTest` keeps the ownership case (a folder with someone else's file in it). Still open:
+    depth is asserted at the sanitizer's own limit (4), and a link is only reachable locally, so this is
+    defence in depth rather than a remote hole.
 13. filename adversarial on `/upload?path=`: control characters, `\r\n` header injection into
     `Content-Disposition`, HTML/JS payloads, bidirectional overrides, 300-char names, reserved
     names, duplicate concurrent uploads of the same name;
+    *Written:* `FileNameAdversarialTest` (19 cases, `security/upload-names`). The rules it pins are in
+    `HTTP-API.md` §Names; two of them were not true before this branch:
+    a name whose extension alone exceeded the 120-character budget computed a negative stem count, threw,
+    and the upload answered **500** for bytes that arrived fine; and the landing file was named after the
+    final name, so two tabs sending to one `?path=` copied into the same path at the same time — one of
+    the two then answered 500 for a source that the other had already renamed away. Both are fixed here
+    and both are mutation-checked: reverting either change turns the corresponding test red.
+    The name-collision *policy* (timestamp suffix vs a refusal) is still undecided — backlog `R-2`.
 14. `/preview/{id}` with an uploaded `.html` and `.svg` — assert it cannot execute in the
     page's origin;
+    *Half written:* the offered `.html` is served `application/octet-stream`, because the MIME type is
+    guessed from the saved extension by a table with no HTML or SVG row and nothing consults the uploaded
+    bytes. That closes the route's own half. It does not close the claim: this server sends **no CSP**
+    (`R-6`) and the shipped tab builds its file list from `/api/files` names, so whether a name can
+    execute is a question about `WebClientHtml.kt`'s rendering (`R-5`), not about this response.
 15. session lifecycle (after S-1): issue, use, expire, logout, PIN change, server restart,
     revoked-token reuse;
 16. SSE: `/api/events` from two tabs, assert an event meant for one does not disclose the
@@ -336,8 +356,20 @@ Where a test contradicts this matrix, the code is wrong until proven otherwise �
   client that retried the same oversized file forever was already broken, it was just breaking the phone
   as well as itself. The limits are ceilings, not quotas: raising one later changes nothing observable
   for a compliant client.
-- Uploads now land as `.{name}.part` and are renamed on completion. Nothing in the *browser* file list
-  can ever show one — that list is the in-memory `sharedFiles` registry, not a directory walk — but the
-  on-phone Receive page does enumerate the folder, so a process killed between the write and the rename
-  can leave a stale partial behind until it is cleaned up (open in `R-2`). Do not rename the suffix
-  without sweeping for the old one.
+- Uploads now land as `.{uuid}.part` and are renamed on completion. Nothing can ever show one in the
+  *browser* list — that list is the in-memory `sharedFiles` registry, not a directory walk — and the
+  on-phone Receive page does **not** enumerate the folder either: `MainViewModel.receiveDir`
+  (`ui/MainViewModel.kt:111`) is a path string shown to the user, and the phone's own file list is the
+  same registry. **Correction:** an earlier note here claimed the Receive page walks the directory and
+  could show a stale partial; it does not, and nothing on this device reads that folder by listing it.
+  A process killed between the write and the rename still leaves the file behind, which is the open
+  cleanup in `R-2`. The landing name used to be derived from the final name, which is what made two
+  concurrent sends of one `?path=` share a copy target — if you change it again, keep it caller-proof
+  (a name built from `?path=` can be made to collide by anyone in the room) and sweep for the shapes you
+  retire.
+- **A caller-chosen name that used to fail now succeeds.** A name whose extension alone exceeded the
+  120-character budget (`a.` + 300 characters) computed a negative stem count and threw, and `/upload`
+  answered 500 `Upload failed`; the truncation now falls back to the plain 120-character cut, so that
+  upload succeeds under a name the client did not exactly ask for. No response shape changed and no
+  compliant client can see the difference, but a client that was *retrying* on that 500 will now stop
+  retrying — which is the intended outcome, not a regression.
