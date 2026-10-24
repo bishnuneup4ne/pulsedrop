@@ -213,9 +213,12 @@ to its own origin. So `*` granted a capability no shipped client used, to any we
 happened to have open — including the 401 that confirms a room exists. A future cross-origin
 integration must opt in deliberately instead of inheriting the grant.
 
+JSON answers are `Cache-Control: no-store` by default: the wrapper adds it when a route has not chosen
+a policy of its own, so the file list and message page are not left for the back button to find. SSE,
+the media leg and login already set their own `no-store`; the page and its fonts stay cacheable.
+
 Still missing: `Content-Security-Policy` (the page is inline CSS/JS and blob media, so this needs a
-browser pass first, not a guessed header), `Cache-Control: no-store` on authenticated JSON (only SSE,
-the media leg, login and a few routes set it), and `Strict-Transport-Security` on the TLS listener.
+browser pass first, not a guessed header) and `Strict-Transport-Security` on the TLS listener.
 Backlog R-6 carries the remainder.
 
 No URL credential outlives its purpose any more: a ticket is minutes long, names one object, and
@@ -268,7 +271,7 @@ scope, which had no backlog entry until now).
 | ID | Status | Finding |
 | --- | --- | --- |
 | **H-1** | **Fixed** | `/preview/` inlined the stored MIME type with no `nosniff` and no CSP. An uploaded `.html` was already inert (the MIME guess has no HTML row), but a phone-side share reporting `text/html` or `image/svg+xml` could run on this origin if the URL was opened directly. Inline responses now carry `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and add `Content-Security-Policy: sandbox` when the recorded type is a document (`text/html`, XHTML, SVG, XML) — so media and PDF viewers are untouched while a direct navigation is a script-less, unique-origin document. Range responses carry the same headers. Proved by `FileNameAdversarialTest`. |
-| **H-2** | **Fixed** | Was: `Access-Control-Allow-Origin: *` on every response including 401/404, no `Referrer-Policy`, no `Cache-Control: no-store` on private JSON. Now: the wildcard and both companion `Allow-*` headers are removed; `serve()` adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to every answer. `Cache-Control: no-store` on all authenticated JSON is still open in R-6. Proved by `ResponseHardeningTest`. |
+| **H-2** | **Fixed** | Was: `Access-Control-Allow-Origin: *` on every response including 401/404, no `Referrer-Policy`, no `Cache-Control: no-store` on private JSON. Now: the wildcard and both companion `Allow-*` headers are removed; `serve()` adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to every answer, and `Cache-Control: no-store` to JSON that did not set its own policy. Proved by `ResponseHardeningTest`. |
 | **H-3** | **Fixed (audit)** | Every caller-supplied string — `sender`, `action=ring`'s `name`, device names, filenames, thread titles, `X-Pulse-Client`, message bodies — reaches the DOM through `textContent` / `createTextNode` / input values. The 15 `innerHTML` assignments all receive SVG constants defined in the same file; the one helper that takes markup as an argument is only called with `FE_*` constants. No `eval`, `new Function`, `document.write`, `insertAdjacentHTML`, `outerHTML`, `srcdoc` or `javascript:` sink exists. `WebClientSafetyTest` pins all four properties against the served page, and the server-side `deviceName` is escaped by `esc()` at all three insertion points. |
 
 ---
@@ -353,10 +356,11 @@ The table-driven suite must, for **each row above**, assert status and body-shap
     execute is a question about `WebClientHtml.kt`'s rendering (`R-5`), not about this response.
 15. every response shape, not just data routes: `GET /`, a 401, a 404, a font, an `OPTIONS` preflight
     and a successful mutation — each must carry `X-Content-Type-Options: nosniff` and
-    `Referrer-Policy: no-referrer`, and none may carry an `Access-Control-Allow-*` header.
-    *Written:* `ResponseHardeningTest` asserts exactly that, once per shape, against the wire. The
-    font case also pins that the global pair did not displace `Cache-Control: public, max-age=…`,
-    since NanoHTTPD stores headers by name.
+    `Referrer-Policy: no-referrer`, and none may carry an `Access-Control-Allow-*` header; every JSON
+    answer must be `Cache-Control: no-store` unless the route set its own policy.
+    *Written:* `ResponseHardeningTest` asserts exactly that, once per shape, against the wire — a 401
+    and an authorized `/api/files` both carry `no-store`. The font case also pins that the global pair
+    did not displace `Cache-Control: public, max-age=…`, since NanoHTTPD stores headers by name.
 15. session lifecycle (after S-1): issue, use, expire, logout, PIN change, server restart,
     revoked-token reuse;
 16. SSE: `/api/events` from two tabs, assert an event meant for one does not disclose the

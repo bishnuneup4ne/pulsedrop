@@ -73,7 +73,19 @@ class ResponseHardeningTest {
         assertEquals(401, answer.status)
         assertEquals(listOf("nosniff"), valuesOf(answer, "X-Content-Type-Options"))
         assertEquals(listOf("no-referrer"), valuesOf(answer, "Referrer-Policy"))
+        assertEquals(listOf("no-store"), valuesOf(answer, "Cache-Control"))
         assertNoCrossOriginGrant(answer)
+    }
+
+    @Test
+    fun `room state is not left for the back button to find`() {
+        // The threat is a shared laptop: log out (or lose the session to the 12-hour expiry), press
+        // Back, and the file list must not come from a cache. JSON is the state; the page and fonts
+        // are deliberately cacheable and keep their own policy.
+        val answer = http.call("GET", "/api/files", mapOf("X-Pulse-Auth" to token))
+        assertEquals(200, answer.status)
+        assertEquals("application/json", valuesOf(answer, "Content-Type").single().substringBefore(';'))
+        assertEquals(listOf("no-store"), valuesOf(answer, "Cache-Control"))
     }
 
     @Test

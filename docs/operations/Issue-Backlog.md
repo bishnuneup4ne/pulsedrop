@@ -383,12 +383,12 @@ exists, and a TLS failure shown to a browser never names a private path and stay
 `FileNameAdversarialTest` asserts the inline-safety headers on `/preview/{id}`.
 
 ### R-6 [partly fixed] CSP, security headers, and request-hardening baseline
-Done: `serve()` now adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to every
-response, including 401/404 and inline previews (`ResponseHardeningTest`). Open: `Cache-Control:
-no-store` on all authenticated JSON and file responses (SSE, the media leg, login and a few others set
-it), a CSP **tested against the embedded inline CSS/JS and blob media first** (report-only until it
-passes), `Strict-Transport-Security` on the TLS listener, and read/idle timeouts, concurrent-request
-caps and per-endpoint body caps (the last partly covered by R-2).
+Done: `serve()` adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to every
+response, including 401/404 and inline previews, and `Cache-Control: no-store` to JSON that did not set
+its own cache policy (`ResponseHardeningTest`). Open: a CSP **tested against the embedded inline CSS/JS
+and blob media first** (report-only until it passes), `Strict-Transport-Security` on the TLS listener,
+and read/idle timeouts, concurrent-request caps and per-endpoint body caps (the last partly covered by
+R-2).
 
 ### R-7 [needs test] Call media confidentiality is labelled imprecisely
 `docs/Security-Model.md` already states call media is not E2E encrypted — the docs are honest, the UI

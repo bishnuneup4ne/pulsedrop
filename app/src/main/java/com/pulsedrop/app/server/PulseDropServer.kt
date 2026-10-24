@@ -1294,6 +1294,14 @@ class PulseDropServer(
             // below set the same values; NanoHTTPD replaces a header by name, so this stays one.
             response.addHeader("X-Content-Type-Options", "nosniff")
             response.addHeader("Referrer-Policy", "no-referrer")
+            // JSON is the room's state, not a document: a tab that logs out must not leave the file
+            // list or message page reachable from the back button. Routes that already chose a cache
+            // policy (SSE, media, login) keep it; the page and its fonts are deliberately cacheable.
+            if (response.getHeader("Cache-Control") == null &&
+                response.mimeType?.substringBefore(';')?.trim().equals("application/json", ignoreCase = true) == true
+            ) {
+                response.addHeader("Cache-Control", "no-store")
+            }
         }
 
     private fun dispatch(session: IHTTPSession): Response {
