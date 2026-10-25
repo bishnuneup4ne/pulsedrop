@@ -340,6 +340,9 @@ PULSEDROP_PROBE=true PULSEDROP_PROBE_OUT=… ./gradlew :app:testDebugUnitTest --
 ./gradlew :app:testDebugUnitTest :app:lintDebug      # the whole suite plus lint, over the cursor
     BUILD SUCCESSFUL in 5m 50s — 73 classes, 575 tests, 7 skipped, 0 failures, 0 errors
     lint: 0 errors, 62 warnings — the same 62 again
+./gradlew :app:testDebugUnitTest :app:lintDebug --rerun-tasks   # over merged main (a25e9ea)
+    BUILD SUCCESSFUL in 5m — 73 classes, 575 tests, 7 skipped, 0 failures, 0 errors
+    lint: 0 errors, 62 warnings — nothing the merges introduced, and nothing cached
 ```
 
 The first `WebOutboxTest` run failing twice is worth keeping in the record rather than editing out.
@@ -348,8 +351,6 @@ count and byte total without taking the lock, so a second thread reading them co
 already added and its bytes not yet shed, and call a queue that was exactly at budget over budget.
 A diagnostic that lies about the one invariant it exists to check is worse than no diagnostic, so the
 getters lock now and the concurrency test is what proved it.
-
-```
 
 The correction to the record: `lintDebug` does report 62 warnings, all of them pre-existing
 (`StaticFieldLeak`, `UseKtx` and the like), and an earlier line here said "no issues reported". That
