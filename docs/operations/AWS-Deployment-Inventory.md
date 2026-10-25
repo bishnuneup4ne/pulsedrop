@@ -103,7 +103,7 @@ This is the practical blocker for "run the tests".
 | Outbound network | `services.gradle.org` 200, `dl.google.com` 200 | Provenance for JDK + SDK is reachable, so a real build is achievable here. |
 
 Reproducible build requirement, read off the project rather than guessed: Gradle 9.6.0 (wrapper),
-`compileSdk 36.1`, `minSdk 24`, `targetSdk 36`, `sourceCompatibility/targetCompatibility Java 11`,
+`compileSdk 37.2`, `minSdk 24`, `targetSdk 36`, `sourceCompatibility/targetCompatibility Java 11`,
 CI JDK **21**, `app.versionName = "2.1.1"`, `versionCode = 14`.
 
 ---
