@@ -344,4 +344,26 @@ class ServerSessionAuthTest {
         // it is the mode the dashboard has to label honestly (see the PRD's UX-2).
         assertTrue(call("GET", "/api/files").status in 200..299)
     }
+
+    @Test
+    fun `a route that exists cannot be told from one that does not`() {
+        // R-8: while authorization was a position in the chain, an existing path answered 401 and a
+        // missing one answered 404 before any credential was offered. One policy table decides both,
+        // so the answer is the same in every state — which is the useful half of the old scheme.
+        val paths = listOf("/api/auth", "/api/no-such-route")
+        paths.forEach { path ->
+            assertEquals("$path without a credential", 401, call("GET", path).status)
+        }
+        val token = requireLogin(pin)
+        paths.forEach { path ->
+            assertEquals(
+                "$path with a credential",
+                404, call("GET", path, mapOf("X-Pulse-Auth" to token)).status
+            )
+        }
+        // OPTIONS is uniform too: it never consults the table, so it cannot name a route either.
+        paths.forEach { path ->
+            assertEquals("$path OPTIONS", 200, call("OPTIONS", path).status)
+        }
+    }
 }
