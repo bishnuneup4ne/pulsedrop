@@ -42,7 +42,8 @@ Consequences that are easy to miss:
   `GET /api/auth` are 401, not free probes of which paths exist. The fallback is asserted per rule by
   `AuthorizationPolicyTest`.
 - **`OPTIONS` is handled before the table** and answers 200 for every path with no credential,
-  including paths that do not exist — the one deliberate route-shape disclosure.
+  including paths that do not exist. The answer is uniform, so it names no route; it exists so a
+  client that sends a preflight gets a reply instead of a 401.
 - **A path in no row is authenticated, then 404s**, so an authenticated wrong path and an authenticated
   missing path are indistinguishable.
 - **The table is checked against this file.** Every rule names the matrix row that documents it;
@@ -123,7 +124,7 @@ memory: it resets on process death.
 
 | Method | Path | Code | Guard | Scope | Intentional public? | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| OPTIONS | *any* | `if (method == Method.OPTIONS)` | none | — | yes | 200 with an empty body and no CORS headers. It still answers 200 for paths that do not exist, which is a route-shape oracle when paired with method probing (R-8). |
+| OPTIONS | *any* | `if (method == Method.OPTIONS)` | none | — | yes | 200 with an empty body and no CORS headers. It answers the same for paths that do not exist, so it cannot be used to tell routes apart (R-8, closed by the policy table). |
 | GET | `/`, `/index.html` | `uri == "/" \|\| uri == "/index.html"` | none | full page | yes | Redirects to `https://host:tlsPort/` when the TLS listener is up (the `tlsServer != null` redirect inside that branch). Page body itself contains no credential; it embeds `deviceName` and a "requiresPin" boolean. |
 | GET | `/fonts/google-sans-{regular,medium,semibold,bold}.ttf` | `WEB_FONTS[uri]` | none | 4 fixed resources | yes | Whitelisted map, no path interpolation. Cache-Control `public, max-age=604800`. Safe as written. |
 | GET | `/api/info` | `uri == "/api/info"` (GET) | none | device metadata | yes — documented | Leaks `deviceName`, `version`, LAN `clientIp`, `deviceId`, TLS status and a `tlsError` string, capability list. **Fixed:** `tlsError` is now `describeTlsFailure(e)` — the exception class, plus a message with path-shaped runs replaced by `<path>` and the whole thing capped at 200 characters; the full exception still goes to Logcat. `deviceId` remains disclosed and is P-3's open half. |

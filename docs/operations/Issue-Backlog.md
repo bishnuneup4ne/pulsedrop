@@ -421,10 +421,16 @@ separately from calling.
 phone does not hold is refused and never raises `incomingCall`. `CallInviteTest` pins that refusal and
 the control that a real pairing still rings.
 
-### R-8 [confirmed, partially fixed] Route-shape leakage via OPTIONS and 401/404 asymmetry
-`OPTIONS` returns 200 for any path with wildcard CORS (`:1074`), and `GET /api/auth` reaches the global
-check and 401s instead of 404ing — both reveal which routes exist before any credential is offered.
-Low severity on a LAN; worth folding into S-3 rather than a separate change.
+### R-8 [fixed] Route-shape leakage via OPTIONS and 401/404 asymmetry
+`OPTIONS` used to return 200 for any path with wildcard CORS, and `GET /api/auth` reached a global
+check whose position in the dispatch chain decided the answer — so an existing path and a missing one
+could be told apart before any credential was offered.
+*Closed by S-3, and now pinned:* the policy table answers `SESSION` for both a method it does not name
+and a path it does not serve, so both are 401 without a credential and both are 404 with one. `OPTIONS`
+returns the same empty 200 for every path and consults no table, so its uniformity names nothing.
+`ServerSessionAuthTest` asserts both halves against a real listener, including the authenticated 404
+for `GET /api/auth` (a route that exists, but only as POST).
+Low severity throughout; there was never a live boundary here, only a probe.
 
 ### R-11 [confirmed, fixed] Bytes past a short `Content-Length` are parsed as the next request
 Discovered while bounding the upload ceiling, and deliberately not treated as one: `parseBody` reads
