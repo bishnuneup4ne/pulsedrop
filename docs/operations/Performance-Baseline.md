@@ -147,12 +147,17 @@ NanoHTTPD's.
 its own tests (`QualityLadderTest.kt:65,67,192`). A call that dips once under `stepDown` stays dipped
 for its remaining life, which reads as "the video got bad and never recovered".
 
-**7. [code-confirmed, unmeasured] The browser leg of a call is JPEG, and its queue is not byte
-bounded.** The browser path compresses every frame with `yuv.compressToJpeg(..., 70, bos)`
-(`CallEngine.kt:2046`) off a legacy `android.hardware.Camera` (`:11`, camera thread `:1933`), while
-the H.264 encoder/decoder is fully implemented for phone↔phone. `webOut` is a
-`LinkedBlockingQueue<ByteArray>(96)` (`:367`) with drop-oldest, bounded in *frames*, not bytes: at
-the 1 MiB per-frame cap that is ~96 MiB of queued JPEG, on a phone, during a call.
+**7. [code-confirmed, unmeasured — byte bound since fixed] The browser leg of a call is JPEG, and its
+queue was bounded in frames only.** The browser path compresses every frame with
+`yuv.compressToJpeg(..., 70, bos)` (`CallEngine.kt:2046`) off a legacy `android.hardware.Camera`
+(`:11`, camera thread `:1933`), while the H.264 encoder/decoder is fully implemented for
+phone↔phone. `webOut` was a `LinkedBlockingQueue<ByteArray>(96)` with drop-oldest — a count, not a
+budget. The size that count allowed is worse than the ~96 MiB the earlier draft of this document
+said: the 1 MiB figure is `MediaLimits`, the browser *inbound* cap, while outbound frames go through
+`FrameCodec.encode`, whose `MAX_PAYLOAD` is 4 MiB, so the queue's own worst case was ~402 MB of live
+JPEG held for one tab that stopped reading. Now a `WebOutbox` with both a 96-frame and an 8 MiB
+budget (`perf/webout-byte-bound`); the capture-when-nobody-is-reading half is still open and needs a
+device.
 
 **8. [confirmed, not a bottleneck] Bulk transfers do not stall the host, and fan-out is not slow.**
 A 32 MiB upload left message latency unchanged (1 ms/2 ms both ways), a download grew the heap by
@@ -220,6 +225,24 @@ moves (p95 20 ms → 14 ms), because the route still serialises everything befor
 fingerprinted. The saving is transfer and browser work, which is where the symptom lives, and neither
 of those is measurable on this host.
 
+### Third half — the call leg's backlog (`perf/webout-byte-bound`)
+
+| Change | Files | Test |
+| --- | --- | --- |
+| `webOut` becomes `WebOutbox`: a byte budget (8 MiB) enforced beside the frame budget (96) it already had, shedding the oldest frame on either. | `call/WebOutbox.kt` (new), `call/CallEngine.kt` (`webOut`, `writeWebFrame`, `nextWebOutFrame`) | `WebOutboxTest` — 9 tests: both caps binding, which one binds in the small-frame and the large-frame case, drop-oldest order, exact byte total across mixed traffic, refusal of a single frame larger than the budget, `clear`, timeout and wakeup, and the invariant under four concurrent producers |
+| A frame that alone exceeds the budget is refused instead of evicting every real frame to hold something undecodable. | same | `one frame larger than the whole budget is refused and changes nothing` |
+| The queue's size diagnostics read under the lock. | `call/WebOutbox.kt` | found by the concurrency test: an unsynchronized reader could see a frame added and its bytes not yet shed, and report an over-budget queue at the moment it was exactly at budget |
+
+What this buys, stated as the arithmetic and not as a measurement: the old worst case was 96 frames
+whose size nothing bounded, and the encoder path may hand `FrameCodec` a payload of up to 4 MiB, so
+~402 MB of live media could be queued for a tab that had stopped reading. The new ceiling is 8 MiB —
+about a second of shared-screen frames — and because shedding is still oldest-first, a tab that falls
+behind is now served a *newer* frame instead of a longer queue of stale ones.
+
+No claim of a latency or FPS improvement is made here, and none could be: no call was placed, there
+is no camera on this host, and the queue's size only matters while a real tab stalls. The measurable
+part is the bound itself, which is what `WebOutboxTest` tests.
+
 ---
 
 ## Ranked remaining work
@@ -232,7 +255,7 @@ owner, because "fast" and "allowed" are different questions.
 | P1-1 | Delta `/api/messages` — but not as `?since=`. Reading the list's lifecycle first says the naive cursor is wrong in three separate ways, and a sound one needs a server-assigned revision *re-issued on retraction* plus a visibility epoch that forces a full resync when the phone changes which groups a browser may read. | §"R-12 in the backlog" for each of the three; `:1133`, `:1146`, `:1167`, `:507`, `:668` | Three coordinated changes and a new field on the wire format. The `304` in this batch already removed the idle cost, so what is left is the cost of a busy room. Needs a decision. |
 | P1-2 | Get `startServer()` and `startWithSettle` off the main thread. | §5: `MainViewModel.kt:1159,1317` | Touches lifecycle, `MainViewModel` has no tests, and internal callers currently rely on the server being listening when the call returns. Making it async without a device or a harness is how a startup race gets shipped silently. Deliberately not attempted blind. |
 | P1-3 | ~~Compress and revalidate the document.~~ **Fixed in this batch** — see "Second half" above. | §4 correction 4 | NanoHTTPD had the hook all along (`useGzipWhenAccepted`); the part that needed care was the `304` framing. |
-| P1-4 | Bound `webOut` in bytes, not frames, and stop the camera/mic when the tab reading them is gone. | §7: `CallEngine.kt:367` | The byte bound is a local queue policy and can be tested here; the watchdog that ends a call is a behaviour change and needs a device. Split on purpose. |
+| P1-4 | ~~Bound `webOut` in bytes, not frames~~ **done in `perf/webout-byte-bound`**; stop the camera/mic when the tab reading them is gone. | §7: `CallEngine.kt:367` | The byte bound was a local queue policy and is tested here. The watchdog that ends a call is a behaviour change and needs a device — that half is still open, not skipped by accident. |
 | P2-1 | Let the ladder step back up, or delete `stepUp`. | §6: no production call site | Small, but only measurable in a call. |
 | P2-2 | Decide the browser media lane: WebRTC (a new dependency, and no mandatory external service is allowed) vs adaptive JPEG profiles. | §7 | The PRD prefers WebRTC; §17 says do not replace a working API without a demonstrated benefit. Not demonstrated yet, because nothing here has a camera. |
 | P2-3 | Audio priority / separate queues. | not instrumented | Needs a call to observe. |
@@ -260,6 +283,22 @@ PULSEDROP_PROBE=true PULSEDROP_PROBE_OUT=… ./gradlew :app:testDebugUnitTest --
 ./gradlew :app:testDebugUnitTest :app:lintDebug      # the whole suite plus lint, over this batch
     BUILD SUCCESSFUL in 4m 28s — 71 classes, 557 tests, 6 skipped, 0 failures, 0 errors
     lint: 0 errors, 62 warnings, none at a line this batch wrote
+./gradlew :app:testDebugUnitTest --tests '…call.WebOutboxTest'      # the byte bound, first run
+    BUILD FAILED in 11s — 9 tests, 2 failures
+./gradlew :app:testDebugUnitTest --tests '…call.WebOutboxTest'      # after both were fixed
+    BUILD SUCCESSFUL in 4s — 9 tests, 0 failures
+./gradlew :app:testDebugUnitTest :app:lintDebug --rerun-tasks   # over the byte-bound branch
+    BUILD SUCCESSFUL in 4m 55s — 72 classes, 566 tests, 6 skipped, 0 failures, 0 errors
+    lint: 0 errors, 62 warnings — the same 62, so nothing here added one
+```
+
+The first `WebOutboxTest` run failing twice is worth keeping in the record rather than editing out.
+One failure was a wrong literal in the test itself. The other was real: the queue reported its frame
+count and byte total without taking the lock, so a second thread reading them could see a frame
+already added and its bytes not yet shed, and call a queue that was exactly at budget over budget.
+A diagnostic that lies about the one invariant it exists to check is worse than no diagnostic, so the
+getters lock now and the concurrency test is what proved it.
+
 ```
 
 The correction to the record: `lintDebug` does report 62 warnings, all of them pre-existing

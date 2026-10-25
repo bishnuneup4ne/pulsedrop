@@ -590,13 +590,21 @@ not already fixed.
 tests. A call that dips once stays dipped for its remaining life. Needs a real call to measure, so it
 is listed rather than patched blind.
 
-### R-17 [code-confirmed, unmeasured] The browser leg of a call is JPEG on an unbounded queue
+### R-17 [partly fixed] The browser leg of a call is JPEG, and its queue was bounded only in frames
 `CallEngine.kt:2046` compresses each frame with `compressToJpeg(…, 70, …)` off a legacy
-`android.hardware.Camera` (`:11`), while H.264 is implemented for phone↔phone only; `webOut` is
-`LinkedBlockingQueue<ByteArray>(96)` (`:367`) — bounded in *frames*, so ~96 MiB at the 1 MiB per-frame
-cap, queued on a phone during a call. The PRD's "prefer WebRTC" is a new dependency against a rule
-that local-network operation must not need an external service; that decision belongs to the owner,
-not to a patch.
+`android.hardware.Camera` (`:11`), while H.264 is implemented for phone↔phone only.
+*Fixed:* `webOut` is now `WebOutbox`, which enforces a byte budget (8 MiB) alongside the 96-frame
+budget it already had, shedding the oldest frame on either. The old queue's own worst case was not
+96 MiB but roughly 402 MB, because the 1 MiB figure is the browser *inbound* cap while outbound
+frames go through `FrameCodec`, whose cap is 4 MiB — so a tab that stopped reading could be owed
+that much live JPEG on a phone's heap. `WebOutboxTest` holds both caps, the exact byte total, the
+drop-oldest order under both, the refusal of a frame larger than the whole budget, and the invariant
+under four concurrent producers.
+Still open here, and open on purpose: stopping the camera and mic when the tab that was reading them
+is gone (a watchdog that ends a call needs a device to judge, not a unit test), and keeping audio
+frames when a video backlog is shed (the PRD's §8.6 priority lanes — a second queue, not a second
+bound on this one). The PRD's "prefer WebRTC" is a new dependency against a rule that local-network
+operation must not need an external service; that decision belongs to the owner, not to a patch.
 
 ### R-18 [fixed] Nothing about the payloads was compressed or revalidated
 There was no `Content-Encoding`, `ETag` or `Vary` anywhere in the server package, and the index route
