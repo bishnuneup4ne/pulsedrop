@@ -42,14 +42,16 @@ import org.robolectric.annotation.Config
  *    existing pair; a request from a peer already paired under the same key heals without a prompt;
  *  * duplicate request ids collapse to one prompt, a flood is bounded, and an answer for a request
  *    this phone is not waiting for changes nothing;
+ *  * a prompt survives just under two minutes and is dropped just over, measured on a clock the
+ *    test moves rather than a test that sleeps;
  *  * a peer that comes back under a new key is kept beside the old trust and called out, never
  *    silently substituted;
  *  * a phone that cannot read its identity key queues nothing and declines, rather than pairing
  *    with a promise it cannot keep.
  *
- * What these tests cannot decide: the 120-second prompt TTL (it needs clock control), and the
- * human step itself. A key substitution is only caught when the two codes are actually compared;
- * the code is six digits, which is a deliberate usability trade, not an authentication protocol.
+ * What these tests cannot decide: the human step itself. A key substitution is only caught when the
+ * two codes are actually compared; the code is six digits, which is a deliberate usability trade,
+ * not an authentication protocol.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -304,6 +306,30 @@ class PairingThreatModelTest {
         assertEquals("the prompt list is capped at twelve", 12, queued.size)
         assertFalse("the oldest prompt is the one dropped", queued.any { it.reqId == "req-0" })
         assertTrue(queued.any { it.reqId == "req-12" })
+    }
+
+    @Test
+    fun `a prompt older than two minutes is dropped before the next one is shown`() {
+        // The clock is the only thing that moves; no test sleeps for two minutes to learn this.
+        var at = 1_700_000_000_000L
+        val timed = PairManager(context, CoroutineScope(Dispatchers.IO)) { at }
+        timed.nameProvider = { "Test Phone" }
+        timed.versionProvider = { "2.1.1" }
+
+        assertTrue(timed.handleIncomingRequest(request(spkiOf(), "old", "2.1.1"), "192.0.2.10"))
+        at += 119_000
+        assertTrue(timed.handleIncomingRequest(request(spkiOf(), "fresh", "2.1.1"), "192.0.2.10"))
+        assertEquals(
+            "one second short of the TTL is still a prompt",
+            listOf("old", "fresh"), timed.incomingRequests.value.map { it.reqId }
+        )
+
+        at += 2_000 // "old" is 121 s stale, "fresh" is 2 s
+        assertTrue(timed.handleIncomingRequest(request(spkiOf(), "next", "2.1.1"), "192.0.2.10"))
+        assertEquals(
+            "the boundary, not the number of requests, decides what a prompt list holds",
+            listOf("fresh", "next"), timed.incomingRequests.value.map { it.reqId }
+        )
     }
 
     @Test

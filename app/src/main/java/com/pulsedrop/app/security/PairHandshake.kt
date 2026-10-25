@@ -26,7 +26,9 @@ class PairHandshake(
     private val client: OkHttpClient,
     private val scope: CoroutineScope,
     private val events: MutableStateFlow<String?>,
-    private val deps: PairingDeps
+    private val deps: PairingDeps,
+    /** Wall-clock read once per decision; a test supplies a clock it can move without sleeping. */
+    private val now: () -> Long = System::currentTimeMillis
 ) {
 
     private val _incomingRequests = MutableStateFlow<List<IncomingPairRequest>>(emptyList())
@@ -46,9 +48,9 @@ class PairHandshake(
     }
 
     private fun pruneIncomingRequests() {
-        val now = System.currentTimeMillis()
+        val at = now()
         _incomingRequests.update { list ->
-            val kept = list.filter { now - it.timestamp < INCOMING_REQUEST_TTL_MS }
+            val kept = list.filter { at - it.timestamp < INCOMING_REQUEST_TTL_MS }
             if (kept.size == list.size) list else kept
         }
     }
@@ -140,16 +142,16 @@ class PairHandshake(
 
     private fun rememberLateAnswer(pending: PendingPairRequest) {
         synchronized(lateAnswers) {
-            val now = System.currentTimeMillis()
-            lateAnswers.entries.filter { it.value.second <= now }.forEach { lateAnswers.remove(it.key) }
+            val at = now()
+            lateAnswers.entries.filter { it.value.second <= at }.forEach { lateAnswers.remove(it.key) }
             while (lateAnswers.size > 8) lateAnswers.remove(lateAnswers.keys.first())
-            lateAnswers[pending.reqId] = pending to (now + LATE_ANSWER_MS)
+            lateAnswers[pending.reqId] = pending to (at + LATE_ANSWER_MS)
         }
     }
 
     private fun takeLateAnswer(reqId: String): PendingPairRequest? = synchronized(lateAnswers) {
         val entry = lateAnswers.remove(reqId) ?: return null
-        if (entry.second <= System.currentTimeMillis()) null else entry.first
+        if (entry.second <= now()) null else entry.first
     }
 
     fun cancelPendingRequest() {
@@ -321,6 +323,7 @@ class PairHandshake(
             }
             return true
         }
+        val at = now()
         val req = IncomingPairRequest(
             reqId = json.optString("reqId", UUID.randomUUID().toString()),
             name = json.optString("name", "Device $clientIp"),
@@ -328,15 +331,15 @@ class PairHandshake(
             myIp = reachIp,
             myPort = reachPort,
             safetyCode = Crypto.safetyCode(myPub, peerPub),
+            timestamp = at,
             viaRelay = json.optBoolean("relay", false),
             appVersion = json.optString("appVersion", "")
         )
         _incomingRequests.update { list ->
-            val now = System.currentTimeMillis()
             // Any LAN host may POST here, so the pending list must stay bounded:
             // drop expired entries and keep only the newest requests.
             (list.filterNot { it.reqId == req.reqId }
-                .filter { now - it.timestamp < INCOMING_REQUEST_TTL_MS } + req)
+                .filter { at - it.timestamp < INCOMING_REQUEST_TTL_MS } + req)
                 .takeLast(MAX_INCOMING_REQUESTS)
         }
         return true

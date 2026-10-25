@@ -27,7 +27,12 @@ import javax.crypto.spec.SecretKeySpec
  * (request/accept/decline), [PairedMail] (sealed transport) and [ProofTokens] (key-proof
  * authorization) — kept so callers see one object with one set of providers attached to it.
  */
-class PairManager(context: Context, scope: CoroutineScope) {
+class PairManager(
+    context: Context,
+    scope: CoroutineScope,
+    /** Test seam for prompt expiry; production always reads the wall clock. */
+    clock: () -> Long = System::currentTimeMillis
+) {
 
     private val _pairEvent = MutableStateFlow<String?>(null)
     val pairEvent: StateFlow<String?> = _pairEvent.asStateFlow()
@@ -117,7 +122,8 @@ class PairManager(context: Context, scope: CoroutineScope) {
             override fun acceptsInbound(): Boolean = this@PairManager.acceptsInbound()
             override fun relayAnswerPoller() = relayPairPoller
             override fun answerSink() = pairAnswerSink
-        }
+        },
+        now = clock
     )
 
     private val mail = PairedMail(
