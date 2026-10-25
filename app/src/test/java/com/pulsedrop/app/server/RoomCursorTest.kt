@@ -228,8 +228,10 @@ class RoomCursorTest {
      * Retention evicts from the front at 2,000 messages, so a tab that slept through that much
      * traffic holds a revision older than anything the phone still has. The claim in the backlog is
      * that this cannot *miss* a message — the filter simply keeps everything retained, and the tab
-     * repeats what it already holds. Repeating is the cost; missing one would be the bug, and it is
-     * the bug an offset-based cursor would have shipped silently.
+     * repeats what it already holds. Missing one would be the bug, and it is the bug an offset-based
+     * cursor would have shipped silently. What repeating costs, which the prose did not see, is the
+     * other direction: the entries the phone retired stay on the tab's screen, which is what
+     * `X-Room-Window` and the prune below are for.
      */
     @Test
     fun `a marker older than the retained room misses nothing`() {
@@ -297,5 +299,66 @@ class RoomCursorTest {
                 assertNull("an unreadable marker was honoured as a patch", answer.header("X-Room-Delta"))
                 assertTrue("the whole room was not in the answer", answer.text.contains("room note"))
             }
+    }
+
+    /**
+     * The retention limit a tab needs to stay in step with the phone.
+     *
+     * A cursor can never say "forget what I dropped": the phone trims its own oldest entries, and the
+     * patch that follows necessarily leaves out anything it no longer holds. That is why the answer
+     * carries the size of the window as well as the marker — the tab prunes to the same window from
+     * the same end, so an entry the phone retired disappears from this screen too instead of lingering
+     * until a reload. The number has to come from the phone: a tab that guessed lower would drop
+     * messages the phone still has.
+     */
+    @Test
+    fun `the room tells a tab how much of it the phone keeps`() {
+        server.addMessage("note", "another device", clientIp = "10.0.0.9")
+        val first = read("/api/messages")
+        assertEquals(2000, first.header("X-Room-Window")!!.toInt())
+
+        val cursor = first.cursor()
+        val patch = read("/api/messages?since=$cursor")
+        assertEquals("a patch lost the window the tab prunes by", 2000, patch.header("X-Room-Window")!!.toInt())
+    }
+
+    /**
+     * Retention, which is the way a naive cursor is wrong that the header comment promises and the
+     * other tests did not cover: past the cap every arrival retires an entry the tab is still holding,
+     * so a long-open tab shows more of the room than the phone does and its own list only ever grows.
+     * The window travels in a header because the patch itself cannot carry it — the phone has already
+     * forgotten the entry, not merely decided not to send it.
+     */
+    @Test
+    fun `a room past its cap retires entries the tab is still holding`() {
+        val oldest = server.addMessage("the first one", "another device", clientIp = "10.0.0.9")
+        val cursor = read("/api/messages").cursor()
+        repeat(2000) { i -> server.addMessage("filler $i", "another device", clientIp = "10.0.0.9") }
+
+        val patch = read("/api/messages?since=$cursor")
+        val window = patch.header("X-Room-Window")!!.toInt()
+        val room = org.json.JSONArray(read("/api/messages").text)
+        assertEquals("the phone kept more than its cap", 2000, room.length())
+        assertEquals("the room answered with a different window than the cap it trims to",
+            room.length(), window)
+        assertFalse("the retired entry is still on the room: the tab must prune by the window",
+            patch.text.contains(oldest.id) || read("/api/messages").text.contains(oldest.id))
+        assertEquals("a patch past the cap stopped being a patch", "1", patch.header("X-Room-Delta"))
+    }
+
+    /**
+     * The tab's half of the window: a patch that arrives past the cap is folded in *and* trimmed from
+     * the front, so the screen holds exactly what the phone holds without ever reading the room whole.
+     */
+    @Test
+    fun `the tab prunes to the window the phone sent`() {
+        val page = WebClientHtml.getHtml("Test Phone", true)
+        val windowRead = page.indexOf("x-room-window")
+        assertTrue("the served page never reads the window header", windowRead > 0)
+        assertTrue("the prune runs on the patch path, not only the whole-room one",
+            page.contains("if (isDelta) mergeRoomPatch(msgs); else lastMsgs = msgs;") &&
+                page.indexOf("lastMsgs.splice") > page.indexOf("function mergeRoomPatch"))
+        assertTrue("a tab that keeps more than the phone is what leaks the retired bubbles",
+            page.contains("lastMsgs.splice(0, lastMsgs.length - roomWindow)"))
     }
 }

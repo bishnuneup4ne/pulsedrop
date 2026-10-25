@@ -2336,6 +2336,11 @@ class PulseDropServer(
                 // parses: a tab that never sent `since` sees exactly what it saw before, and a tab
                 // that did is told whether this array is the room or a patch on it.
                 res.addHeader("X-Room-Cursor", mintedCursor)
+                // How much of the room this phone keeps. A patch cannot say "forget what I dropped",
+                // because by the time an entry is retired the reader's marker already counts it as
+                // seen, so the tab prunes by this number instead — from the same end the phone trims,
+                // which is why the value has to come from here and not be guessed in the page.
+                res.addHeader("X-Room-Window", SERVER_CHAT_RETENTION.toString())
                 if (isDelta) res.addHeader("X-Room-Delta", "1")
                 return res
             } else if (method == Method.POST) {

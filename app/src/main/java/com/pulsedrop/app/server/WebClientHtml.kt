@@ -1581,6 +1581,9 @@ object WebClientHtml {
     // The phone's place-marker for this tab's view of the room. Held here rather than left to a
     // cookie or cache: the room's JSON is `no-store` on purpose, so nothing is stored to carry it.
     var roomCursor = '';
+    // How much of the room the phone keeps, read off the answer. The tab trims to this so a bubble
+    // the phone retired by hitting its own cap leaves the screen instead of aging there.
+    var roomWindow = 0;
     /* Messages this tab was not allowed to retract, plus a revision that says "redraw the bubbles". */
     var localHidden = {};
     var chatRev = 0;
@@ -2805,6 +2808,7 @@ object WebClientHtml {
           setConnected(true);
           messagesEtag = res.headers.get('etag') || '';
           roomCursor = res.headers.get('x-room-cursor') || '';
+          roomWindow = parseInt(res.headers.get('x-room-window'), 10) || 0;
           var msgs = await res.json();
           processMessages(msgs, res.headers.get('x-room-delta') === '1');
         }
@@ -2824,10 +2828,11 @@ object WebClientHtml {
      * and nothing is re-sorted: the phone sends oldest-first, so appending keeps the order the
      * bubbles are already in.
      *
-     * The one thing this costs is honesty about retention: a message the phone has dropped off its
-     * 2000 cap stays on this screen until the room is read whole again, which happens on a reload, a
-     * logout, or the phone opening or closing a thread. Reading the room as a replacement to avoid
-     * that would be the 517 KB this exists to stop sending.
+     * The one thing a patch cannot say is "the phone has dropped this": retention removes an entry
+     * without ever sending it again, so the tab trims to the window the answer names (see
+     * processMessages) and a retired bubble leaves the screen on the next poll rather than waiting for
+     * a reload. Reading the room as a replacement to get the same effect would be the 517 KB this
+     * exists to stop sending.
      */
     function mergeRoomPatch(msgs) {
       if (!msgs.length) return;
@@ -2844,6 +2849,12 @@ object WebClientHtml {
       // would leave the tab showing only the messages that moved, which is the bug this route's
       // own history taught: the answer's shape is not enough, the reader has to know which it got.
       if (isDelta) mergeRoomPatch(msgs); else lastMsgs = msgs;
+      /* Past its cap the phone retires an entry for every arrival, and a patch cannot report the
+         retirement — the marker already counts that entry as seen, so it is simply never sent again.
+         Trimming to the phone's window from the same end drops exactly those bubbles. It can never
+         drop a live one: this list is a subset of the room the phone trims, so anything beyond the
+         window here is older than everything the phone still has. */
+      if (roomWindow && lastMsgs.length > roomWindow) lastMsgs.splice(0, lastMsgs.length - roomWindow);
 
       /* Discover threads + per-thread unread bookkeeping. */
       msgs.forEach(function (m) {

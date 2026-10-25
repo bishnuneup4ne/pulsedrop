@@ -560,14 +560,27 @@ The shape is not `?since=<id>`, and the three reasons it cannot be are what the 
   Answer: the generation of that list rides in the marker, and a marker from an older generation is
   refused — the tab gets the room whole, which is the payload a cursor exists to stop sending, and
   the price of correctness exactly once per group opened.
-Retention's falling front (`:1146`, `:1190`) is not a gap in this design: eviction retires the stamps
-of what it removes, and a marker older than the room's oldest entry yields everything retained, which
-the tab merges by id. It cannot miss a message, only repeat one it already has.
-Three sentences of the above were claims rather than tests when this was first closed, and they are
-asserted now (`RoomCursorTest`, 8 → 11): a marker predating an eviction is answered with exactly the
-retained set, a `304` — which carries no cursor, by design — cannot strand a tab that then offers the
-old validator with a grown room, and an unreadable marker is refused into a whole read rather than
-into an empty one.
+Retention's falling front (`:1146`, `:1190`) retires the stamps of what it removes, and a marker older
+than the room's oldest entry yields everything retained, which the tab merges by id — so it cannot
+*miss* a message. Three sentences of the above were claims rather than tests when this was first closed,
+and they are asserted now (`RoomCursorTest`, 8 → 14): a marker predating an eviction is answered with
+exactly the retained set, a `304` — which carries no cursor, by design — cannot strand a tab that then
+offers the old validator with a grown room, and an unreadable marker is refused into a whole read
+rather than into an empty one.
+
+What that batch repeated as "only repeats one it already has" was the wrong half to look at. The patch
+never mentions what the phone dropped, so a long-open tab keeps showing bubbles no reader can fetch any
+more and its own list grows past the window forever. Measured in a browser at the cap (one tab, 300
+entries read then 2000 added): the phone held 2000, the tab held **2300**, and the entry the phone had
+retired was still on screen.
+*Fixed without giving the bytes back:* the answer now names its window (`X-Room-Window`), and the tab
+trims to it from the same end the phone trims from. That can drop only a retired entry, because the
+tab's list is a subset of the room's, so the two converge on a patch — the browser probe's last check
+compares the two id sets for exactly that. Nothing here forces a full read: honouring a marker past an
+eviction would need a second generation counter that the room's steady state above the cap would bump
+on every message, which is the 517 KB again (`the room tells a tab how much of it the phone keeps`,
+`a room past its cap retires entries the tab is still holding`, `the tab prunes to the window the
+phone sent`).
 
 ### R-13 [fixed] The event-stream cap silenced tabs instead of refusing one
 `maxEventStreams = 8` (`:557`) was enforced by evicting the oldest stream, so the ninth tab's arrival

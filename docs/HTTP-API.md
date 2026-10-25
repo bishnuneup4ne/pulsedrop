@@ -57,6 +57,7 @@ it already has must not be sent to it twice, and the bytes it does not have shou
 ```
 GET /api/messages?since=7:1834:c0ffee1122334455    (values illustrative)
     X-Room-Cursor: 7:1841:c0ffee1122334455
+    X-Room-Window: 2000
     X-Room-Delta: 1
     [{"id": … only the entries that moved … }]
 ```
@@ -66,10 +67,18 @@ and a digest of the caller's address with the phone's. `X-Room-Delta: 1` says th
 what the caller holds rather than the room — the only signal that lets a client merge instead of
 replace, since a two-entry array and a two-thousand-entry array are otherwise the same shape.
 
+`X-Room-Window` is how many room entries the phone keeps, and it exists because a patch cannot report
+a retirement: once an entry leaves the room at the cap, the marker the caller holds already counts it
+as seen, so nothing about it is ever sent again and a client would keep showing it indefinitely. A
+client that keeps a list of its own trims to this window from the front — the same end the phone trims
+from — which drops exactly the retired entries and can never drop a live one, because the client's
+list is a subset of the room's. A client that ignores the header still converges on a reload, a
+logout, or any change to which threads are open, all of which force a full answer.
+
 The server sends the whole room, without the delta flag, when it will not honour a marker: no marker
 offered, a marker minted before the phone changed which groups a browser may read, or a marker minted
 for another address or another host address. A refusal is a normal full answer, so a client that
-ignores both headers keeps working unchanged, and one that holds a stale marker costs itself one full
+ignores these headers keeps working unchanged, and one that holds a stale marker costs itself one full
 read rather than missing messages.
 
 The array's shape never changes, so a reader that does not use the cursor is unaffected. A marker is a
