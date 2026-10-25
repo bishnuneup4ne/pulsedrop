@@ -82,6 +82,8 @@ import com.pulsedrop.app.model.ChatAttachment
 import com.pulsedrop.app.ui.theme.PulseStageColors
 import java.io.File
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private fun openExternally(context: android.content.Context, file: File, mime: String, label: String) {
     val uri = runCatching {
@@ -455,18 +457,27 @@ private fun PdfStage(file: File, transform: StageTransform) {
         }
     }
 
-    val bitmap = remember(renderer, page) {
-        runCatching { renderer?.let { renderPdfPage(it, page) } }.getOrNull()
+    var bitmap by remember(file) { mutableStateOf<ImageBitmap?>(null) }
+    var renderedFor by remember(file) { mutableIntStateOf(-1) }
+    LaunchedEffect(renderer, page) {
+        val active = renderer ?: return@LaunchedEffect
+        // A page is rastered into a bitmap up to 2200 px wide. In `remember` that work runs during
+        // composition, which is the main thread, and a dense first page is a frame the interface
+        // cannot cancel or draw inside — the preview reads as a freeze rather than as loading.
+        bitmap = withContext(Dispatchers.IO) { runCatching { renderPdfPage(active, page) }.getOrNull() }
+        renderedFor = page
     }
 
-    if (renderer == null || failed || bitmap == null) {
+    // A page still being drawn shows the previous one, not an error: the file opened fine.
+    if (renderer == null || failed || (bitmap == null && renderedFor == page)) {
         PreviewMessage("This PDF could not be opened.")
         return
     }
+    val shown = bitmap ?: return
 
     ZoomableStage(transform) { modifier ->
         androidx.compose.foundation.Image(
-            bitmap = bitmap,
+            bitmap = shown,
             contentDescription = "PDF page ${page + 1}",
             contentScale = ContentScale.Fit,
             modifier = modifier
