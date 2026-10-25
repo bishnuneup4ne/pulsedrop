@@ -361,3 +361,4 @@ class RoomCursorTest {
         assertTrue("a tab that keeps more than the phone is what leaks the retired bubbles",
             page.contains("lastMsgs.splice(0, lastMsgs.length - roomWindow)"))
     }
+}
