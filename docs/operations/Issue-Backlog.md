@@ -446,7 +446,7 @@ privilege boundary; it matters if a proxy or cache is ever put in front of the p
 *Why the number skips:* `R-9` and `R-10` are already taken by the P2 table, which reuses the `R`
 prefix for refactor items. Nothing here was renamed.
 
-### K-1 [recommendation] Pairing threat-model test suite
+### K-1 [partly fixed] Pairing threat-model test suite
 P-256 ECDH + AES-GCM + KDF v1/v2 already have golden-vector tests.
 
 **Key ingest is now validated.** `Crypto.isP256PublicKey` parses the presented SPKI and compares its
@@ -456,10 +456,30 @@ entry points: `POST /api/pair/request`, accepting a request rebuilt from state, 
 refused as well, with a user-visible reason. Previously an impossible key or version was stored, so the
 first message after a confirmed pairing threw during ECDH or derivation. Proved by `PairKeyIngestTest`.
 
-Still missing: safety code derived from the exact transcript both sides authenticate, key-substitution →
-code-mismatch, deterministic KDF selection bound to the transcript, duplicate/stale/concurrent pair
-requests, identity loss and reinstall. **Compatibility rule:** never rename legacy aliases, preference
-keys, database names, or wire constants; never silently change KDF for an existing pairing.
+**The handshake now has threat-model coverage** in `PairingThreatModelTest`:
+* the code shown belongs to the key that asked, so a substituted key changes it (the two sides'
+  symmetry of the code itself is `CryptoTest`);
+* the acceptor chooses the derivation once and stores it; an older peer or an older local build gets
+  V1, and a paired device that asks again is re-answered with the stored choice and cannot re-key it;
+* a duplicate request id collapses to one prompt, the prompt list is capped at twelve, an answer for
+  another request id leaves the real request pending, and an answer after cancellation is ignored;
+* re-pairing under a new key keeps the old pairing and warns that the key changed rather than
+  silently replacing trust;
+* a phone with no readable identity queues nothing, declines the requester, and stores no pairing.
+
+Still open, and written down rather than papered over:
+* the 120-second prompt TTL is not driven by a test (it needs clock control); the cap and the
+  duplicate rule are.
+* the safety code covers the two identity keys, not the chosen KDF. An on-path attacker can strip
+  `kdf` from the answer, leaving the acceptor on V2 and the requester on V1. Both derivations are
+  strong, and the mismatch fails closed on the first message, so this is a denial of service rather
+  than a confidentiality downgrade. Binding the version into what the humans compare would make old
+  and new codes disagree, so it needs a protocol/UI version, not a quiet edit.
+* the human comparison is still the authentication step. Six digits is a usability trade, and no
+  test can prove the user looked.
+
+**Compatibility rule:** never rename legacy aliases, preference keys, database names, or wire
+constants; never silently change KDF for an existing pairing.
 
 ---
 
