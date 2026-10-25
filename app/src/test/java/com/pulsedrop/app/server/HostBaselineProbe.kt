@@ -225,6 +225,59 @@ class HostBaselineProbe {
     }
 
     /**
+     * The half the response encoding could not buy: a poll where something actually changed.
+     *
+     * gzip shrinks the bytes of a whole room and an `ETag` deletes the read when nothing moved, but
+     * neither touches the cost of the common case that is not idle — one new message in a room of two
+     * thousand. The route had to serialise all of it to know what to send. A cursor is the only thing
+     * here that measures that, and the two rows that matter are bytes and milliseconds for the same
+     * room state, read both ways.
+     */
+    @Test
+    fun cursorPollingOnTheWire() {
+        val auth = mapOf("x-pulse-auth" to token)
+        seedMessages(2000)
+
+        val full = rawMeasured("/api/messages", auth)
+        val fullPacked = rawMeasured("/api/messages", auth, "Accept-Encoding" to "gzip")
+        val held0 = requireNotNull(full.header("X-Room-Cursor")) {
+            "the room offered no cursor, status ${full.status}"
+        }
+        report("cursor", "room_messages", countMessages().toString())
+        report("cursor", "full_wire_bytes", full.transferred.toString())
+        report("cursor", "full_gzip_bytes", fullPacked.transferred.toString())
+
+        val fullTimes = LongArray(15)
+        repeat(15) { i -> fullTimes[i] = elapsed { rawMeasured("/api/messages", auth) } }
+        report("cursor", "full_poll_p50_ms", percentile(fullTimes, 0.50).toString())
+        report("cursor", "full_poll_p95_ms", percentile(fullTimes, 0.95).toString())
+
+        // One arrival at a time, each poll carrying the marker the last one handed back — the way a
+        // live tab actually reads the room.
+        var held = held0
+        val patchTimes = LongArray(15)
+        var firstWire = 0
+        var firstEntries = 0
+        repeat(15) { i ->
+            server.addMessage("arrived $i padding-padding-padding-padding-padding", "prober")
+            val answer = rawMeasured("/api/messages?since=$held", auth)
+            if (i == 0) {
+                firstWire = answer.transferred
+                firstEntries = Regex("\"id\":").findAll(answer.text).count()
+                report("cursor", "delta_is_patch", answer.header("X-Room-Delta").orEmpty())
+                report("cursor", "delta_gzip_bytes",
+                    rawMeasured("/api/messages?since=$held", auth, "Accept-Encoding" to "gzip").transferred.toString())
+            }
+            patchTimes[i] = elapsed { rawMeasured("/api/messages?since=$held", auth) }
+            held = requireNotNull(answer.header("X-Room-Cursor")) { "a patch arrived with no new marker" }
+        }
+        report("cursor", "delta_wire_bytes", firstWire.toString())
+        report("cursor", "delta_entries", firstEntries.toString())
+        report("cursor", "delta_poll_p50_ms", percentile(patchTimes, 0.50).toString())
+        report("cursor", "delta_poll_p95_ms", percentile(patchTimes, 0.95).toString())
+    }
+
+    /**
      * A wire read that waits for the flood guard instead of measuring it.
      *
      * The bucket is per address and every client in this probe is loopback, so a probe that has just

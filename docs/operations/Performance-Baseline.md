@@ -93,6 +93,30 @@ actually removes is 517 KB of transfer, the browser's parse of it, and the re-re
 none of which this host can time, because the browser is not on it. Handler time was never the
 bottleneck here (11 ms p95 in §1); the payload was.
 
+### What a poll costs once the tab can ask for only what moved
+
+The row above ends with the thing compression cannot fix: to fingerprint a room the phone must first
+build it. A cursor removes that, by asking for the room *since a marker* rather than as a whole.
+Measured over a real socket at the same 2,000-message history (`cursorPollingOnTheWire`):
+
+| Poll | Bytes on the wire | p50 / p95 |
+| --- | --- | --- |
+| whole room, gzipped | 63,239 B | 10 ms / 15 ms |
+| nothing changed (`304`) | 227 B | 9 ms / 13 ms |
+| **one message arrived, cursor offered** | **575 B** | **1 ms / 2 ms** |
+
+This is the first row in the document where the *latency* moves as much as the bytes: 15 ms p95 to
+2 ms, because the route serialises one message instead of two thousand, so there is no 517 KB to
+compress, no fingerprint to take and no parse waiting at the other end. The 575 B is the same
+compressed or not, and that is correct rather than a missing flag: it is under the 1 KiB floor below
+which compression costs more of the phone's CPU than the radio time it saves.
+
+The part that is not a number: a cursor is only sound if "what moved" includes the three things this
+room does that a tail-of-a-list cannot see — arrivals, entries retracted **in place**, and a thread
+the phone opened or closed while nobody was looking. The design and the tests for all three are in
+`RoomCursorTest`; the earlier draft of this document said a `?since=` would be wrong, and it was right
+that the naive version would have been.
+
 ---
 
 ## Confirmed bottlenecks, one per symptom

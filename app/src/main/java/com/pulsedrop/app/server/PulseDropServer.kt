@@ -505,9 +505,22 @@ class PulseDropServer(
     @Volatile
     var callEngine: com.pulsedrop.app.call.CallEngine? = null
 
-    /** Group chats the browser may join. Pair threads are end-to-end encrypted and never listed here. */
+    /**
+     * Group chats the browser may join. Pair threads are end-to-end encrypted and never listed here.
+     *
+     * Reassigning this changes what a room cursor means rather than what the room holds: a message
+     * nobody could see becomes visible, or a visible one is no longer, with no new message and no
+     * retraction. So a cursor minted under the old set is refused, and the tab is given the whole
+     * room again. Only the thread ids decide that, because `syncWebThreads()` reassigns this on every
+     * chat-screen tick and a cursor invalidated each time would never be honoured at all.
+     */
     @Volatile
     var webThreads: List<WebThread> = emptyList()
+        set(value) {
+            val visibilityChanged = field.map { it.id } != value.map { it.id }
+            field = value
+            if (visibilityChanged) synchronized(messages) { visibilityEpoch++ }
+        }
 
     @Volatile
     var webCall: WebCall? = null
@@ -745,6 +758,20 @@ class PulseDropServer(
 
     private val sharedFiles = mutableListOf<SharedFile>()
     private val messages = mutableListOf<ClipMessage>()
+    /**
+     * The room's revision counter, the revision each entry last changed at, and the generation of the
+     * visibility rules — all three read and written only while holding the `messages` lock, which is
+     * the lock every mutation of the room already takes.
+     *
+     * This exists because a cursor over this list cannot be built from what the list contains: ids are
+     * random UUIDs, so they order nothing; retention evicts from the front, so a position means a
+     * different message over time; and a retraction rewrites an entry where it stands, so a reader
+     * that only looks at the tail never learns its message lost its text. A revision bumped on every
+     * one of those three changes is the only thing that makes "send me what moved" answerable.
+     */
+    private var roomRev = 0L
+    private val entryRevs = HashMap<String, Long>()
+    private var visibilityEpoch = 0L
     /**
      * Presence keyed by the address that wrote it, not by the name it claimed. A name is a display
      * label; the address is the thing the server can actually check. Keying by name let any host
@@ -1145,8 +1172,9 @@ class PulseDropServer(
         )
         synchronized(messages) {
             messages.add(msg)
-            // Chat is restart-scoped but a long-lived server must not grow without bound.
-            while (messages.size > SERVER_CHAT_RETENTION) messages.removeAt(0)
+            // Chat is restart-scoped, but a long-lived server must not grow without bound; the
+            // eviction that cap causes is stampRoomLocked's, along with the revision it retires.
+            stampRoomLocked(msg)
         }
         listener.onNewMessage(msg)
         pushWebEvent("message", exceptIp = clientIp) {
@@ -1154,6 +1182,53 @@ class PulseDropServer(
         }
         if (fromWeb && msg.threadId == null) listener.onRoomMessageFromWeb(msg)
         return msg
+    }
+
+    /**
+     * Say that one entry of the room changed, and forget the entries retention pushed out.
+     *
+     * Call with the `messages` lock held. Eviction happens here rather than at each add site because
+     * the two are the same rule, and a stamped id whose message is gone would keep a delta promising
+     * an entry that no longer exists.
+     */
+    private fun stampRoomLocked(msg: ClipMessage) {
+        roomRev++
+        entryRevs[msg.id] = roomRev
+        while (messages.size > SERVER_CHAT_RETENTION) {
+            val evicted = messages.removeAt(0)
+            entryRevs.remove(evicted.id)
+        }
+    }
+
+    /**
+     * A tab's place in the room's history: the visibility generation it was read under, the revision
+     * it last saw, and the address scope it was minted for. Opaque to the client, which only echoes
+     * it back.
+     */
+    private class RoomCursor(val epoch: Long, val rev: Long, val scope: String)
+
+    /**
+     * The identity a cursor is bound to: this caller, on this phone.
+     *
+     * Carries no secret and is not one — a digest of two addresses, so a cursor cannot be replayed by
+     * another tab and cannot outlive the phone's own address changing. Both matter because what a
+     * delta omits is decided by exactly those addresses: `ip:<addr>` threads, and the host's own room
+     * that a tab reads as `ip:<selfIp>`. A cursor whose scope no longer matches is refused, and the
+     * tab gets the whole room again.
+     */
+    private fun roomScope(clientIp: String, hostIp: String): String = runCatching {
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest("$clientIp|$hostIp".toByteArray())
+            .take(8).joinToString("") { "%02x".format(it) }
+    }.getOrNull() ?: ""
+
+    /** A cursor is honoured only if this server minted it; anything else means read the room again. */
+    private fun parseRoomCursor(offered: String?, scope: String): RoomCursor? {
+        val parts = offered?.split(":") ?: return null
+        if (parts.size != 3 || parts[2] != scope) return null
+        val epoch = parts[0].toLongOrNull() ?: return null
+        val rev = parts[1].toLongOrNull() ?: return null
+        return RoomCursor(epoch, rev, scope)
     }
 
     /** The room message with this id, as a browser would have seen it. */
@@ -1168,6 +1243,9 @@ class PulseDropServer(
             val index = messages.indexOfLast { it.id == id }
             if (index < 0) null else {
                 messages[index] = messages[index].copy(deleted = true, text = "")
+                // The tombstone is a change to an entry the reader already holds, which is exactly
+                // what a revision-only-at-the-tail cursor would miss.
+                stampRoomLocked(messages[index])
                 messages[index]
             }
         }
@@ -1190,7 +1268,7 @@ class PulseDropServer(
         val added = synchronized(messages) {
             if (messages.any { it.id == msg.id }) false else {
                 messages.add(msg)
-                while (messages.size > SERVER_CHAT_RETENTION) messages.removeAt(0)
+                stampRoomLocked(msg)
                 true
             }
         }
@@ -2211,7 +2289,12 @@ class PulseDropServer(
                 // The phone hosting this server is the one every tab dials; a browser reads and
                 // writes that conversation under the host's own address, "ip:<selfIp>".
                 val hostIp = NetworkUtils.getLocalIpAddress()
-                synchronized(messages) {
+                val scope = roomScope(clientIp, hostIp)
+                val offered = parseRoomCursor(session.parms["since"], scope)
+                var mintedCursor = ""
+                val isDelta = synchronized(messages) {
+                    val honourable = offered != null && offered.epoch == visibilityEpoch
+                    val sinceRev = offered?.rev ?: Long.MIN_VALUE
                     for (m in messages) {
                         // A browser sees the public room, its own address book, the groups
                         // the phone opened to browsers, and anything it sent itself - so a
@@ -2220,6 +2303,10 @@ class PulseDropServer(
                         // which stays on the phones. Same rule `/chatfile/{id}` applies to
                         // the bytes a message points at.
                         if (!threadIsVisibleTo(m.threadId, m.clientIp, clientIp, hostIp)) continue
+                        // With a cursor, only what moved since is worth serialising. An entry that was
+                        // retracted in place moved without the list growing, which is why the revision
+                        // is stamped there too and not only on arrival.
+                        if (honourable && (entryRevs[m.id] ?: 0L) <= sinceRev) continue
                         arr.put(JSONObject().apply {
                             put("id", m.id)
                             put("text", m.text)
@@ -2241,8 +2328,15 @@ class PulseDropServer(
                             }
                         })
                     }
+                    mintedCursor = "$visibilityEpoch:$roomRev:$scope"
+                    honourable
                 }
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", arr.toString())
+                // The cursor travels in a header, so the array keeps the shape every reader already
+                // parses: a tab that never sent `since` sees exactly what it saw before, and a tab
+                // that did is told whether this array is the room or a patch on it.
+                res.addHeader("X-Room-Cursor", mintedCursor)
+                if (isDelta) res.addHeader("X-Room-Delta", "1")
                 return res
             } else if (method == Method.POST) {
                 return try {

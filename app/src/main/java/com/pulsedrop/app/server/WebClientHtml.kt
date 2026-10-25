@@ -1578,6 +1578,9 @@ object WebClientHtml {
     var messagesWanted = false;
     // The fingerprint of the last body this tab fully read, so an unchanged room costs nothing.
     var messagesEtag = '';
+    // The phone's place-marker for this tab's view of the room. Held here rather than left to a
+    // cookie or cache: the room's JSON is `no-store` on purpose, so nothing is stored to carry it.
+    var roomCursor = '';
     /* Messages this tab was not allowed to retract, plus a revision that says "redraw the bubbles". */
     var localHidden = {};
     var chatRev = 0;
@@ -1727,6 +1730,8 @@ object WebClientHtml {
       authToken = '';
       // The next login answers a different room than the one this validator described.
       messagesEtag = '';
+      // And a different room than the cursor points into, so the first read after login is whole.
+      roomCursor = '';
       // A dead session cannot mint a ticket, so stop reconnecting until a new login succeeds.
       eventsStopped = true;
       try { if (eventsStream) eventsStream.close(); } catch (e) {}
@@ -2715,7 +2720,11 @@ object WebClientHtml {
         // on purpose, so nothing is stored to revalidate, but the copy this tab is holding is
         // exactly the body that fingerprint was taken over.
         if (messagesEtag) headers['if-none-match'] = messagesEtag;
-        var res = await fetch('/api/messages', { headers: headers });
+        // With a cursor the phone sends only what moved, so one new message costs one message and
+        // not the room's whole life. Without one — first read, or a cursor the phone refused — this
+        // is exactly the whole-history read it has always been.
+        var url = roomCursor ? '/api/messages?since=' + encodeURIComponent(roomCursor) : '/api/messages';
+        var res = await fetch(url, { headers: headers });
         if (res.status === 401 && REQUIRES_PIN) { lockOut(); return; }
         // 304 is not `ok` to fetch, and treating it as a failure would drop the tab offline every
         // time the phone agreed nothing had changed.
@@ -2724,8 +2733,9 @@ object WebClientHtml {
         else {
           setConnected(true);
           messagesEtag = res.headers.get('etag') || '';
+          roomCursor = res.headers.get('x-room-cursor') || '';
           var msgs = await res.json();
-          processMessages(msgs);
+          processMessages(msgs, res.headers.get('x-room-delta') === '1');
         }
       } catch (e) { setConnected(false); }
       finally {
@@ -2735,8 +2745,29 @@ object WebClientHtml {
       fetchTyping();
     }
 
-    function processMessages(msgs) {
-      lastMsgs = msgs;
+    /**
+     * Fold one patch into the room this tab is holding.
+     *
+     * A patch is only ever "these entries moved since the marker you sent", so the tab is the other
+     * half of the list. A retraction replaces the message where it stands, an arrival is appended,
+     * and nothing is re-sorted: the phone sends oldest-first, so appending keeps the order the
+     * bubbles are already in.
+     */
+    function mergeRoomPatch(msgs) {
+      if (!msgs.length) return;
+      var at = {};
+      lastMsgs.forEach(function (m, i) { at[m.id] = i; });
+      msgs.forEach(function (m) {
+        if (at[m.id] !== undefined) { lastMsgs[at[m.id]] = m; }
+        else { at[m.id] = lastMsgs.length; lastMsgs.push(m); }
+      });
+    }
+
+    function processMessages(msgs, isDelta) {
+      // A patch joins what this tab holds; a whole room replaces it. Reading a patch as a replacement
+      // would leave the tab showing only the messages that moved, which is the bug this route's
+      // own history taught: the answer's shape is not enough, the reader has to know which it got.
+      if (isDelta) mergeRoomPatch(msgs); else lastMsgs = msgs;
 
       /* Discover threads + per-thread unread bookkeeping. */
       msgs.forEach(function (m) {

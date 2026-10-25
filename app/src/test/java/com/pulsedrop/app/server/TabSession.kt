@@ -81,7 +81,9 @@ class TabAnswer(response: Response) {
         "x-content-type-options" to response.getHeader("X-Content-Type-Options"),
         "cache-control" to response.getHeader("Cache-Control"),
         "etag" to response.getHeader("ETag"),
-        "vary" to response.getHeader("Vary")
+        "vary" to response.getHeader("Vary"),
+        "x-room-cursor" to response.getHeader("X-Room-Cursor"),
+        "x-room-delta" to response.getHeader("X-Room-Delta")
     )
     val mimeType: String? = response.mimeType
 }
