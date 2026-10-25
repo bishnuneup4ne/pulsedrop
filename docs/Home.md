@@ -68,7 +68,7 @@ The phone hosting the room can be any one phone — nobody else has to start a s
 
 ## Project facts
 
-- Package: `com.pulsedrop.app` · this tree: versionName `2.1.1`, versionCode `14`
+- Package: `com.pulsedrop.app` · this tree: versionName `2.2.0`, versionCode `15`
 - minSdk 24 / targetSdk 36 · Kotlin + Jetpack Compose · NanoHTTPD embedded server
 - License: PolyForm Noncommercial 1.0.0 (see `LICENSE` in the repository)
 - Source: https://github.com/bishnuneup4ne/pulsedrop
