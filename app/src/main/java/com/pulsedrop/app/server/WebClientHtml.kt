@@ -1573,6 +1573,9 @@ object WebClientHtml {
 
     var allFiles = [];
     var lastMsgs = [];
+    /* The whole-history read, serialised: one in flight, and one more queued if anything asked during it. */
+    var messagesInFlight = false;
+    var messagesWanted = false;
     /* Messages this tab was not allowed to retract, plus a revision that says "redraw the bubbles". */
     var localHidden = {};
     var chatRev = 0;
@@ -2695,6 +2698,13 @@ object WebClientHtml {
     }
 
     async function fetchMessages() {
+      // One read at a time. Every message that arrives pushes a doorbell on the event stream, and a
+      // burst of ten used to start ten concurrent whole-history GETs in this tab — each transferred,
+      // parsed and re-rendered, while the 2 s poll kept firing behind them. The trailing re-run is
+      // what keeps the guard from becoming a missed update: whatever arrived during the read is
+      // fetched again, so the last word is never the one that got dropped.
+      if (messagesInFlight) { messagesWanted = true; return; }
+      messagesInFlight = true;
       try {
         var res = await fetch('/api/messages', { headers: authHeaders() });
         if (res.status === 401 && REQUIRES_PIN) { lockOut(); return; }
@@ -2703,6 +2713,10 @@ object WebClientHtml {
         var msgs = await res.json();
         processMessages(msgs);
       } catch (e) { setConnected(false); }
+      finally {
+        messagesInFlight = false;
+        if (messagesWanted && !(REQUIRES_PIN && !authToken)) { messagesWanted = false; fetchMessages(); }
+      }
       fetchTyping();
     }
 
@@ -3993,17 +4007,20 @@ object WebClientHtml {
        URL; the poll covers the gap in between. */
     var eventsStopped = false;
     var eventsStream = null;
+    var eventRetryTimer = null;
+    /* Reconnect spacing, in one place rather than in the closure that opened the dead connection.
+       A host that just restarted, a tab that woke under an expired Wi-Fi lease and a ticket that
+       lapsed mid-stream all land here: a fixed 8 s is 8 s of nothing when the phone is already
+       answering, and thirty tabs that retry on the same beat arrive as one stampede. */
+    var eventBackoffMs = 1000;
     function eventTicket() {
-      return fetch('/api/ticket', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ scope: 'events' })
-      }).then(function (res) { return res.ok ? res.json() : null; })
-        .then(function (out) { return out && out.ticket ? out.ticket : null; })
-        .catch(function () { return null; });
+      // The same cached ticket every other ticketed URL uses; minting a second one per connect
+      // spent a POST /api/ticket on every reconnect for a token the cache already held.
+      return ticketFor('events');
     }
     function connectEvents() {
       if (!window.EventSource || eventsStopped) return;
+      if (eventRetryTimer) { clearTimeout(eventRetryTimer); eventRetryTimer = null; }
       try { if (eventsStream) eventsStream.close(); } catch (e) {}
       eventsStream = null;
       var start = function (url) {
@@ -4011,10 +4028,13 @@ object WebClientHtml {
         var es;
         try { es = new EventSource(url); } catch (e) { return; }
         eventsStream = es;
-        var retry = null;
         var on = function (name, fn) { try { es.addEventListener(name, fn); } catch (e) {} };
+        var openedAt = 0;
+        // Recorded, not trusted as a success: the phone caps how many streams it will hold, so a
+        // connection can open and be cut a moment later. Only one that stayed up earns a reset.
+        es.onopen = function () { openedAt = Date.now(); };
         on('call', function () { pollCall(); });
-        on('callstate', function () { if (call.cid) pollCall(); else pollCall(); });
+        on('callstate', function () { pollCall(); });
         on('message', function () { try { fetchMessages(); } catch (e) {} });
         on('deleted', function () {
           // The store keeps a tombstone rather than dropping the row, so re-read rather than hide.
@@ -4028,11 +4048,14 @@ object WebClientHtml {
         });
         on('pair', function () { try { fetchThreads(); fetchInfo(); } catch (e) {} });
         es.onerror = function () {
-          // Covers both a lost connection and a ticket that has expired under it. One timer per
-          // connection, or EventSource's repeated error events would multiply the reconnects.
+          // Covers both a lost connection and a ticket that has expired under it. One timer at a
+          // time, or EventSource's repeated error events would multiply the reconnects.
           try { es.close(); } catch (e) {}
-          if (retry) return;
-          retry = setTimeout(function () { retry = null; connectEvents(); }, 8000);
+          if (eventRetryTimer) return;
+          if (openedAt && Date.now() - openedAt > 20000) eventBackoffMs = 1000;
+          var wait = eventBackoffMs + Math.floor(Math.random() * 250);
+          eventBackoffMs = Math.min(eventBackoffMs * 2, 20000);
+          eventRetryTimer = setTimeout(function () { eventRetryTimer = null; connectEvents(); }, wait);
         };
       };
       if (!authToken) { start('/api/events'); return; }
@@ -4044,6 +4067,7 @@ object WebClientHtml {
     // The tab is going away; stop the timer too, or a pending reconnect outlives the page.
     window.addEventListener('beforeunload', function () {
       eventsStopped = true;
+      if (eventRetryTimer) { clearTimeout(eventRetryTimer); eventRetryTimer = null; }
       try { if (eventsStream) eventsStream.close(); } catch (e) {}
     });
 
