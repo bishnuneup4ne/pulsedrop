@@ -1729,9 +1729,10 @@ class PulseDropServer(
         }
         if (uri == "/api/webcall/up" && method == Method.POST) {
             return try {
-                // A ~10 Hz batch of base64 Opus frames, so a legit body is tens of kilobytes.
-                // Checked before parseBody: NanoHTTPD reads the whole declared length into a
-                // String, and this route is reachable by anyone who knows the PIN.
+                // One batch of base64 media frames. Audio is a few kilobytes; a shared screen is
+                // the big case, which is what sets the ceiling. Checked before parseBody:
+                // NanoHTTPD reads the whole declared length into a String, and this route is
+                // reachable by anyone who holds the room credential.
                 bodyTooLarge(session, WEB_CALL_BODY_LIMIT)?.let { return it }
                 val map = HashMap<String, String>()
                 session.parseBody(map)
@@ -2774,8 +2775,16 @@ class PulseDropServer(
         /** Ceiling for one typing-presence ping: a sender name and a boolean. */
         internal const val TYPING_BODY_LIMIT = 4L * 1024
 
-        /** Ceiling for one ~10 Hz batch of base64 media frames on `/api/webcall/up`. */
-        internal const val WEB_CALL_BODY_LIMIT = 256L * 1024
+        /**
+         * Ceiling for one ~10 Hz batch of base64 media frames on `/api/webcall/up`.
+         *
+         * Sized against what the shipped tab produces, not against audio: a shared screen is sent
+         * 1600 px wide at quality 0.75 and base64 costs a third more than the JPEG, so 256 KiB
+         * refused ordinary dense desktop frames — the transfer just stopped, silently and inside
+         * the call. The decoded limits that make a larger body safe (per-frame by type, per-batch
+         * frame count, JPEG pixels) live in `MediaLimits` and are applied before anything decodes.
+         */
+        internal const val WEB_CALL_BODY_LIMIT = 2L * 1024 * 1024
 
         /**
          * Ceiling for the pair/call/relay dispatcher, and it has to be above [JSON_BODY_LIMIT] for

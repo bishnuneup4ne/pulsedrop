@@ -117,7 +117,9 @@ poll simply re-fetches), and a device that never returns is forgotten after a da
 
 A paired browser upload carries an AES-GCM blob over
 `pulsedrop-upload-v1|pairId|contentLength|issuedAt|nonce`. The server checks the key
-holder, the multipart body length, a 120 s TTL, and rejects replayed nonces.
+holder, the multipart body length, a 120 s TTL, and rejects replayed nonces. This is the only
+route the pairing secret opens: it is not a room session and cannot read files, messages or
+threads, so pairing is a send capability in one direction rather than access to the host.
 
 ## What is encrypted, and where
 

@@ -241,22 +241,26 @@ explicit mode and testing legacy clients.
 *Work:* honest status labels ("secure listener ready" ≠ "browser trusts this certificate"), one-tap
 stop/pause, optional strict mode that disables unpaired endpoints.
 
-### S-8 [confirmed] A paired sender can upload but cannot read its own traffic
+### S-8 [decided: upload-only] A paired sender can upload but cannot read its own traffic
 
-`pairedSenderIsAuthorized` is consulted on `/upload` only (`:1009`), so a paired phone whose host has
-since rotated the PIN can still push files but gets 401 on `/api/messages`, `/api/threads` and
-`/api/files` — it cannot confirm what it sent was delivered, and the browser tab cannot retract it.
-Documented here because it is a *product* decision as much as a security one: either the pairing
-secret is a credential for the read routes too, or the pairing UI has to say that pairing grants
-upload-only.
-*Work:* decide the intent, then make `isAuthorized` agree with it in one place, and label the pairing
-screen to match.
+`pairedSenderIsAuthorized` is consulted on `/upload` only, so a paired phone whose host has since
+rotated the PIN can still push files but gets 401 on `/api/messages`, `/api/threads` and
+`/api/files` — it cannot confirm what it sent was delivered, and a tab cannot retract it.
+Documented here because it is a *product* decision as much as a security one.
+*Decision:* the read routes stay on the room credential. A pairing key is long-lived, survives a PIN
+change and has no per-session revoke story, so accepting it for reads would let a device that was
+paired once read everything forever. Upload-only is the narrower capability, and the 401 on a read is
+the honest answer rather than a bug.
+*Labelled:* the **Devices** screen's trust panel and the Help answer now say that a paired phone can
+send without a PIN but does not read files, message history or the browser room;
+`docs/Pairing-and-Devices.md` and `docs/Security-Model.md` say the same. `isAuthorized` already
+expressed the decision in one place; what was missing was the UI saying it out loud.
 
 ---
 
 ## P1 — next release cycle
 
-### R-1 [partly fixed] `/api/webcall/up` has no bound on the body or decoded frames
+### R-1 [fixed] `/api/webcall/up` has no bound on the body or decoded frames
 `:1344-1359`: base64 batches are decoded and handed to the engine with no size cap; `parseBody` has
 already buffered the request. NanoHTTPD 2.3.1 has **no** ceiling of its own — it copies
 `Content-Length` bytes into a Java String for a JSON post, or into a file in `cacheDir` for a
@@ -287,11 +291,22 @@ relay's own budget with a 413 the sender cannot act on, instead of the relay's o
 it can. The dispatcher now has `RELAY_BODY_LIMIT` = four envelopes. The comment above that guard
 reasoned from an SDP offer — true of `/api/call/*`, and the reason 64 KiB looked generous — without
 noticing `/api/relay/*` shares the line.
-*Still open:* the per-frame and per-batch decoded-size caps and the bounded egress queue — a client
-inside the 256 KiB ceiling can still send many batches, and the frames are decoded without a bound on
-what one batch may expand to. **Frequency is now bounded** by a per-address token bucket in `serve()`
-(120 burst, 30/s) and a tighter one on presence writes; what remains open is decoded-size expansion,
-not how often a caller may ask.
+*Fixed in `security/web-media-limits`:* the decoded side now has its own caps, in `MediaLimits`.
+The web leg's `BatchParser` is constructed with a 1 MiB frame cap, so a declared 4 MiB frame is
+dropped instead of accumulated 190 KB at a time across posts; a batch above 64 frames is discarded
+whole (the shipped tab flushes three, or 24 after shedding a backlog); and per type, audio and control
+frames are held to 64 KiB while video may use the full 1 MiB. A JPEG is refused on its declared
+dimensions — 4 MPix — before `BitmapFactory` allocates, because a small file can name an enormous
+canvas; screen capture tops out at a 1920 px edge and 1080p camera at 2.1 MPix, so real media passes.
+The egress queue was already bounded (`LinkedBlockingQueue(96)` with the oldest frame dropped).
+*Also fixed here:* the 256 KiB body ceiling was too small for the client it guards. The tab sends a
+shared screen 1600 px wide at quality 0.75 and base64 costs a third more, so ordinary dense desktop
+frames were refused and screen share simply stopped mid-call. The ceiling is now 2 MiB, with the
+decoded caps above doing the work the byte count cannot.
+*Tests:* `FrameCodecTest` — a parser with a lowered cap drops an over-cap declaration, does not wait
+for its payload, and accepts a frame exactly at the cap. `MediaLimitsTest` — per-type boundaries and
+the pixel cap, including the largest square frame this app can capture. `ObjectScopeTest` still pins
+the pre-read 413.
 *One ceiling worth a second look, not changed without the owner:* `POST /api/messages` at 64 KiB is
 the smallest JSON ceiling on the app's most text-shaped route. The composer puts no `maxlength` on
 the message box and nothing clips `text` server-side, so pasting a log larger than ~60 K characters
@@ -421,10 +436,16 @@ separately from calling.
 phone does not hold is refused and never raises `incomingCall`. `CallInviteTest` pins that refusal and
 the control that a real pairing still rings.
 
-### R-8 [confirmed, partially fixed] Route-shape leakage via OPTIONS and 401/404 asymmetry
-`OPTIONS` returns 200 for any path with wildcard CORS (`:1074`), and `GET /api/auth` reaches the global
-check and 401s instead of 404ing — both reveal which routes exist before any credential is offered.
-Low severity on a LAN; worth folding into S-3 rather than a separate change.
+### R-8 [fixed] Route-shape leakage via OPTIONS and 401/404 asymmetry
+`OPTIONS` used to return 200 for any path with wildcard CORS, and `GET /api/auth` reached a global
+check whose position in the dispatch chain decided the answer — so an existing path and a missing one
+could be told apart before any credential was offered.
+*Closed by S-3, and now pinned:* the policy table answers `SESSION` for both a method it does not name
+and a path it does not serve, so both are 401 without a credential and both are 404 with one. `OPTIONS`
+returns the same empty 200 for every path and consults no table, so its uniformity names nothing.
+`ServerSessionAuthTest` asserts both halves against a real listener, including the authenticated 404
+for `GET /api/auth` (a route that exists, but only as POST).
+Low severity throughout; there was never a live boundary here, only a probe.
 
 ### R-11 [confirmed, fixed] Bytes past a short `Content-Length` are parsed as the next request
 Discovered while bounding the upload ceiling, and deliberately not treated as one: `parseBody` reads
@@ -505,7 +526,7 @@ constants; never silently change KDF for an existing pairing.
 | R-9 | `PulseDropServer.kt` is **2 262 lines**; `WebClientHtml.kt` is **4 752**. Split routing/security/files per the PRD §5 plan *after* tests pin current behaviour. | server |
 | R-10 | `CallEngine.kt` is **2 346 lines**. Split only after protocol tests exist; do not change frame numbers or wire formats without versioning. | call |
 | D-1 | Local data at rest: chat history plaintext in Room, received files unencrypted (documented). Design key lifecycle, backup, export and recovery **before** shipping encryption. | data |
-| C-1 | Docs/version drift: README showed v1.4.0/v1.3.0/v1.1.2 VirusTotal rows and the pre-1.7 `PulseDrop-<version>.apk` naming, `docs/Installation.md` called 2.0.1 the current release, `CONTRIBUTING.md` said Gradle 9.3.1 / `compileSdk` 36, and `docs/Home.md` called the unpublished 2.1.1 draft a release. **Docs fixed** on `docs/version-references`, verified by hashing the published 2.0.2 asset: the newest published release is 2.0.2 and the docs say so, while the version a checkout builds is stated separately from what is published. `docs/Protocol-V2.md` no longer names 2.0.1 as what `/api/info` reports, and the deployment inventory no longer describes the pre-1.7 asset naming. Still open: a stale-version CI check, which has to read `versionName` and the README together — a code/CI change, not a docs edit. | docs |
+| C-1 | Docs/version drift: README showed v1.4.0/v1.3.0/v1.1.2 VirusTotal rows and the pre-1.7 `PulseDrop-<version>.apk` naming, `docs/Installation.md` called 2.0.1 the current release, `CONTRIBUTING.md` said Gradle 9.3.1 / `compileSdk` 36, and `docs/Home.md` called the unpublished 2.1.1 draft a release. **Docs fixed** on `docs/version-references`, verified by hashing the published asset: what a checkout builds is stated separately from what is published. `docs/Protocol-V2.md` no longer names 2.0.1 as what `/api/info` reports, and the deployment inventory no longer describes the pre-1.7 asset naming. **Closed:** `dev/check-version-refs.sh` runs in CI and cross-checks `versionName`/`versionCode`, `compileSdk`, the wrapper's Gradle version and the reference SHA-256 against the docs, then asks GitHub for the newest published release (`--online`). It proved itself immediately: v2.1.1 was published while these docs named 2.0.2, and the check failed until they named 2.1.1. | docs |
 
 ## P3 — later
 
@@ -527,7 +548,7 @@ Found while checking whether the security automation added to `main` on 2026-10-
 | X-3 | CodeQL cannot analyse the browser client. It is JavaScript inside a Kotlin string literal (`WebClientHtml.kt`), and extractors are chosen by file extension — so the app's most exposed input-handling code gets Kotlin queries only. The `javascript-typescript` matrix entry sees `site/` and `dev/`. Fixing this properly means shipping the client as an asset file, which changes packaging: design it, do not slip it into a security PR. | [confirmed] — blind spot is documented in the workflow header meanwhile |
 | X-4 | CodeQL alert #1, CWE-927 (implicit/mutable `PendingIntent`) at `diag/CrashReporter.kt`. The mutable half was already false (`FLAG_IMMUTABLE`); the real half was that the intent was *implicit* (`ACTION_VIEW` + a `github.com` URL), so it resolved to whichever app claimed that host, with the crash markdown — device model, Android version, stack trace — in the query string and in browser history. **Fixed:** the notification now targets `CrashReportActivity` explicitly (and `exported=false`); it carries only the report's file name, the screen reads the report from private storage, shows it, copies it on request and opens the *empty* new-issue page. No report text enters an intent or a URL. Proved by `CrashReportIntentTest`. | [fixed] P2 |
 | X-5 | Dependabot *security* updates (the ones that patch a known-vulnerable dependency) are a repository setting under Code security, not something this file can turn on. Needs someone with administration. | [recommendation] owner action |
-| X-6 | `actions/setup-java@v4`'s current tip commit is literally "Deprecate setup-java v4", and checkout/upload-artifact/setup-android/setup-gradle are one to three majors behind. Deliberately **not** bumped here: pinning preserves behaviour exactly, a major bump does not, and it can only be judged on a real runner. | [recommendation] separate PR |
+| X-6 | `actions/setup-java@v4`'s current tip commit was literally "Deprecate setup-java v4", and checkout/upload-artifact/setup-android/setup-gradle were one to three majors behind. | **Fixed** by Dependabot on `main`: checkout `v7.0.1`, setup-java `v6.1.0`, setup-android `v4.0.4`, setup-gradle `v6.4.0`, upload-artifact `v7.0.2`, CodeQL `v4` — each a full-SHA pin and each the current release when checked. Nothing left to bump by hand. |
 | X-7 | `gradle-wrapper.properties` named a distribution URL without `distributionSha256Sum`, so the wrapper would execute whatever the CDN returned for that URL. The 9.6.0 bump made this a fresh URL nobody had vetted; the checksum is now pinned (verified against a fresh download). | **Fixed** on `ci/wrapper-checksum` |
 | X-8 | `androidx.navigation:navigation-compose` 2.10.2 cannot be adopted alone: it forces Compose UI 1.11.2 over the BOM's 1.7.2 and requires `compileSdk 37`, so the build is either half-upgraded or does not configure. Verified on a scratch tree that a coherent stack (BOM `2026.06.01`, lifecycle 2.11.0, `compileSdk 37.2`) makes all 363 tests pass with two test adaptations (one asserts the first child of a status row, one clicks below the fold). Reverted on `main` instead, because a Material3 1.4 upgrade changes rendering and belongs on a device, not in a CI repair. | [recommendation] coordinated upgrade with on-device review |
 

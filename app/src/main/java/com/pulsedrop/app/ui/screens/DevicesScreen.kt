@@ -472,7 +472,9 @@ fun DevicesScreen(
                         title = "No trusted devices yet",
                         message = "Pairing gives you end-to-end encrypted chat and file transfers " +
                             "with that device, and lets you call it. You confirm the safety code on " +
-                            "both screens before anything is trusted.",
+                            "both screens before anything is trusted. A paired phone can send to " +
+                            "you without a PIN; pairing is not a key to your side — it does not " +
+                            "read your files, message history or browser room.",
                         actionLabel = "See nearby devices",
                         onAction = { filter = DeviceFilter.NEARBY }
                     )

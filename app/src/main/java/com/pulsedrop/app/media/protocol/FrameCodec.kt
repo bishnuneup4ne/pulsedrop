@@ -98,8 +98,12 @@ object FrameCodec {
     /**
      * Reassembles frames out of arbitrary byte batches, holding a trailing partial frame
      * until the next batch completes it. Same contract CallEngine's web uplink always had.
+     *
+     * [maxPayload] lowers [MAX_PAYLOAD] for a caller whose input is not a paired phone's encoder.
+     * An over-cap declaration drops the batch and its buffered bytes rather than waiting for a
+     * frame that will never be accepted, so a 4 MiB header cannot be filled 190 KB at a time.
      */
-    class BatchParser {
+    class BatchParser(private val maxPayload: Int = MAX_PAYLOAD) {
         private val pending = ByteArrayOutputStream(64 * 1024)
 
         @Synchronized
@@ -114,7 +118,7 @@ object FrameCodec {
                     ((buf[i + 2].toInt() and 0xFF) shl 16) or
                     ((buf[i + 3].toInt() and 0xFF) shl 8) or
                     (buf[i + 4].toInt() and 0xFF)
-                if (len <= 0 || len > MAX_PAYLOAD) { i = buf.size; break }
+                if (len <= 0 || len > maxPayload) { i = buf.size; break }
                 if (i + HEADER_SIZE + len > buf.size) break
                 frames.add(Frame(type, buf.copyOfRange(i + HEADER_SIZE, i + HEADER_SIZE + len)))
                 i += HEADER_SIZE + len

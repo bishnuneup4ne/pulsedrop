@@ -67,7 +67,9 @@ internal fun helpFaqs(receiveDir: String): List<HelpFaq> = listOf(
         question = "How do I pair with another phone?",
         answer = "Open Devices on both phones, on the same network, and send a pairing " +
             "request. Both screens then show the same six-digit code; it matches only if the " +
-            "keys match, which is why confirming it on both sides is the real check."
+            "keys match, which is why confirming it on both sides is the real check. Pairing " +
+            "lets that phone send to you without a PIN; it does not let it read your files, " +
+            "message history or browser room."
     ),
     HelpFaq(
         id = "unreachable",

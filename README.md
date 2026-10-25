@@ -91,9 +91,9 @@ https://www.virustotal.com/gui/file/<sha256>
 
 Reports for recent published releases:
 
+- **v2.1.1** — <https://www.virustotal.com/gui/file/e7065d4c79e375064e1d0c0801fc4f8febf72c87aa10743162513b6d3dbaa0fe>
 - **v2.0.2** — <https://www.virustotal.com/gui/file/876fd6d34f71dc2ff5fbfb623be21c782ac90d585e56c10a0eadc0a76d4f45aa>
 - **v2.0.1** — <https://www.virustotal.com/gui/file/9eaea8564572656b45da061decf3b43d08d5c11c4dfc060a172ac42ffaf8441e>
-- **v2.0.0** — <https://www.virustotal.com/gui/file/0389647c84dec72e8e06bac2cf03e93f940932ea7d4a010e98245046eed684c2>
 
 `.github/workflows/virustotal-scan.yml` submits each published release to VirusTotal
 automatically and posts the permalink as an issue — set the `VT_API_KEY` repository secret
