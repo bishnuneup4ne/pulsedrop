@@ -529,6 +529,68 @@ constants; never silently change KDF for an existing pairing.
 
 ---
 
+## P1 — performance (Stage 1 baseline)
+
+Numbering continues the `R-` family. These are ranked, annotated and evidenced in
+[Performance-Baseline.md](Performance-Baseline.md); the short version, including what could *not* be
+measured on the machine that produced the numbers, is there rather than repeated here.
+
+### R-12 [partly fixed] Every message read is the whole history
+`GET /api/messages` (`PulseDropServer.kt:2094-2131`) serialises every visible message under
+`synchronized(messages)` with no cursor, so the cost of an idle tab grows with everything the room
+has ever said: measured 257 B at one message, 51,491 B at 200, **516,891 B at the 2000 retention
+cap** — re-read on the client's 2 s tick and on every doorbell.
+*Fixed:* the client no longer starts a second, third and fourth concurrent copy of that read when a
+doorbell lands while one is in flight (it serialises and re-runs once at the end), asserted by
+`WebClientRequestDisciplineTest`.
+*Still open:* a cursor is an endpoint shape change, not a patch — P1-1 in the baseline document.
+
+### R-13 [fixed] The event-stream cap silenced tabs instead of refusing one
+`maxEventStreams = 8` (`:557`) was enforced by evicting the oldest stream, so the ninth tab's arrival
+cut the first, whose reconnect cut the second: a room one tab too large had every tab intermittently
+deaf, which reads as "the web client stopped updating". A closed tab's seat also came back only when
+a write discovered the dead socket — up to two heartbeats, ~40 s, because the handler parks in
+`queue.poll(heartbeatMs)` (`:605`).
+*Fixed:* the newcomer is refused with `503` + `Retry-After: 15` + `no-store` and keeps polling, so
+nobody loses a stream they already had; and an admission attempt now probes every holder with a
+comment frame first, so a seat that is genuinely free is reaped in about a second. Proved by
+`EventStreamAdmissionTest` (both halves) and recorded by the probe (`ninth: 503`, `oldest: still
+delivered`, and a tab re-admitted 693 ms after another closed)..
+
+### R-14 [confirmed, fixed] PDF preview and file picking ran on the main thread
+`AttachmentPreview.kt`'s `PdfStage` rendered a page — allocating a bitmap up to 2200 px wide — inside
+composition, so every recomposition repeated it; `SendScreen.kt` resolved metadata for every selected
+uri on the main dispatcher under a `LaunchedEffect` whose comment claimed otherwise. Both moved to
+`Dispatchers.IO`. This is the "web client / app freezes" symptom in the one place it was reachable
+without a profiler.
+
+### R-15 [code-confirmed, unmeasured] Starting the server blocks the thread that draws it
+`MainViewModel.kt:1159 startServer()` runs on the caller's thread — the main thread, from `init` and
+from the toggle's click handler — and `:1317 startWithSettle` retries `server.start()` with
+`Thread.sleep(350L * attempt)` up to four times. On a busy port that is up to ~2 s of dead UI. Not
+timed here (no emulator, no KVM); `MainViewModel` has no test coverage, which is why this is P1 and
+not already fixed.
+
+### R-16 [code-confirmed, unmeasured] The quality ladder only steps down
+`QualityLadder.stepUp` (`media/ladder/QualityLadder.kt:89`) has no production call site — only its own
+tests. A call that dips once stays dipped for its remaining life. Needs a real call to measure, so it
+is listed rather than patched blind.
+
+### R-17 [code-confirmed, unmeasured] The browser leg of a call is JPEG on an unbounded queue
+`CallEngine.kt:2046` compresses each frame with `compressToJpeg(…, 70, …)` off a legacy
+`android.hardware.Camera` (`:11`), while H.264 is implemented for phone↔phone only; `webOut` is
+`LinkedBlockingQueue<ByteArray>(96)` (`:367`) — bounded in *frames*, so ~96 MiB at the 1 MiB per-frame
+cap, queued on a phone during a call. The PRD's "prefer WebRTC" is a new dependency against a rule
+that local-network operation must not need an external service; that decision belongs to the owner,
+not to a patch.
+
+### R-18 [confirmed] Nothing about the payloads is compressed or revalidated
+No `Content-Encoding`, `ETag` or `Vary` anywhere in the server package; the index route regenerates the
+236 KB document per request (`:1494`). Real, but it changes how responses leave NanoHTTPD, so it is
+gated on approval rather than slipped in beside R-12.
+
+---
+
 ## P2 — reliability and product
 
 | ID | Item | Where |
