@@ -399,17 +399,23 @@ and blob media first** (report-only until it passes), `Strict-Transport-Security
 and read/idle timeouts, concurrent-request caps and per-endpoint body caps (the last partly covered by
 R-2).
 
-### R-7 [needs test] Call media confidentiality is labelled imprecisely
-`docs/Security-Model.md` already states call media is not E2E encrypted — the docs are honest, the UI
-may not be. Label it before start/accept. *Also:* `GET /api/relay/...` style probing aside, verify
-`CallEngine.handleInvite` rejects unknown pairing ids so an invite cannot be spoofed.
+### R-7 [fixed] Call media confidentiality is labelled imprecisely
+`docs/Security-Model.md` already states call media is not E2E encrypted. The UI did not: the ringing
+screen said "over your encrypted pairing", and the devices onboarding said "chat, calls and encrypted
+transfers", both readable as a promise about the media. The ringing hint now says media is not
+end-to-end encrypted (chat between paired phones is), and onboarding names encrypted chat and transfers
+separately from calling.
+
+*Verified:* `CallEngine.handleInvite` requires `findPairing(pid)`, so an invite carrying an id this
+phone does not hold is refused and never raises `incomingCall`. `CallInviteTest` pins that refusal and
+the control that a real pairing still rings.
 
 ### R-8 [confirmed, partially fixed] Route-shape leakage via OPTIONS and 401/404 asymmetry
 `OPTIONS` returns 200 for any path with wildcard CORS (`:1074`), and `GET /api/auth` reaches the global
 check and 401s instead of 404ing — both reveal which routes exist before any credential is offered.
 Low severity on a LAN; worth folding into S-3 rather than a separate change.
 
-### R-11 [needs verification] Bytes past a short `Content-Length` are parsed as the next request
+### R-11 [confirmed, fixed] Bytes past a short `Content-Length` are parsed as the next request
 Discovered while bounding the upload ceiling, and deliberately not treated as one: `parseBody` reads
 exactly `Content-Length` bytes and returns, so a client that declares 100 and sends 400 MB leaves the
 other 399,999,900 in the socket — and `ClientHandler.run()` loops on `session.execute()` over the *same*
@@ -418,12 +424,24 @@ stream while the connection is open. Those bytes are then parsed as a following 
 This is not a disk-fill or heap risk, which is why it is P1 rather than P0: nothing is read, so nothing
 is buffered. What it may be is a request-smuggling shape — a pipelined request the tab never sent,
 arriving on a connection whose credential and client address are already established, and NanoHTTPD
-answers HTTP/1.0 per response while accepting HTTP/1.1 pipelining on the read side.
+answers HTTP/1.1 while looping on the read side. The hole was in the second request, not in the
+credential: `X-Pulse-Auth` is per-request, so the surplus had to bring its own (or hit a public route).
 
-*Needs verification first,* because this is a reading of the bytecode and not yet an observation: two
-requests on one connection, the second one smuggled behind a short `Content-Length`, against a real
-listener, asserting what the server does with it. Until that test exists this entry is a hypothesis and
-should be labelled as one wherever it is repeated.
+*Observed, then closed:* `RequestSmugglingTest` opens one real socket to a real listener and sends a
+`POST /api/auth` whose body ends exactly at its `Content-Length`, followed by a complete
+`GET /api/info`. Before the fix the server answered **both**: the surplus was parsed as the second
+request and served. The same happened with chunk framing — `Transfer-Encoding: chunked` and no
+`Content-Length` — which this build has no reader for, so the request itself answers 400 and the
+framing then becomes another request line. `serve()` now ends the connection after any request that
+declares `Content-Length` or `Transfer-Encoding`, so the surplus dies with the socket. A bodyless poll
+still reuses the connection; that control is in the same file, so the rule cannot pass by having
+quietly disabled keep-alive everywhere. Closing on a body is deliberately narrow: browsers do not
+pipeline a POST, so the cost is one connection per state-changing request, while the page's polling
+loop and SSE keep their keep-alive.
+
+*Threat model:* there is still no intermediary in this deployment, so the only author of a smuggled
+request is the client that could send it anyway. This closes a desync primitive, not a live
+privilege boundary; it matters if a proxy or cache is ever put in front of the phone.
 
 *Why the number skips:* `R-9` and `R-10` are already taken by the P2 table, which reuses the `R`
 prefix for refactor items. Nothing here was renamed.

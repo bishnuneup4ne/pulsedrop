@@ -1298,23 +1298,32 @@ class PulseDropServer(
         synchronized(pinAttempts) { pinAttempts.remove(clientIp) }
     }
 
-    override fun serve(session: IHTTPSession): Response =
-        dispatch(session).also { response ->
-            // Every reply, including 401, 404 and the inline previews: a page served by this phone
-            // must not have its bytes re-typed into something executable, and following a link off
-            // this origin must not tell the next host which LAN address it came from. Inline views
-            // below set the same values; NanoHTTPD replaces a header by name, so this stays one.
-            response.addHeader("X-Content-Type-Options", "nosniff")
-            response.addHeader("Referrer-Policy", "no-referrer")
-            // JSON is the room's state, not a document: a tab that logs out must not leave the file
-            // list or message page reachable from the back button. Routes that already chose a cache
-            // policy (SSE, media, login) keep it; the page and its fonts are deliberately cacheable.
-            if (response.getHeader("Cache-Control") == null &&
-                response.mimeType?.substringBefore(';')?.trim().equals("application/json", ignoreCase = true) == true
-            ) {
-                response.addHeader("Cache-Control", "no-store")
-            }
+    override fun serve(session: IHTTPSession): Response {
+        val response = dispatch(session)
+        // Every reply, including 401, 404 and the inline previews: a page served by this phone
+        // must not have its bytes re-typed into something executable, and following a link off
+        // this origin must not tell the next host which LAN address it came from. Inline views
+        // below set the same values; NanoHTTPD replaces a header by name, so this stays one.
+        response.addHeader("X-Content-Type-Options", "nosniff")
+        response.addHeader("Referrer-Policy", "no-referrer")
+        // JSON is the room's state, not a document: a tab that logs out must not leave the file
+        // list or message page reachable from the back button. Routes that already chose a cache
+        // policy (SSE, media, login) keep it; the page and its fonts are deliberately cacheable.
+        if (response.getHeader("Cache-Control") == null &&
+            response.mimeType?.substringBefore(';')?.trim().equals("application/json", ignoreCase = true) == true
+        ) {
+            response.addHeader("Cache-Control", "no-store")
         }
+        // NanoHTTPD reads exactly Content-Length and then loops over the same stream, so bytes
+        // appended after a short body are parsed as the next request. Nothing upstream can inject
+        // them in this deployment, but a second request on a connection the tab already used is a
+        // desync primitive with no legitimate user. Ending the connection here discards the
+        // surplus; bodyless polling keeps connection reuse.
+        if (session.headers.keys.any { it == "content-length" || it == "transfer-encoding" }) {
+            response.closeConnection(true)
+        }
+        return response
+    }
 
     private fun dispatch(session: IHTTPSession): Response {
         val uri = session.uri

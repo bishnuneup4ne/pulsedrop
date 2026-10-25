@@ -134,7 +134,7 @@ memory: it resets on process death.
 | POST | `/api/pair/request` | `:1475` | key-gated downstream | pairing | by design | PIN-exempt. `PairManager.handleIncomingRequest` is the enforcing layer: the presented `pub` must parse as a P-256 key (`Crypto.isP256PublicKey`), or nothing reaches the confirmation screen. Unbounded rate remains — pairing CPU cost is ECDH, so this is still the app's cheapest CPU-exhaustion target. `PairKeyIngestTest`. |
 | POST | `/api/pair/response` | `:1480` | key-gated downstream | pairing | by design | PIN-exempt, but accepted only for a request this phone is still awaiting (live or late-answer window). The presented key must be P-256 and `kdf` must be a version this build performs (`Kdf.isKnown`); otherwise the answer stores no pairing and says why. `PairKeyIngestTest`. |
 | POST | `/api/pair/msg` | `:1484` | key-gated downstream | pairing | by design | |
-| POST | `/api/call/invite` | `:1486` | key-gated downstream | calls | by design | PIN-exempt; a LAN host can attempt to raise the incoming-call UI. Must confirm `CallEngine.handleInvite` rejects unknown pairing ids. |
+| POST | `/api/call/invite` | `:1486` | key-gated downstream | calls | by design | PIN-exempt; a LAN host can attempt to raise the incoming-call UI. Confirmed: `CallEngine.handleInvite` requires `findPairing(pid)`, so an unknown id is refused and never reaches the ringing screen (`CallInviteTest`). |
 | POST | `/api/call/response` | `:1487` | key-gated downstream | calls | by design | |
 | POST | `/api/call/end` | `:1491` | key-gated downstream | calls | by design | |
 | POST | `/api/relay/post` | `:1474`, `handleRelay` `:260` | per-device relay proof | mailbox | by design | `verifyRelayAuth(pid, "post", proof)` (`:270`) — role-scoped proof, 64 KiB envelope cap (`:298`). Sound shape. The POST carrying an envelope is bounded separately, at four envelopes (`:1639`): the body is the envelope plus `role`, `to` and quoting, so a ceiling equal to the envelope's own refuses the last few dozen bytes of mail the relay would have accepted — and refuses them with a status the sender cannot act on, rather than the relay's own `too large`. |
@@ -318,8 +318,10 @@ The table-driven suite must, for **each row above**, assert status and body-shap
     the assertion is that the client *could not finish sending it*, which distinguishes a refusal
     before the read from a refusal after it. Frequency is now tested separately: `RequestRateLimiterTest`
     covers burst/refill/bound, `TypingPresenceTest` proves a presence loop is 429 while another address
-    is unaffected. Still untested: a body whose declared length is a lie in the under-declaring
-    direction, which NanoHTTPD does not read at all.
+    is unaffected. Under-declaring is now tested as well: `RequestSmugglingTest` shows that bytes past
+    a declared body used to be parsed as a second request, and that a reply to any request declaring
+    `Content-Length` or `Transfer-Encoding` now ends the connection so the surplus dies with the
+    socket; a bodyless poll still reuses the connection, which is the control in the same file.
     *Added here, because per-route sizes do not cover the relations between them:*
     `CeilingPrecedenceTest` asserts that the wrapper ceiling clears the envelope ceiling, that a
     refusal at the login route is not charged to the PIN lockout — with the control that twelve
