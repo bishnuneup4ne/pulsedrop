@@ -78,6 +78,14 @@
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />
 
+        <!-- Where a crash notification lands. Not exported: only this app's PendingIntent may
+             launch it, and it reads the report from private storage rather than an intent extra. -->
+        <activity
+            android:name=".diag.CrashReportActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:label="Crash report" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

@@ -5,14 +5,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import com.pulsedrop.app.BuildConfig
 import com.pulsedrop.app.security.IdentityKeyPair
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
-import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -24,13 +22,13 @@ import java.util.Locale
  *
  * Nothing leaves the device on its own: filing a GitHub issue needs a token, and a token
  * compiled into an APK is the same key in every copy of a program people install from a
- * link. So the report is handed to the visitor's own browser session, where their own
- * GitHub login files it. The crash also survives on disk, and the next launch offers it
- * again if the shade never got to show it.
+ * link. The notification opens [CrashReportActivity] inside this app, which shows the
+ * report and lets the user copy it; no report text is ever put in an intent or a URL, so
+ * no other app learns the device facts by claiming a link. The crash also survives on
+ * disk, and the next launch offers it again if the shade never got to show it.
  */
 object CrashReporter {
 
-    private const val REPO = "bishnuneup4ne/pulsedrop"
     private const val DIR = "crashes"
     private const val CHANNEL_ID = "pulsedrop_crash"
     private const val MAX_REPORTS = 20
@@ -108,19 +106,16 @@ object CrashReporter {
         File(context.filesDir, DIR).listFiles()?.filter { it.name.endsWith(".txt") }?.sortedBy { it.name }
             ?: emptyList()
 
-    /** The same issue form a human would fill in, with the crash already pasted into it. */
-    private fun issueUri(markdown: String): Uri {
-        val title = "Crash on ${Build.BRAND} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})"
-        return Uri.parse(
-            "https://github.com/$REPO/issues/new" +
-                "?labels=" + URLEncoder.encode("bug", "UTF-8") +
-                "&title=" + URLEncoder.encode(title, "UTF-8") +
-                "&body=" + URLEncoder.encode(markdown, "UTF-8")
-        )
-    }
+    /**
+     * The notification's way in: an explicit component of this app. Nothing about the crash travels
+     * in the intent — the screen reads the report from `filesDir`, where only this app can write.
+     */
+    internal fun reportIntent(context: Context, report: File): Intent =
+        Intent(context, CrashReportActivity::class.java)
+            .putExtra(CrashReportActivity.EXTRA_REPORT, report.name)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
 
     private fun notify(context: Context, report: File) {
-        val markdown = runCatching { report.readText() }.getOrNull() ?: return
         val manager = context.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(
@@ -129,34 +124,25 @@ object CrashReporter {
             )
         }
         val open = PendingIntent.getActivity(
-            context, report.name.hashCode(),
-            Intent(Intent.ACTION_VIEW, issueUri(markdown))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+            context, report.name.hashCode(), reportIntent(context, report),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_CANCEL_CURRENT
         )
-        val firstLine = markdown.lineWithCrash()
         manager.notify(
             CHANNEL_ID, report.name.hashCode(),
             androidx.core.app.NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle("PulseDrop stopped unexpectedly")
-                .setContentText(firstLine)
-                .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(firstLine))
+                // No stack line here: a notification is readable on a locked screen, and the report
+                // is one tap away. "Nothing has been sent" is the fact the user needs.
+                .setContentText("Tap to review the report. Nothing has been sent.")
                 .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
                 .setCategory(androidx.core.app.NotificationCompat.CATEGORY_ERROR)
                 .setContentIntent(open)
                 .setAutoCancel(true)
-                .build().also { /* posting does not need the file to stay open */ }
+                .build()
         )
         // Handing the report over to the shade means it has been said once; keep it a while
         // so a second crash is still distinguishable, but never offer the same one twice.
         runCatching { report.renameTo(File(report.parentFile, report.name + ".offered")) }
-    }
-
-    /** The one line of a stack that names the failure, for a notification that fits. */
-    private fun String.lineWithCrash(): String {
-        lines().firstOrNull { it.startsWith("java.") || it.startsWith("kotlin.") || it.contains("Exception") }
-            ?.trim()?.let { return it }
-        return "PulseDrop crashed on ${Build.MODEL}"
     }
 }

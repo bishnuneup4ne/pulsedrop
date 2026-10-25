@@ -356,10 +356,12 @@ check can answer.
 rather than its claimed name, names are de-duplicated for display, and a per-address bucket allows one
 write per 400 ms. Reads remain public. Proved by `TypingPresenceTest`.
 
-### R-4 [confirmed] Wildcard CORS on a credentialed server
-`addCorsHeaders` emits `Access-Control-Allow-Origin: *` on essentially every response, including 401
-and 404. Document what cross-origin access is actually required and narrow it; keep state-changing
-operations off ambient credentials; validate `Origin` where browser semantics allow.
+### R-4 [fixed] Wildcard CORS on a credentialed server
+`addCorsHeaders` emitted `Access-Control-Allow-Origin: *` on essentially every response, including
+401 and 404. Nothing in the repo is a cross-origin client — the page is same-origin and relative-URL
+only — so the grant is removed rather than narrowed; a cross-origin integration would have to opt in
+deliberately. `ResponseHardeningTest` asserts the absence on the page, a 401, a 404, a font, an
+`OPTIONS` preflight and a mutation.
 
 ### R-5 [fixed] XSS via caller-controlled strings
 `deviceName`, `X-Pulse-Client`, `sender`, filenames, thread titles and `action=ring`'s `name` are all
@@ -380,10 +382,13 @@ now carry `nosniff` and `Referrer-Policy`, plus a `sandbox` CSP when the recorde
 exists, and a TLS failure shown to a browser never names a private path and stays bounded.
 `FileNameAdversarialTest` asserts the inline-safety headers on `/preview/{id}`.
 
-### R-6 [recommendation] CSP, security headers, and request-hardening baseline
-Add `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on
-private responses, and a CSP **tested against the embedded inline CSS/JS first** (report-only until it
-passes). Add read/idle timeouts, concurrent-request caps, and per-endpoint body caps.
+### R-6 [partly fixed] CSP, security headers, and request-hardening baseline
+Done: `serve()` adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to every
+response, including 401/404 and inline previews, and `Cache-Control: no-store` to JSON that did not set
+its own cache policy (`ResponseHardeningTest`). Open: a CSP **tested against the embedded inline CSS/JS
+and blob media first** (report-only until it passes), `Strict-Transport-Security` on the TLS listener,
+and read/idle timeouts, concurrent-request caps and per-endpoint body caps (the last partly covered by
+R-2).
 
 ### R-7 [needs test] Call media confidentiality is labelled imprecisely
 `docs/Security-Model.md` already states call media is not E2E encrypted — the docs are honest, the UI
@@ -427,11 +432,19 @@ privilege boundary; it matters if a proxy or cache is ever put in front of the p
 prefix for refactor items. Nothing here was renamed.
 
 ### K-1 [recommendation] Pairing threat-model test suite
-P-256 ECDH + AES-GCM + KDF v1/v2 already have golden-vector tests. Still missing: safety code derived
-from the exact transcript both sides authenticate, key-substitution → code-mismatch, curve/key
-validation on parse, deterministic KDF selection bound to the transcript, duplicate/stale/concurrent
-pair requests, identity loss and reinstall. **Compatibility rule:** never rename legacy aliases,
-preference keys, database names, or wire constants; never silently change KDF for an existing pairing.
+P-256 ECDH + AES-GCM + KDF v1/v2 already have golden-vector tests.
+
+**Key ingest is now validated.** `Crypto.isP256PublicKey` parses the presented SPKI and compares its
+domain parameters against the platform's `secp256r1` spec, and `PairHandshake` applies it at all three
+entry points: `POST /api/pair/request`, accepting a request rebuilt from state, and an answer on
+`POST /api/pair/response` (direct or relayed). An answer naming a `kdf` outside `Kdf.isKnown` is
+refused as well, with a user-visible reason. Previously an impossible key or version was stored, so the
+first message after a confirmed pairing threw during ECDH or derivation. Proved by `PairKeyIngestTest`.
+
+Still missing: safety code derived from the exact transcript both sides authenticate, key-substitution →
+code-mismatch, deterministic KDF selection bound to the transcript, duplicate/stale/concurrent pair
+requests, identity loss and reinstall. **Compatibility rule:** never rename legacy aliases, preference
+keys, database names, or wire constants; never silently change KDF for an existing pairing.
 
 ---
 
@@ -466,9 +479,11 @@ Found while checking whether the security automation added to `main` on 2026-10-
 | X-1 | `.github/dependabot.yml` shipped as the untouched web-UI template with `package-ecosystem: ""`. That is not a valid value, so GitHub rejects the manifest and Dependabot opened **zero** update PRs while the setup page looked configured. | **Fixed** on `ci/security-automation` (Gradle + GitHub Actions, weekly) |
 | X-2 | Every `uses:` in `ci.yml` and `codeql.yml` tracked a mutable tag, so a republished tag could change what a security-scanning workflow executes. | **Fixed** on `ci/security-automation` (full SHA + version comment) |
 | X-3 | CodeQL cannot analyse the browser client. It is JavaScript inside a Kotlin string literal (`WebClientHtml.kt`), and extractors are chosen by file extension — so the app's most exposed input-handling code gets Kotlin queries only. The `javascript-typescript` matrix entry sees `site/` and `dev/`. Fixing this properly means shipping the client as an asset file, which changes packaging: design it, do not slip it into a security PR. | [confirmed] — blind spot is documented in the workflow header meanwhile |
-| X-4 | CodeQL alert #1, CWE-927 (implicit/mutable `PendingIntent`) at `diag/CrashReporter.kt:126`. **Partly a false alarm:** `FLAG_IMMUTABLE` is set, so the receiving app cannot rewrite the intent, which is the escalation the rule describes. What is real: the intent is *implicit* (`ACTION_VIEW` + `https://github.com/...`) so it resolves to whichever app claims that URL, and that app receives the crash markdown — device model, Android version, stack trace — in the query string. It also lands in browser history. Route the notification through an explicit in-app component that shows the report and offers to send it. | [verified, downgraded] P2 |
+| X-4 | CodeQL alert #1, CWE-927 (implicit/mutable `PendingIntent`) at `diag/CrashReporter.kt`. The mutable half was already false (`FLAG_IMMUTABLE`); the real half was that the intent was *implicit* (`ACTION_VIEW` + a `github.com` URL), so it resolved to whichever app claimed that host, with the crash markdown — device model, Android version, stack trace — in the query string and in browser history. **Fixed:** the notification now targets `CrashReportActivity` explicitly (and `exported=false`); it carries only the report's file name, the screen reads the report from private storage, shows it, copies it on request and opens the *empty* new-issue page. No report text enters an intent or a URL. Proved by `CrashReportIntentTest`. | [fixed] P2 |
 | X-5 | Dependabot *security* updates (the ones that patch a known-vulnerable dependency) are a repository setting under Code security, not something this file can turn on. Needs someone with administration. | [recommendation] owner action |
 | X-6 | `actions/setup-java@v4`'s current tip commit is literally "Deprecate setup-java v4", and checkout/upload-artifact/setup-android/setup-gradle are one to three majors behind. Deliberately **not** bumped here: pinning preserves behaviour exactly, a major bump does not, and it can only be judged on a real runner. | [recommendation] separate PR |
+| X-7 | `gradle-wrapper.properties` named a distribution URL without `distributionSha256Sum`, so the wrapper would execute whatever the CDN returned for that URL. The 9.6.0 bump made this a fresh URL nobody had vetted; the checksum is now pinned (verified against a fresh download). | **Fixed** on `ci/wrapper-checksum` |
+| X-8 | `androidx.navigation:navigation-compose` 2.10.2 cannot be adopted alone: it forces Compose UI 1.11.2 over the BOM's 1.7.2 and requires `compileSdk 37`, so the build is either half-upgraded or does not configure. Verified on a scratch tree that a coherent stack (BOM `2026.06.01`, lifecycle 2.11.0, `compileSdk 37.2`) makes all 363 tests pass with two test adaptations (one asserts the first child of a status row, one clicks below the fold). Reverted on `main` instead, because a Material3 1.4 upgrade changes rendering and belongs on a device, not in a CI repair. | [recommendation] coordinated upgrade with on-device review |
 
 ## Corrections to the PRD (verified, not assumed)
 

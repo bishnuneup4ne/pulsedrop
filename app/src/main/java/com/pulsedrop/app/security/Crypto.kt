@@ -6,12 +6,16 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.security.AlgorithmParameters
 import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.PublicKey
 import java.security.SecureRandom
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECGenParameterSpec
+import java.security.spec.ECParameterSpec
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
@@ -57,6 +61,35 @@ object Crypto {
 
     fun parsePublicKey(spkiB64: String): PublicKey =
         KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(unb64(spkiB64)))
+
+    private val P256_PARAMS: ECParameterSpec? = runCatching {
+        AlgorithmParameters.getInstance("EC")
+            .apply { init(ECGenParameterSpec("secp256r1")) }
+            .getParameterSpec(ECParameterSpec::class.java)
+    }.getOrNull()
+
+    /**
+     * Whether [spkiB64] is a P-256 key this phone can actually agree with.
+     *
+     * Pairing stores the peer's key before any message is exchanged, so a key on another curve or a
+     * truncated encoding would not fail until the first send — after the user has confirmed the
+     * pairing and seen a safety code computed from bytes that cannot work. Ingest checks this
+     * instead; it is not used on the send path, where the key came from storage and a failure is a
+     * different (already surfaced) condition.
+     */
+    fun isP256PublicKey(spkiB64: String): Boolean = try {
+        val key = parsePublicKey(spkiB64) as? ECPublicKey ?: return false
+        val expected = P256_PARAMS ?: return false
+        val p = key.params
+        p.curve.field.fieldSize == expected.curve.field.fieldSize &&
+            p.curve.a == expected.curve.a &&
+            p.curve.b == expected.curve.b &&
+            p.order == expected.order &&
+            p.cofactor == expected.cofactor &&
+            p.generator == expected.generator
+    } catch (e: Exception) {
+        false
+    }
 
     // ---- shared secrets ------------------------------------------------------
 

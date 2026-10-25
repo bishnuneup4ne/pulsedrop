@@ -184,6 +184,13 @@ class PairHandshake(
         // Stamped with our key, so without one there is nothing to hand over: the request stays on
         // the screen and Accept can be pressed again once the key can be read.
         val myPub = myPubOrNull() ?: return
+        // The queue is fed only by `handleIncomingRequest`, which already refuses these; this is
+        // the choke point for a request rebuilt from state or constructed by a caller.
+        if (!Crypto.isP256PublicKey(request.pubB64)) {
+            _incomingRequests.update { list -> list.filterNot { it.reqId == request.reqId } }
+            events.value = "That device sent a pairing key this phone cannot use"
+            return
+        }
         val (myIp, myPort) = deps.endpoint()
         val paired = PairedDevice(
             pid = Crypto.pairId(myPub, request.pubB64),
@@ -279,6 +286,10 @@ class PairHandshake(
     fun handleIncomingRequest(json: JSONObject, clientIp: String): Boolean {
         val peerPub = json.optString("pub")
         if (peerPub.isBlank()) return false
+        // A pairing request is the one place another host hands us key material. Refusing it here
+        // means an unusable key never reaches the confirmation screen, where the safety code would
+        // be computed from bytes that cannot complete an ECDH.
+        if (!Crypto.isP256PublicKey(peerPub)) return false
         // Prefer the address the requester advertises as reachable for replies;
         // the socket peer IP is a fallback (differs under port-forwarding / NAT).
         val reachIp = json.optString("myIp").ifBlank { clientIp }
@@ -345,6 +356,17 @@ class PairHandshake(
         }
         val peerPub = json.optString("pub")
         if (peerPub.isBlank()) return
+        if (!Crypto.isP256PublicKey(peerPub)) {
+            events.value = "${pending.peer.name} sent a pairing key this phone cannot use"
+            return
+        }
+        // The version decides how the secret is derived; an unknown one would be stored and then
+        // throw on the first message. A peer that breaks the protocol does not get a pairing.
+        val kdf = json.optInt("kdf", Kdf.V1)
+        if (!Kdf.isKnown(kdf)) {
+            events.value = "${pending.peer.name} sent a pairing this phone does not understand"
+            return
+        }
         // A relayed answer comes from the host's store, so the socket belongs to neither side;
         // the address the peer itself advertised is all there is to go on.
         val reachIp = json.optString("myIp").ifBlank { clientIp ?: pending.peer.ip }
@@ -358,7 +380,7 @@ class PairHandshake(
                 originIp = reachIp,
                 originPort = reachPort,
                 appVersion = json.optString("appVersion", ""),
-                kdfVersion = json.optInt("kdf", Kdf.V1)
+                kdfVersion = kdf
             )
         )
         events.value = pairingOutcome(pending.peer.name, replaced)
