@@ -356,10 +356,12 @@ check can answer.
 rather than its claimed name, names are de-duplicated for display, and a per-address bucket allows one
 write per 400 ms. Reads remain public. Proved by `TypingPresenceTest`.
 
-### R-4 [confirmed] Wildcard CORS on a credentialed server
-`addCorsHeaders` emits `Access-Control-Allow-Origin: *` on essentially every response, including 401
-and 404. Document what cross-origin access is actually required and narrow it; keep state-changing
-operations off ambient credentials; validate `Origin` where browser semantics allow.
+### R-4 [fixed] Wildcard CORS on a credentialed server
+`addCorsHeaders` emitted `Access-Control-Allow-Origin: *` on essentially every response, including
+401 and 404. Nothing in the repo is a cross-origin client — the page is same-origin and relative-URL
+only — so the grant is removed rather than narrowed; a cross-origin integration would have to opt in
+deliberately. `ResponseHardeningTest` asserts the absence on the page, a 401, a 404, a font, an
+`OPTIONS` preflight and a mutation.
 
 ### R-5 [fixed] XSS via caller-controlled strings
 `deviceName`, `X-Pulse-Client`, `sender`, filenames, thread titles and `action=ring`'s `name` are all
@@ -380,10 +382,13 @@ now carry `nosniff` and `Referrer-Policy`, plus a `sandbox` CSP when the recorde
 exists, and a TLS failure shown to a browser never names a private path and stays bounded.
 `FileNameAdversarialTest` asserts the inline-safety headers on `/preview/{id}`.
 
-### R-6 [recommendation] CSP, security headers, and request-hardening baseline
-Add `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on
-private responses, and a CSP **tested against the embedded inline CSS/JS first** (report-only until it
-passes). Add read/idle timeouts, concurrent-request caps, and per-endpoint body caps.
+### R-6 [partly fixed] CSP, security headers, and request-hardening baseline
+Done: `serve()` adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to every
+response, including 401/404 and inline previews, and `Cache-Control: no-store` to JSON that did not set
+its own cache policy (`ResponseHardeningTest`). Open: a CSP **tested against the embedded inline CSS/JS
+and blob media first** (report-only until it passes), `Strict-Transport-Security` on the TLS listener,
+and read/idle timeouts, concurrent-request caps and per-endpoint body caps (the last partly covered by
+R-2).
 
 ### R-7 [fixed] Call media confidentiality is labelled imprecisely
 `docs/Security-Model.md` already states call media is not E2E encrypted. The UI did not: the ringing
