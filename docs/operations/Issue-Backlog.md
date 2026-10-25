@@ -468,8 +468,6 @@ first message after a confirmed pairing threw during ECDH or derivation. Proved 
 * a phone with no readable identity queues nothing, declines the requester, and stores no pairing.
 
 Still open, and written down rather than papered over:
-* the 120-second prompt TTL is not driven by a test (it needs clock control); the cap and the
-  duplicate rule are.
 * the safety code covers the two identity keys, not the chosen KDF. An on-path attacker can strip
   `kdf` from the answer, leaving the acceptor on V2 and the requester on V1. Both derivations are
   strong, and the mismatch fails closed on the first message, so this is a denial of service rather
@@ -477,6 +475,11 @@ Still open, and written down rather than papered over:
   and new codes disagree, so it needs a protocol/UI version, not a quiet edit.
 * the human comparison is still the authentication step. Six digits is a usability trade, and no
   test can prove the user looked.
+
+The 120-second prompt TTL is now driven rather than described: `PairManager`/`PairHandshake` take
+the clock they read (`clock`, defaulting to the wall clock), and `PairingThreatModelTest` moves that
+clock across the boundary — a request at 119 s is still a prompt, the same one at 121 s is gone when
+the next request arrives. Nothing sleeps for two minutes.
 
 **Compatibility rule:** never rename legacy aliases, preference keys, database names, or wire
 constants; never silently change KDF for an existing pairing.
