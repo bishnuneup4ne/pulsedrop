@@ -275,6 +275,7 @@ part is the bound itself, which is what `WebOutboxTest` tests.
 | `GET /api/messages?since=<marker>` answers only the entries that moved and says so with `X-Room-Delta: 1`. A marker from another address, or from before a thread was opened, is refused and the room goes out whole. | same route (`roomScope`, `parseRoomCursor`) | `one address's cursor is not another address's`, `a thread opened after a cursor forces a whole read rather than a patch` |
 | The marker travels in `X-Room-Cursor`, so the array keeps the shape every reader already parses — a tab that sends no `since` gets exactly what it got before. | same | `a first read is the whole room and hands back a marker for the next one`, `the cursor carries no credential` |
 | The tab offers its marker and folds a patch into what it holds instead of replacing the room with the patch. | `server/WebClientHtml.kt` (`roomCursor`, `mergeRoomPatch`, `processMessages`) | `the tab folds a patch and replaces a whole room`; the one-reader rule in `WebClientRequestDisciplineTest` now matches the URL-as-variable shape |
+| Three claims about the cursor that were written down here and asserted nowhere, asserted now. | `RoomCursorTest` — 8 tests → 11 | `a marker older than the retained room misses nothing` (2,002 messages, so the marker predates what retention dropped: the patch must be exactly the retained set, which is the difference between repeating and losing), `an unchanged read that came back 304 does not strand the cursor` (this cursor meeting #81's validator on the same route: the tab still holds the *old* validator, the room grew, and the answer must be a patch — a `304` there would hide a message behind bytes the tab never asked for), `a marker the phone cannot read is answered as the whole room` (empty, junk, wrong field count, non-numeric revision, foreign scope) |
 
 Three refusals are the design, not the delta: ids are random UUIDs so `?since=<id>` orders nothing,
 retention evicts from the front so a position is not stable, and a retraction rewrites an entry where
@@ -370,6 +371,11 @@ PULSEDROP_PROBE=true PULSEDROP_PROBE_OUT=… ./gradlew :app:testDebugUnitTest --
     lint: 0 errors, 62 warnings — the same 62, and no new one from the lanes
 ./gradlew :app:testDebugUnitTest --tests '…call.WebOutboxTest'  # after a local rename in the shed loop
     BUILD SUCCESSFUL in 17s — 12 tests, 0 failures
+./gradlew :app:testDebugUnitTest --tests '…server.RoomCursorTest'   # the three claims, asserted
+    BUILD SUCCESSFUL in 8s — 11 tests, 0 failures (4.504 s of test time, the 2,002-message case included)
+./gradlew :app:testDebugUnitTest :app:lintDebug --rerun-tasks   # over the cursor-gap branch
+    BUILD SUCCESSFUL in 5m 7s — 73 classes, 581 tests, 7 skipped, 0 failures, 0 errors
+    lint: 0 errors, 62 warnings — unchanged again
 ```
 
 The first `WebOutboxTest` run failing twice is worth keeping in the record rather than editing out.

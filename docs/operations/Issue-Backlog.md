@@ -563,6 +563,11 @@ The shape is not `?since=<id>`, and the three reasons it cannot be are what the 
 Retention's falling front (`:1146`, `:1190`) is not a gap in this design: eviction retires the stamps
 of what it removes, and a marker older than the room's oldest entry yields everything retained, which
 the tab merges by id. It cannot miss a message, only repeat one it already has.
+Three sentences of the above were claims rather than tests when this was first closed, and they are
+asserted now (`RoomCursorTest`, 8 → 11): a marker predating an eviction is answered with exactly the
+retained set, a `304` — which carries no cursor, by design — cannot strand a tab that then offers the
+old validator with a grown room, and an unreadable marker is refused into a whole read rather than
+into an empty one.
 
 ### R-13 [fixed] The event-stream cap silenced tabs instead of refusing one
 `maxEventStreams = 8` (`:557`) was enforced by evicting the oldest stream, so the ninth tab's arrival
