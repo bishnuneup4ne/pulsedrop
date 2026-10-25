@@ -494,7 +494,7 @@ constants; never silently change KDF for an existing pairing.
 | R-9 | `PulseDropServer.kt` is **2 262 lines**; `WebClientHtml.kt` is **4 752**. Split routing/security/files per the PRD §5 plan *after* tests pin current behaviour. | server |
 | R-10 | `CallEngine.kt` is **2 346 lines**. Split only after protocol tests exist; do not change frame numbers or wire formats without versioning. | call |
 | D-1 | Local data at rest: chat history plaintext in Room, received files unencrypted (documented). Design key lifecycle, backup, export and recovery **before** shipping encryption. | data |
-| C-1 | Docs/version drift: README still shows v1.4.0/v1.3.0/v1.1.2 VirusTotal rows while the app is 2.0.2; `docs/Installation.md` references 2.0.1. Add a stale-version CI check. | docs |
+| C-1 | Docs/version drift: README showed v1.4.0/v1.3.0/v1.1.2 VirusTotal rows and the pre-1.7 `PulseDrop-<version>.apk` naming, `docs/Installation.md` called 2.0.1 the current release, `CONTRIBUTING.md` said Gradle 9.3.1 / `compileSdk` 36, and `docs/Home.md` called the unpublished 2.1.1 draft a release. **Docs fixed** on `docs/version-references`, verified by hashing the published 2.0.2 asset: the newest published release is 2.0.2 and the docs say so, while the version a checkout builds is stated separately from what is published. `docs/Protocol-V2.md` no longer names 2.0.1 as what `/api/info` reports, and the deployment inventory no longer describes the pre-1.7 asset naming. Still open: a stale-version CI check, which has to read `versionName` and the README together — a code/CI change, not a docs edit. | docs |
 
 ## P3 — later
 

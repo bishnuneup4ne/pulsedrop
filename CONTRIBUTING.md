@@ -22,8 +22,8 @@ echo "sdk.dir=/path/to/Android/Sdk" > local.properties   # git-ignored
 ./gradlew assembleDebug test
 ```
 
-You need JDK 21+ and an Android SDK providing `compileSdk` 36. The Gradle wrapper fetches
-Gradle 9.3.1 itself. A release build needs no keystore — it comes out unsigned.
+You need JDK 21+ and an Android SDK providing `compileSdk` 37. The Gradle wrapper fetches
+Gradle 9.6.0 itself. A release build needs no keystore — it comes out unsigned.
 
 ## The two commands that must pass
 
