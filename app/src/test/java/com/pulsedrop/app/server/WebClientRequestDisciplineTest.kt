@@ -76,10 +76,15 @@ class WebClientRequestDisciplineTest {
 
     @Test
     fun `a reconnect backs off and does not keep a fixed beat`() {
+        // The spacing lives in one helper both callers reach through, because the stream can fail
+        // for a reason that never opens a connection at all: a session that cannot mint a ticket.
+        val helper = bodyOf("scheduleEventRetry")
+        assertTrue("reconnect delay never grows", helper.contains("eventBackoffMs * 2"))
+        assertTrue("reconnect delay is unbounded", helper.contains("Math.min(eventBackoffMs * 2, 20000)"))
+        assertTrue("every tab reconnects on the same beat", helper.contains("Math.random()"))
         val handler = slice("es.onerror = function")
-        assertTrue("reconnect delay never grows", handler.contains("eventBackoffMs * 2"))
-        assertTrue("reconnect delay is unbounded", handler.contains("Math.min(eventBackoffMs * 2, 20000)"))
-        assertTrue("every tab reconnects on the same beat", handler.contains("Math.random()"))
+        assertTrue("the error path re-implements the spacing instead of using the helper: $handler",
+            handler.contains("scheduleEventRetry()"))
         assertFalse("the old fixed eight-second retry is still reachable", Regex("setTimeout\\([^)]*, 8000\\)").containsMatchIn(html))
     }
 
