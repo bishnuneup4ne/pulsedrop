@@ -21,6 +21,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Docs version references
+        # An unpublished draft may be named as long as the docs say it is one; naming a stale
+        # release, a Gradle or compileSdk the build does not use, or a superseded hash fails here.
+        # The online half asks GitHub for the newest published release, so the documents cannot
+        # quietly lag behind it.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./dev/check-version-refs.sh --online
+
       - name: Set up JDK
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
