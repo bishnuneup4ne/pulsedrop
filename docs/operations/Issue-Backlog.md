@@ -588,12 +588,20 @@ uri on the main dispatcher under a `LaunchedEffect` whose comment claimed otherw
 `Dispatchers.IO`. This is the "web client / app freezes" symptom in the one place it was reachable
 without a profiler.
 
-### R-15 [code-confirmed, unmeasured] Starting the server blocks the thread that draws it
+### R-15 [code-confirmed, host half measured] Starting the server blocks the thread that draws it
 `MainViewModel.kt:1159 startServer()` runs on the caller's thread — the main thread, from `init` and
 from the toggle's click handler — and `:1317 startWithSettle` retries `server.start()` with
-`Thread.sleep(350L * attempt)` up to four times. On a busy port that is up to ~2 s of dead UI. Not
-timed here (no emulator, no KVM); `MainViewModel` has no test coverage, which is why this is P1 and
-not already fixed.
+`Thread.sleep(350L * attempt)` up to four times. On a busy port that is up to ~2 s of dead UI.
+Now measured on the host half (`HostBaselineProbe.startupCostAndBindConflict`, recorded in
+`Performance-Baseline.md`): `start()` returns in 14 ms p50 / 17 ms p95 and the port is already
+listening (0 ms to first socket, every time), and a bind refused by another process answers in ~10 ms
+with a `BindException`. So nothing is racing the bind and the entire cost is the sleep ladder, paid on
+the thread that is painting — the retry waits for a port a *previous instance of this same server* has
+not finished releasing. That is a narrower claim than "startup is slow" and it is the one the numbers
+support.
+Still not measured: what the phone's UI does. `MainViewModel` has no test coverage, internal callers
+rely on the server listening when the call returns, and no emulator or KVM exists here — which is why
+this stays P1 and unfixed rather than converted blind.
 
 ### R-16 [code-confirmed, unmeasured] The quality ladder only steps down
 `QualityLadder.stepUp` (`media/ladder/QualityLadder.kt:89`) has no production call site — only its own

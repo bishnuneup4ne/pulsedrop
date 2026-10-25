@@ -13,13 +13,14 @@ then name a cause. Every number below came from a command listed in *Commands ac
 ## What can be measured here, and what cannot
 
 The host — `PulseDropServer` on NanoHTTPD 2.3.1 — runs unmodified under Robolectric, so handler
-cost, payload size, socket throughput and event fan-out are all real measurements. Two of the four
-symptoms the PRD names are **not measurable on this machine at all**:
+cost, payload size, socket throughput and event fan-out are all real measurements. One of the four
+symptoms the PRD names is **not measurable on this machine at all**, and the other three are measurable
+only in part:
 
 | PRD symptom | Measurable here? | Why |
 | --- | --- | --- |
 | Web client freezes / lags | Partly | The server side and the bytes the browser must parse are measured; the browser's main thread, its layout and its garbage collector are not — no chromium, no puppeteer. |
-| Connection is slow to init | No | `MainViewModel.startServer()` is Android lifecycle code. No adb, no emulator, no system image, no `/dev/kvm`. |
+| Connection is slow to init | Partly | The server's own cost is measurable and is measured (`server.start()`, the bind, a refused port); `MainViewModel.startServer()` is Android lifecycle code that no test reaches — no adb, no emulator, no system image, no `/dev/kvm`. |
 | Video stutters | No | Camera, MediaCodec and a live Wi-Fi link. Nothing on this box has a camera. |
 | Network bottlenecks | Loopback only | Throughput here is the Linux loopback driver's ceiling, not a phone's radio. |
 
@@ -117,6 +118,37 @@ the phone opened or closed while nobody was looking. The design and the tests fo
 `RoomCursorTest`; the earlier draft of this document said a `?since=` would be wrong, and it was right
 that the naive version would have been.
 
+### What starting the host costs the thread that asks for it
+
+The last P1 without a number beside it. `MainViewModel.kt:1159 startServer()` runs on its caller's
+thread — the main thread, from `init` and from the toggle's click handler — and `:1317 startWithSettle`
+retries `server.start()` after `Thread.sleep(350L * attempt)`, up to four attempts. The backlog called
+that "up to ~2 s of dead UI", which is arithmetic about the sleep ladder, not a measurement, and it
+blended two things that are not the same risk. Timed apart (`startupCostAndBindConflict`, ten fresh
+servers on ten fresh ports, loopback):
+
+| What | p50 | p95 |
+| --- | --- | --- |
+| `server.start()` returns | 14 ms | 17 ms |
+| …and the port answers a socket | 0 ms | 0 ms |
+| a bind refused by another process answers | 10 ms | — (`java.net.BindException`) |
+| the sleep ladder, if all four attempts are spent | 2,100 ms | — (arithmetic, not measured) |
+
+Two things follow. First, the listener is ready before `start()` returns — `awaitListening` measured
+0 ms every time — so the "give the socket a moment" reading of the settle loop does not hold on this
+host: nothing is racing the bind. Second, the failure the loop retries answers in ~10 ms with a
+`BindException`, so the whole cost of a start that will not succeed is the ladder's sleeps, paid on
+the thread that is drawing the screen. That narrows P1-2 from "get startup off the main thread" to
+something specific: the retry is waiting for a port that a *previous instance of this same server*
+has not finished releasing, and 2.1 s of main-thread sleep is the wrong price for a case that either
+resolves in milliseconds or never resolves.
+
+What is still not measured, and why the item stays P1 rather than fixed: none of this says what the
+phone's UI does. A real `startWithSettle` runs inside `MainViewModel`, which has no test coverage and
+cannot be reached from a Robolectric test without inventing that harness first, and the freeze's user
+half — whether the toggle stops painting, whether the QR screen appears late — needs a device. The
+number above is about the server's own cost, which is the part this machine can time.
+
 ---
 
 ## Confirmed bottlenecks, one per symptom
@@ -158,13 +190,15 @@ inside composition*, so every recomposition re-ran it on the main thread. `SendS
 file metadata for every selected uri on the main dispatcher under a `LaunchedEffect` whose comment
 claimed it was off the main thread. Both now run under `Dispatchers.IO`.
 
-**5. [code-confirmed, unmeasured] Starting the server blocks the thread that draws it.**
+**5. [code-confirmed, host half measured] Starting the server blocks the thread that draws it.**
 `MainViewModel.kt:1159 startServer()` is called from `init` and from the server toggle's click
 handler, and `:1317 startWithSettle` retries `server.start()` with `Thread.sleep(350L * attempt)` up
 to four times — on the caller's thread, i.e. the main thread. On a phone with a busy port or a slow
 bind that is up to ~2 s of an unresponsive screen, and it is exactly the "connection is slow to
-init / the app freezes" symptom. Not timed here: no emulator, and the cost is Android's, not
-NanoHTTPD's.
+init / the app freezes" symptom. The host half is timed now (see the startup rows above), and it
+corrects the premise: the bind is *not* slow — 14–17 ms to return with the port already answering, and
+a refused bind answers in ~10 ms with a `BindException` — so the ~2 s is the sleep ladder alone. What
+remains unmeasured is the Android half: no emulator here, and no test reaches `MainViewModel`.
 
 **6. [code-confirmed, unmeasured] The quality ladder can only ever step down.**
 `QualityLadder.stepUp` (`media/ladder/QualityLadder.kt:89`) has **no production call site** — only
@@ -317,7 +351,7 @@ owner, because "fast" and "allowed" are different questions.
 | # | Item | Evidence | Risk / needs a decision |
 | --- | --- | --- | --- |
 | P1-1 | ~~Delta `/api/messages` — but not as `?since=`~~ **done in `perf/room-cursor`**, as a revision + visibility-generation marker rather than an id or a position. | the three naive-cursor failures listed here: `:1133`, `:1146`, `:1167`, `:507`, `:668` | Shipped as a header-borne opaque marker so the array's shape never changed for a reader that does not use it. What is left is the browser's own parse of a big first read, which needs a real browser to time. |
-| P1-2 | Get `startServer()` and `startWithSettle` off the main thread. | §5: `MainViewModel.kt:1159,1317` | Touches lifecycle, `MainViewModel` has no tests, and internal callers currently rely on the server being listening when the call returns. Making it async without a device or a harness is how a startup race gets shipped silently. Deliberately not attempted blind. |
+| P1-2 | Get `startServer()` and `startWithSettle` off the main thread. | §5: `MainViewModel.kt:1159,1317` + the startup rows measured in this batch | The server's own half is now measured: a start answers in 14–17 ms with the port already listening, and a refused bind answers in ~10 ms. So the freeze is the 2,100 ms sleep ladder, not the bind — which narrows the fix but does not make it safe to ship blind: `MainViewModel` has no tests, internal callers rely on the server listening when the call returns, and the user half needs a device. Deliberately not attempted. |
 | P1-3 | ~~Compress and revalidate the document.~~ **Fixed in this batch** — see "Second half" above. | §4 correction 4 | NanoHTTPD had the hook all along (`useGzipWhenAccepted`); the part that needed care was the `304` framing. |
 | P1-4 | ~~Bound `webOut` in bytes, not frames~~ **done in `perf/webout-byte-bound`**; stop the camera/mic when the tab reading them is gone. | §7: `CallEngine.kt:367` | The byte bound was a local queue policy and is tested here. The watchdog that ends a call is a behaviour change and needs a device — that half is still open, not skipped by accident. |
 | P2-1 | Let the ladder step back up, or delete `stepUp`. | §6: no production call site | Small, but only measurable in a call. |
@@ -376,6 +410,8 @@ PULSEDROP_PROBE=true PULSEDROP_PROBE_OUT=… ./gradlew :app:testDebugUnitTest --
 ./gradlew :app:testDebugUnitTest :app:lintDebug --rerun-tasks   # over the cursor-gap branch
     BUILD SUCCESSFUL in 5m 7s — 73 classes, 581 tests, 7 skipped, 0 failures, 0 errors
     lint: 0 errors, 62 warnings — unchanged again
+PULSEDROP_PROBE=true PULSEDROP_PROBE_OUT=… ./gradlew :app:testDebugUnitTest --tests '…HostBaselineProbe.startupCostAndBindConflict'
+    BUILD SUCCESSFUL in 11s — the startup rows above
 ```
 
 The first `WebOutboxTest` run failing twice is worth keeping in the record rather than editing out.
