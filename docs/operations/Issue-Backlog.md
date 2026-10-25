@@ -328,16 +328,23 @@ could hold it. `/chatupload` had no preflight at all.
   and the upload handler caught it as an ordinary failure. It now takes the plain truncation.
 * Neither route reflects `e.message` into the response any more; an exception string from this depth
   is a filesystem path, and the path is under the app's private storage.
+* The `.part` landing file is deleted by the request that wrote it, so a process killed mid-copy used
+  to leave one behind forever. Nothing enumerates `WebDrop_Received` — the browser list and the
+  Receive screen both read the in-memory registry — so the leftover was invisible and permanent,
+  quietly spending storage on a phone that may be short of it. `start()` now sweeps
+  `.{uuid}.part` files there, including the subdirectories `?path=` can create, before the listener
+  binds. The match is deliberately narrow: `sanitizeFileName` trims leading dots, so no received name
+  can look like a landing file, while `movie.part`, `.nomedia` and `.not-a-uuid.part` are left alone.
+  `PartialUploadSweepTest` seeds each of those and proves both halves.
 *Still open, and it is not a small remainder:* per-client, per-concurrent and total quotas; the
-`.part` is cleaned by the same request that wrote it, so a process killed mid-copy leaves one behind
-(a crash-recovery sweep of `.*.part` in `WebDrop_Received` is not written); the `?path=` collision
-policy is undecided — the second sender of one name gets a timestamp suffix when the first has already
-landed and the same name when it has not, and whether a collision should instead be a `409` is a
-response-shape question, not a security one; and the ceiling bounds the *declared* length only. That
-last point is weaker than it sounds in one direction and stronger in the other: a client that
-over-declares is refused, and a client that under-declares is not read at all — `parseBody` stops at
-`Content-Length` — so the unconsumed bytes are left in the socket to be parsed as the next pipelined
-request, which is a request-smelling question (filed separately) rather than a disk-fill one.
+`?path=` collision policy is undecided — the second sender of one name gets a timestamp suffix when
+the first has already landed and the same name when it has not, and whether a collision should instead
+be a `409` is a response-shape question, not a security one; and the ceiling bounds the *declared*
+length only. That last point is weaker than it sounds in one direction and stronger in the other: a
+client that over-declares is refused, and a client that under-declares is not read at all —
+`parseBody` stops at `Content-Length`. The unconsumed bytes used to sit in the socket to be parsed as
+the next pipelined request; that half is closed by ending the connection after any request declaring
+a body (`R-11`), not by reading the surplus.
 *Tests:* `UploadCeilingTest` — declared length above the budget → 413 on `/upload` and `/chatupload`;
 a 40 MB body streamed against a 32 MiB budget is refused *and* the client could not finish pushing
 it, which is what proves the refusal precedes the read; an upload that fits still arrives byte for
@@ -347,7 +354,9 @@ than against the shadow's arithmetic. `FileNameAdversarialTest` — the traversa
 header-injection, markup, bidirectional-override, over-long-name, blank-name, reserved-name and
 same-name-collision cases on `/upload?path=`, the same sanitizer's two other users
 (`/download-folder?path=` and `/chatupload?filename=`), and the symlink case that only the canonical
-check can answer.
+check can answer. `PartialUploadSweepTest` — an orphaned landing file in the root and in a `?path=`
+subdirectory is gone after `start()`, while a finished upload, a name with no extension, `.nomedia`,
+`movie.part` and a `.uuid.part.txt` all survive.
 
 ### R-3 [fixed] Unauthenticated typing presence is forgeable and fillable
 `/api/typing` POST took `sender` verbatim with no credential, and `typingSenders.remove(sender)` on
