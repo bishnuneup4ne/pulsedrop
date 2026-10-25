@@ -415,11 +415,19 @@ should be labelled as one wherever it is repeated.
 prefix for refactor items. Nothing here was renamed.
 
 ### K-1 [recommendation] Pairing threat-model test suite
-P-256 ECDH + AES-GCM + KDF v1/v2 already have golden-vector tests. Still missing: safety code derived
-from the exact transcript both sides authenticate, key-substitution → code-mismatch, curve/key
-validation on parse, deterministic KDF selection bound to the transcript, duplicate/stale/concurrent
-pair requests, identity loss and reinstall. **Compatibility rule:** never rename legacy aliases,
-preference keys, database names, or wire constants; never silently change KDF for an existing pairing.
+P-256 ECDH + AES-GCM + KDF v1/v2 already have golden-vector tests.
+
+**Key ingest is now validated.** `Crypto.isP256PublicKey` parses the presented SPKI and compares its
+domain parameters against the platform's `secp256r1` spec, and `PairHandshake` applies it at all three
+entry points: `POST /api/pair/request`, accepting a request rebuilt from state, and an answer on
+`POST /api/pair/response` (direct or relayed). An answer naming a `kdf` outside `Kdf.isKnown` is
+refused as well, with a user-visible reason. Previously an impossible key or version was stored, so the
+first message after a confirmed pairing threw during ECDH or derivation. Proved by `PairKeyIngestTest`.
+
+Still missing: safety code derived from the exact transcript both sides authenticate, key-substitution →
+code-mismatch, deterministic KDF selection bound to the transcript, duplicate/stale/concurrent pair
+requests, identity loss and reinstall. **Compatibility rule:** never rename legacy aliases, preference
+keys, database names, or wire constants; never silently change KDF for an existing pairing.
 
 ---
 

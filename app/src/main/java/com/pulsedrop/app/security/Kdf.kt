@@ -25,6 +25,9 @@ object Kdf {
     fun orderedSpki(a: ByteArray, b: ByteArray): ByteArray =
         if (compareUnsigned(a, b) <= 0) a + b else b + a
 
+    /** Whether [version] is one of the derivations this build can perform. */
+    fun isKnown(version: Int): Boolean = version == V1 || version == V2
+
     fun derive(sharedSecret: ByteArray, ordered: ByteArray, version: Int): SecretKeySpec = when (version) {
         V1 -> v1(sharedSecret, ordered)
         V2 -> v2(sharedSecret, ordered)
