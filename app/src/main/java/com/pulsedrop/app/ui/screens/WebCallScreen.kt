@@ -185,11 +185,19 @@ fun WebCallScreen(
             Spacer(modifier = Modifier.height(18.dp))
 
             Text(
-                text = "Opening the live call with $name — voice and video flow over the secure link.",
+                // "the secure link" was the old wording, and it is the claim this screen has no
+                // business making: the certificate is this phone's own, so the browser's warning
+                // proves encryption and nothing about who is on the other end. Saying which of the
+                // two it proves is the point — a user who was told "secure" and then saw a warning
+                // has been taught to click through warnings.
+                text = "Live call with $name — encrypted with this phone's own certificate. " +
+                    "The browser's warning means nobody vouched for this phone, not that the call is in the clear.",
                 style = MaterialTheme.typography.labelMedium,
                 color = stage.textSecondary,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(bottom = 20.dp)
+                modifier = Modifier
+                    .padding(bottom = 20.dp)
+                    .testTag("web_call_security_note")
             )
         }
     }
