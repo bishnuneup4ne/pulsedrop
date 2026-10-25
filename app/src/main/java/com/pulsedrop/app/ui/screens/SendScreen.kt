@@ -77,6 +77,8 @@ import com.pulsedrop.app.ui.theme.PulseRadius
 import com.pulsedrop.app.ui.theme.PulseSizes
 import com.pulsedrop.app.ui.theme.PulseSpacing
 import com.pulsedrop.app.util.NetworkUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // ── Selection model ─────────────────────────────────────────────────────────
 
@@ -269,10 +271,12 @@ fun SendScreen(
     // Resolve name/size/type off the main thread, one pass per selection change. Only metadata
     // is read — file contents never enter memory here.
     LaunchedEffect(selectedFiles) {
-        val resolved = selectedFiles.map { uri ->
-            val existing = items.firstOrNull { it.uri == uri }
-            if (existing != null && existing.size >= 0) return@map existing
-            resolveFileForSend(context, uri)
+        val resolved = withContext(Dispatchers.IO) {
+            selectedFiles.map { uri ->
+                val existing = items.firstOrNull { it.uri == uri }
+                if (existing != null && existing.size >= 0) return@map existing
+                resolveFileForSend(context, uri)
+            }
         }
         items = resolved
     }
