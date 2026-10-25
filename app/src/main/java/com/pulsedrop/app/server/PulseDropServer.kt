@@ -906,10 +906,22 @@ class PulseDropServer(
     private val secureOrigin = ThreadLocal.withInitial { false }
 
     override fun start() {
+        // Before the listener exists, so nothing can be uploading: a process killed mid-copy never
+        // runs the `finally` that removes its landing file. This name cannot come from a caller —
+        // `sanitizeFileName` trims leading dots — so anything matching it is a leftover of ours.
+        sweepPartialUploads()
         super.start()
         current = this
         tlsStopped = false
         ensureTls()
+    }
+
+    private fun sweepPartialUploads() {
+        val root = File(context.getExternalFilesDir(null) ?: context.filesDir, RECEIVED_DIR_NAME)
+        if (!root.isDirectory) return
+        root.walkTopDown()
+            .filter { it.isFile && PARTIAL_UPLOAD_NAME.matches(it.name) }
+            .forEach { it.delete() }
     }
 
     override fun stop() {
@@ -2638,8 +2650,24 @@ class PulseDropServer(
     }
 
     companion object {
-        /** Where accepted uploads live; the Receive page shows this folder and nothing else. */
+        /**
+         * Where accepted uploads live. The Receive screen shows this path and its free space; no
+         * screen enumerates the folder itself, which is why [PARTIAL_UPLOAD_NAME] leftovers used to
+         * sit there unseen.
+         */
         const val RECEIVED_DIR_NAME = "WebDrop_Received"
+
+        /**
+         * The landing name an upload copies into before renaming it into place. A killed process
+         * never runs the cleanup `finally`, so `start()` collects whatever still matches. Only the
+         * UUID shape is swept: [sanitizeFileName] trims leading dots, so a stored name can never
+         * look like this, and a user's own `.something` file (if one ever predates that rule) is
+         * left alone.
+         */
+        private val PARTIAL_UPLOAD_NAME = Regex(
+            "^\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.part$",
+            RegexOption.IGNORE_CASE
+        )
 
         /**
          * Ceiling for a JSON POST. The largest legitimate one carries a device name, a call id and
