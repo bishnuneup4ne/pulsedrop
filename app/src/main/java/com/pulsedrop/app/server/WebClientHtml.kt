@@ -1226,7 +1226,7 @@ object WebClientHtml {
         <div class="filter-bar">
           <div class="search">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-            <input id="searchInput" type="text" placeholder="Search files… (Ctrl+K)" aria-label="Search files" oninput="applyFilter()" />
+            <input id="searchInput" type="text" placeholder="Search files… (Ctrl+K)" aria-label="Search files" oninput="queueFileFilter()" />
           </div>
           <div class="chips" id="chips">
             <button class="chip active" data-cat="all" aria-label="Show all files">All</button>
@@ -1255,7 +1255,7 @@ object WebClientHtml {
             </button>
           </div>
           <div class="rail-search">
-            <input id="railSearch" type="text" placeholder="Search chats" aria-label="Search chats" oninput="renderThreadRail()" />
+            <input id="railSearch" type="text" placeholder="Search chats" aria-label="Search chats" oninput="queueRailFilter()" />
           </div>
           <div class="rail-new" id="railNew">
             <div class="new-peers" id="newPeerList"></div>
@@ -1729,6 +1729,9 @@ object WebClientHtml {
       messagesEtag = '';
       // A dead session cannot mint a ticket, so stop reconnecting until a new login succeeds.
       eventsStopped = true;
+      // ...and cancel the reconnect that stream had already scheduled, or it fires under the next
+      // login, against a ticket the session no longer has.
+      if (eventRetryTimer) { clearTimeout(eventRetryTimer); eventRetryTimer = null; }
       try { if (eventsStream) eventsStream.close(); } catch (e) {}
       // Tickets outlive the session that minted them by a few minutes. That is fine on the phone
       // and wrong here: the tab would spend an invalid one before checking.
@@ -1767,6 +1770,8 @@ object WebClientHtml {
           localStorage.setItem('pulse_token', authToken);
           el('authOverlay').style.display = 'none';
           revealApp();
+          fetchThreads();
+          fetchPeers();
           fetchFiles();
           fetchInfo();
           fetchMessages();
@@ -1919,7 +1924,14 @@ object WebClientHtml {
     });
 
     /* ===== Files ===== */
+    var filesBusy = false, filesRerun = false;
     async function fetchFiles() {
+      // A pushed `file` event and the periodic read want the same list. Running one at a time is
+      // the point; forgetting the second trigger entirely would hold a file back until the next
+      // poll, so the tail re-runs as soon as the current read lands.
+      if (filesBusy) { filesRerun = true; return; }
+      filesBusy = true;
+      var rerun = false;
       try {
         var res = await fetch('/api/files', { headers: authHeaders() });
         if (res.status === 401 && REQUIRES_PIN) { lockOut(); return; }
@@ -1929,6 +1941,8 @@ object WebClientHtml {
         applyFilter();
         updateStats();
       } catch (e) { setConnected(false); }
+      finally { filesBusy = false; rerun = filesRerun; filesRerun = false; }
+      if (rerun) fetchFiles();
     }
 
     async function fetchInfo() {
@@ -2059,6 +2073,21 @@ object WebClientHtml {
 
     function applyFilter() { renderFiles(filteredFiles()); }
 
+    // Repainting the whole shelf on every keystroke is the most expensive thing the page does by
+    // hand, so the inputs debounce into these; a timer of 0 would still fire between two keys of
+    // one paste.
+    var fileFilterTimer = null;
+    function queueFileFilter() {
+      if (fileFilterTimer) clearTimeout(fileFilterTimer);
+      fileFilterTimer = setTimeout(function () { fileFilterTimer = null; applyFilter(); }, 120);
+    }
+
+    var railFilterTimer = null;
+    function queueRailFilter() {
+      if (railFilterTimer) clearTimeout(railFilterTimer);
+      railFilterTimer = setTimeout(function () { railFilterTimer = null; renderThreadRail(); }, 120);
+    }
+
     el('chips').addEventListener('click', function (e) {
       var chip = e.target.closest('.chip');
       // "On phone only" lives in this row but is a toggle, not a category; taking the branch
@@ -2181,6 +2210,15 @@ object WebClientHtml {
 
     function renderFiles(list) {
       var grid = el('filesGrid');
+      // The shelf is rebuilt by a poll every few seconds and a few hundred cards cost more than a
+      // frame. The DOM is already right when the data and the filter behind it are unchanged.
+      var key = list.length + '/' + allFiles.length;
+      for (var i = 0; i < list.length; i++) {
+        var f = list[i];
+        key += '|' + f.id + ':' + f.name + ':' + f.size;
+      }
+      if (grid._fp === key) return;
+      grid._fp = key;
       grid.textContent = '';
       if (list.length === 0) {
         grid.appendChild(allFiles.length === 0 ? emptyShelfNode() : emptyFilterNode());
@@ -2258,7 +2296,10 @@ object WebClientHtml {
       toggle.textContent = expandedFolders[root] ? 'Hide files' : 'Show ' + files.length + ' files';
       toggle.addEventListener('click', function () {
         expandedFolders[root] = !expandedFolders[root];
-        applyFilter();
+        // Nothing about the data changed, so flip this card in place; repainting the shelf for a
+        // folder would throw away every other card on the page.
+        contents.classList.toggle('open', !!expandedFolders[root]);
+        toggle.textContent = expandedFolders[root] ? 'Hide files' : 'Show ' + files.length + ' files';
       });
 
       var actions = document.createElement('div');
@@ -2786,16 +2827,32 @@ object WebClientHtml {
       var q = (el('railSearch').value || '').trim().toLowerCase();
       var rows = threadIds();
       if (q) rows = rows.filter(function (r) { return r.title.toLowerCase().indexOf(q) >= 0; });
-      host.textContent = '';
-      if (!rows.length) {
-        var empty = document.createElement('div');
-        empty.className = 'rail-empty';
-        empty.textContent = q ? 'No chats match "' + q + '".' : 'No conversations yet. Say something in Everyone.';
-        host.appendChild(empty);
-      } else {
-        rows.forEach(function (r) { host.appendChild(buildRailItem(r)); });
+      // Same reasoning as the shelf: the rail is rebuilt by every message poll, and only the
+      // minute bucket changes without anything visible doing so.
+      var key = q + '|' + currentThread + '|' + unreadTotal() + '|' + Math.floor(Date.now() / 60000);
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i], last = r.last;
+        // Everything a row can print without its timestamp moving is in here, so a renamed device
+        // or a deleted message repaints even though the thread did not grow.
+        key += '|' + r.id + ':' + r.title + ':' + r.ts + ':' + r.count +
+          ':' + (last ? [String(last.sender || '').length, String(last.text || '').length,
+                         String((last.attachment && last.attachment.name) || '').length,
+                         last.deleted ? 'd' : ''].join(',') : '-') +
+          ':' + (r.id === currentThread ? 0 : (unread[r.id] || 0));
       }
-      el('railCount').textContent = rows.length ? rows.length + '' : '';
+      if (host._fp !== key) {
+        host._fp = key;
+        host.textContent = '';
+        if (!rows.length) {
+          var empty = document.createElement('div');
+          empty.className = 'rail-empty';
+          empty.textContent = q ? 'No chats match "' + q + '".' : 'No conversations yet. Say something in Everyone.';
+          host.appendChild(empty);
+        } else {
+          rows.forEach(function (r) { host.appendChild(buildRailItem(r)); });
+        }
+        el('railCount').textContent = rows.length ? rows.length + '' : '';
+      }
 
       var total = unreadTotal();
       var dot = el('tabChatDot');
@@ -4033,6 +4090,14 @@ object WebClientHtml {
       // spent a POST /api/ticket on every reconnect for a token the cache already held.
       return ticketFor('events');
     }
+    function scheduleEventRetry() {
+      // One timer at a time, wherever the retry came from: EventSource reports the same lost
+      // connection several times over, and each report would otherwise schedule its own reconnect.
+      if (eventRetryTimer || eventsStopped) return;
+      var wait = eventBackoffMs + Math.floor(Math.random() * 250);
+      eventBackoffMs = Math.min(eventBackoffMs * 2, 20000);
+      eventRetryTimer = setTimeout(function () { eventRetryTimer = null; connectEvents(); }, wait);
+    }
     function connectEvents() {
       if (!window.EventSource || eventsStopped) return;
       if (eventRetryTimer) { clearTimeout(eventRetryTimer); eventRetryTimer = null; }
@@ -4066,19 +4131,20 @@ object WebClientHtml {
           // Covers both a lost connection and a ticket that has expired under it. One timer at a
           // time, or EventSource's repeated error events would multiply the reconnects.
           try { es.close(); } catch (e) {}
-          if (eventRetryTimer) return;
           if (openedAt && Date.now() - openedAt > 20000) eventBackoffMs = 1000;
-          var wait = eventBackoffMs + Math.floor(Math.random() * 250);
-          eventBackoffMs = Math.min(eventBackoffMs * 2, 20000);
-          eventRetryTimer = setTimeout(function () { eventRetryTimer = null; connectEvents(); }, wait);
+          scheduleEventRetry();
         };
       };
       if (!authToken) { start('/api/events'); return; }
       eventTicket().then(function (t) {
-        start(t ? '/api/events?ticket=' + encodeURIComponent(t) : '/api/events');
+        if (eventsStopped) return;
+        // Without a ticket this session cannot make the request at all, so the stream is not opened
+        // rather than opened unpowered: that buys a 401 and an error handler that reconnects
+        // forever against a door that cannot open.
+        if (!t) { scheduleEventRetry(); return; }
+        start('/api/events?ticket=' + encodeURIComponent(t));
       });
     }
-    connectEvents();
     // The tab is going away; stop the timer too, or a pending reconnect outlives the page.
     window.addEventListener('beforeunload', function () {
       eventsStopped = true;
@@ -4828,8 +4894,10 @@ object WebClientHtml {
       if (keepMessage || secs) toast(line);
     }
 
-    // Watch for the phone dialling this tab even while no call is open here.
-    setInterval(function () { if (!call.cid) pollCall(); }, 2000);
+    // Watch for the phone dialling this tab even while no call is open here. Hidden tabs throttle
+    // timers to a crawl anyway, so the requests would only add up; the event stream rings a buried
+    // tab, and visibilitychange catches anything it missed the moment the tab is looked at again.
+    setInterval(function () { if (!document.hidden && !call.cid) pollCall(); }, 2000);
     // Background tabs throttle timers hard; poll the instant the user comes back, so a call
     // started while the tab was buried shows up as soon as they look at it.
     document.addEventListener('visibilitychange', function () {
@@ -4894,17 +4962,20 @@ object WebClientHtml {
     renderEmpty(el('filesGrid'), 'Loading files…');
     el('selfNameInput').value = MY_NAME;
     renderThreadRail();
-    fetchThreads();
-    fetchPeers();
     if (REQUIRES_PIN && !authToken) {
+      // Nothing behind the PIN gate can be read yet, and every request would answer 401 and run
+      // the lock-out path as churn. The first fetch happens when submitPin succeeds.
       showAuth();
     } else {
       el('authOverlay').style.display = 'none';
       revealApp();
+      fetchThreads();
+      fetchPeers();
       fetchFiles();
       fetchInfo();
+      fetchMessages();
+      connectEvents();
     }
-    fetchMessages();
     // Plain http cannot send a mic or camera out of a browser. The phone normally bounces
     // http visits to the https port automatically; this only shows if that listener is still
     // coming up, so keep asking until it is and offer the jump instead of reciting an address.
@@ -4914,6 +4985,8 @@ object WebClientHtml {
       }, 1400);
       var secureWatch = setInterval(function () {
         if (secureOffered) { clearInterval(secureWatch); return; }
+        // Asking while signed out only buys a 401 and a lock-out.
+        if (REQUIRES_PIN && !authToken) return;
         fetchInfo();
       }, 6000);
     }
