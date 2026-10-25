@@ -29,6 +29,27 @@ required for browser media).
 [Capabilities and Versioning](Capabilities-and-Versioning.md)). A pre-2.1 build simply
 omits the key; absent means "no capabilities claimed", never "unknown".
 
+## Response encoding
+
+Every response is post-processed on one rule: a tab re-reads the same state constantly, so the bytes
+it already has must not be sent to it twice, and the bytes it does not have should travel small.
+
+- **`gzip`** is applied to `application/json` and `text/html` answers of at least 1 KiB when the
+  request says `Accept-Encoding: gzip`. NanoHTTPD implements compression by switching the response
+  to `Transfer-Encoding: chunked`, so a compressed answer has no `Content-Length`. Streams
+  (`text/event-stream`), media downloads and the export archive are never compressed: they are
+  either frames small enough that buffering them to save bytes would delay delivery, or bytes that
+  are already compressed.
+- **`ETag`** is a strong validator over the exact bytes this caller would receive — SHA-256 of the
+  body, first 64 bits, hex. Because these routes answer per address, two tabs whose visible history
+  differs get two different validators, so no tab can be served another's cached page.
+- **`If-None-Match`** (or `*`) with a matching validator answers `304 Not Modified` with no body and
+  deliberately no `Content-Length`, which RFC 9110 forbids on a 304 and a strict client treats as a
+  protocol error. `Vary: Accept-Encoding` is sent wherever a validator is.
+- A `304` is not `ok` to `fetch`, so a client must test the status before its failure branch. The
+  page remembers the validator for its own polls and clears it on logout, since the next login
+  answers a different room.
+
 ## Chat
 
 | Method | Path | Purpose |

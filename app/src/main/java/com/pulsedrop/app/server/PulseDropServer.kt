@@ -78,6 +78,9 @@ private const val PIN_LOCKOUT_MS = 60_000L
 private const val PIN_LOCKOUT_MAX_STEPS = 4
 private const val SERVER_CHAT_RETENTION = 2000
 private const val TYPING_SENDER_LIMIT = 64
+// Under this many bytes, compressing a body spends more of the phone's CPU than the radio time it
+// saves, and a fingerprint nobody revalidates is only a header.
+private const val BODY_COMPRESS_MIN_BYTES = 1_024
 private const val WEB_CLIENT_TTL = 90_000L
 // Matches CallEngine.RING_TIMEOUT_MS so a browser and a paired app are given up on alike.
 private const val WEB_RING_TIMEOUT_MS = 35_000L
@@ -1419,7 +1422,118 @@ class PulseDropServer(
         if (session.headers.keys.any { it == "content-length" || it == "transfer-encoding" }) {
             response.closeConnection(true)
         }
-        return response
+        return revalidate(session, response)
+    }
+
+    /**
+     * The text bodies a tab reads again and again: the page, and the room's JSON.
+     *
+     * Deliberately narrow. A media download, a range request and a zipped export are already
+     * compressed bytes, and the event stream is a live sequence of frames small enough that
+     * buffering them to save a few of their own would only delay delivery.
+     */
+    private val compressibleText = setOf("application/json", "text/html")
+
+    /**
+     * Whether to gzip this response, asked by NanoHTTPD itself once the handler has returned; when
+     * this says yes the library adds `Content-Encoding: gzip` and switches the response to chunked
+     * transfer, so the framing stays the library's rather than ours.
+     *
+     * A body that mixes attacker-chosen text with a secret is the standing argument against
+     * compressing at all (BREACH), and this one does mix: message text from any sender goes out
+     * inside JSON another tab can request repeatedly. What it never contains is a secret — the PIN,
+     * the session token and the pairing proof are not in any response body, and the only reader who
+     * can ask for these bytes is a tab that already presented one of them. A peer close enough to
+     * time the compressed length of a room's messages is a peer already inside the room.
+     */
+    override fun useGzipWhenAccepted(r: Response): Boolean {
+        val mime = r.mimeType?.substringBefore(';')?.trim()?.lowercase() ?: return false
+        if (mime !in compressibleText) return false
+        // Only a body the handler already holds in memory: measuring a stream would mean draining
+        // it, and every streaming route in this file is one we just excluded on purpose.
+        val body = r.data as? ByteArrayInputStream ?: return false
+        return body.available() >= BODY_COMPRESS_MIN_BYTES
+    }
+
+    /**
+     * Answer a repeated read of unchanged bytes with a fingerprint of them instead of the bytes.
+     *
+     * A tab polls the room every couple of seconds and most polls change nothing, so the body it
+     * pays for — 517 KB of JSON at a 2,000-message history, before compression — is spent proving
+     * that nothing happened. An `ETag` over the exact bytes lets a matching `If-None-Match` return
+     * no body at all.
+     *
+     * The fingerprint is of the bytes this client would receive, not of the room: these routes
+     * answer per-address, and a validator shared across two tabs that see different histories
+     * would hand one tab the other's cached page. `Vary: Accept-Encoding` says the same thing
+     * about the gzip half, which is a second representation of the same content rather than
+     * different content.
+     */
+    private fun revalidate(session: IHTTPSession, response: Response): Response {
+        if (response.status.requestStatus != 200) return response
+        val mime = response.mimeType?.substringBefore(';')?.trim()?.lowercase()
+        if (mime !in compressibleText) return response
+        val body = response.data as? ByteArrayInputStream ?: return response
+        val etag = fingerprint(body) ?: return response
+        response.addHeader("ETag", etag)
+        response.addHeader("Vary", "Accept-Encoding")
+        val offered = session.headers["if-none-match"] ?: return response
+        if (offered.trim() != "*" && offered.split(",").none { it.trim().removePrefix("W/") == etag }) {
+            return response
+        }
+        val notModified = NotModified(
+            listOf(
+                "Date" to httpDate(),
+                "ETag" to etag,
+                "Vary" to "Accept-Encoding",
+                // The policy that produced the stored copy is the policy that keeps it; a 304 that
+                // disagreed would be the one thing a cache cannot merge predictably.
+                "Cache-Control" to (response.getHeader("Cache-Control") ?: "no-cache"),
+                "X-Content-Type-Options" to "nosniff",
+                "Referrer-Policy" to "no-referrer"
+            ),
+            closeAfter = response.isCloseConnection
+        )
+        response.getHeader("Content-Security-Policy")?.let { notModified.addHeader("Content-Security-Policy", it) }
+        return notModified
+    }
+
+    /** A strong validator over the exact bytes, leaving the body where it was. */
+    private fun fingerprint(body: ByteArrayInputStream): String? = runCatching {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        body.mark(body.available())
+        digest.update(body.readBytes())
+        body.reset()
+        "\"" + digest.digest().take(8).joinToString("") { "%02x".format(it) } + "\""
+    }.getOrNull()
+
+    private fun httpDate(): String =
+        java.text.SimpleDateFormat("E, d MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("GMT")
+        }.format(java.util.Date())
+
+    /**
+     * A `304` that carries nothing but headers.
+     *
+     * Hand-written rather than handed to `Response.send()`, because that method prints
+     * `Content-Length: 0` for every fixed-length response and RFC 9110 forbids a `Content-Length`
+     * on a `304` outright. A length header describing a body that must not exist is precisely what
+     * a strict client answers with a protocol error, and a protocol error on the revalidation would
+     * make every later poll look like the phone had vanished — the cure would be worse than a
+     * repeated body.
+     */
+    private class NotModified(
+        private val fields: List<Pair<String, String>>,
+        private val closeAfter: Boolean
+    ) : Response(Response.Status.NOT_MODIFIED, null, ByteArrayInputStream(ByteArray(0)), 0L) {
+
+        override fun send(output: java.io.OutputStream) {
+            val head = StringBuilder("HTTP/1.1 304 Not Modified\r\n")
+            fields.forEach { (name, value) -> head.append(name).append(": ").append(value).append("\r\n") }
+            head.append("Connection: ").append(if (closeAfter) "close" else "keep-alive").append("\r\n\r\n")
+            output.write(head.toString().toByteArray(Charsets.US_ASCII))
+            output.flush()
+        }
     }
 
     private fun dispatch(session: IHTTPSession): Response {

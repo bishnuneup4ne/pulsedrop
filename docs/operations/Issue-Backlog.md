@@ -542,8 +542,22 @@ has ever said: measured 257 B at one message, 51,491 B at 200, **516,891 B at th
 cap** — re-read on the client's 2 s tick and on every doorbell.
 *Fixed:* the client no longer starts a second, third and fourth concurrent copy of that read when a
 doorbell lands while one is in flight (it serialises and re-runs once at the end), asserted by
-`WebClientRequestDisciplineTest`.
-*Still open:* a cursor is an endpoint shape change, not a patch — P1-1 in the baseline document.
+`WebClientRequestDisciplineTest`; and an unchanged read now costs nothing at all, because the route
+carries a validator (R-18).
+*Still open:* a cursor. Reading the list's lifecycle first showed `?since=` is not the shape it
+should take, and any version of it is three changes, not one:
+- nothing monotonic exists to cursor on — ids are `UUID.randomUUID()` (`:1133`) and `timestamp`
+  collides within a millisecond, so a cursor would have to be a new server-assigned revision;
+- a retraction re-issues the *same entry* (`markMessageDeleted` replaces it in place at `:1167`), so
+  a filter on the entry's original revision would never re-send the tombstone, and a tab that had
+  already shown the message would keep showing text its sender retracted;
+- visibility is not monotonic — `threadIsVisibleTo` (`:668`) is evaluated per request against
+  `@Volatile webThreads` (`:507`), reassigned from the phone whenever its group list changes, so
+  old messages can become newly visible *and* visible messages can vanish without any revision
+  moving. A forward cursor cannot express either direction; it needs a visibility epoch that forces a
+  full resync, which is the payload this was meant to stop sending.
+Also `while (messages.size > SERVER_CHAT_RETENTION) messages.removeAt(0)` (`:1146`, `:1190`): the
+front falls off at 2000, so an offset-based cursor silently skips rather than signals a gap.
 
 ### R-13 [fixed] The event-stream cap silenced tabs instead of refusing one
 `maxEventStreams = 8` (`:557`) was enforced by evicting the oldest stream, so the ninth tab's arrival
@@ -584,10 +598,23 @@ cap, queued on a phone during a call. The PRD's "prefer WebRTC" is a new depende
 that local-network operation must not need an external service; that decision belongs to the owner,
 not to a patch.
 
-### R-18 [confirmed] Nothing about the payloads is compressed or revalidated
-No `Content-Encoding`, `ETag` or `Vary` anywhere in the server package; the index route regenerates the
-236 KB document per request (`:1494`). Real, but it changes how responses leave NanoHTTPD, so it is
-gated on approval rather than slipped in beside R-12.
+### R-18 [fixed] Nothing about the payloads was compressed or revalidated
+There was no `Content-Encoding`, `ETag` or `Vary` anywhere in the server package, and the index route
+regenerates the 236 KB document per request (`:1494`), so every read paid full price whether or not
+anything had changed.
+*Fixed:* `serve()` now post-processes every response through one rule — gzip for `application/json`
+and `text/html` bodies of at least 1 KiB (NanoHTTPD's own `useGzipWhenAccepted` hook, so the chunked
+framing stays the library's), a strong `ETag` over the exact bytes this caller would receive with
+`Vary: Accept-Encoding`, and a `304` that carries neither a body nor the `Content-Length` RFC 9110
+forbids on it. The page offers that validator on its own message poll, because JSON answers are
+`no-store` on purpose and the browser therefore holds nothing to revalidate for it.
+Measured on the wire: `GET /` 237,812 → 58,378 B; `GET /api/messages` at the retention cap
+517,160 → 63,193 B; the same poll when nothing changed → **227 B**. `ResponseEncodingTest` covers the
+encoding, the framing, the per-address nature of the validator (two tabs with different visible
+history must not share one), a room that changed, and that a `304` does not desync the keep-alive
+connection it arrived on.
+Deliberately *not* claimed: poll latency over a socket barely moved (p95 20 → 14 ms), because the
+route still serialises the whole history before there is a fingerprint to compare — see P1-1.
 
 ---
 

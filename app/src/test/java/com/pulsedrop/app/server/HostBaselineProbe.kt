@@ -152,28 +152,94 @@ class HostBaselineProbe {
     @Test
     fun messagePollScalesWithHistory() {
         for (target in listOf(1, 200, 1000, 2000)) {
-            var seeded = countMessages()
-            while (seeded < target) {
-                val answer = TabSession(
-                    "/api/messages", Method.POST, "127.0.0.1",
-                    requestHeaders = mapOf("x-pulse-auth" to token, "content-type" to "application/json"),
-                    json = "{\"text\":\"seed $seeded padding-padding-padding-padding-padding\",\"sender\":\"prober\"}"
-                ).sendTo(server)
-                // The same flood guard: a rejected POST stores nothing, and counting it as a seed
-                // would silently measure a smaller history than the row claims.
-                if (answer.status == 429) Thread.sleep(40)
-                else if (answer.status == 200) seeded++
-            }
+            val stored = seedMessages(target)
             val (samples, bytes) = polledSamples("/api/messages", 15)
             report("messages", "stored_$target bytes", bytes.toString())
             report("messages", "stored_$target p50_ms", percentile(samples, 0.50).toString())
             report("messages", "stored_$target p95_ms", percentile(samples, 0.95).toString())
             report("messages", "stored_$target polls_measured", samples.size.toString())
+            report("messages", "stored_$target stored_exactly", stored.toString())
         }
+    }
+
+    /** Pushes the room up to [target] visible messages and returns how many actually landed. */
+    private fun seedMessages(target: Int): Int {
+        var seeded = countMessages()
+        while (seeded < target) {
+            val answer = TabSession(
+                "/api/messages", Method.POST, "127.0.0.1",
+                requestHeaders = mapOf("x-pulse-auth" to token, "content-type" to "application/json"),
+                json = "{\"text\":\"seed $seeded padding-padding-padding-padding-padding\",\"sender\":\"prober\"}"
+            ).sendTo(server)
+            // The same flood guard: a rejected POST stores nothing, and counting it as a seed
+            // would silently measure a smaller history than the row claims.
+            if (answer.status == 429) Thread.sleep(40)
+            else if (answer.status == 200) seeded++
+        }
+        return seeded
     }
 
     private fun countMessages(): Int =
         Regex("\"id\":").findAll(http.call("GET", "/api/messages", mapOf("x-pulse-auth" to token)).body).count()
+
+    /**
+     * The saving the response encoding is meant to buy, counted on the wire.
+     *
+     * Every other row in this file times a handler call, which cannot see the two things that
+     * actually shrink a poll: the bytes the radio carries, and the work a tab avoids when the phone
+     * says "unchanged". These are socket measurements — connect, send, read the whole answer — so
+     * they include the framing a browser pays for and not just the route's own cost.
+     */
+    @Test
+    fun encodingOnTheWire() {
+        val auth = mapOf("x-pulse-auth" to token)
+        val page = rawMeasured("/", auth)
+        val pagePacked = rawMeasured("/", auth, "Accept-Encoding" to "gzip")
+        report("encoding", "document_wire_bytes", page.transferred.toString())
+        report("encoding", "document_gzip_bytes", pagePacked.transferred.toString())
+
+        seedMessages(2000)
+        val messages = rawMeasured("/api/messages", auth)
+        val messagesPacked = rawMeasured("/api/messages", auth, "Accept-Encoding" to "gzip")
+        report("encoding", "messages_2000_wire_bytes", messages.transferred.toString())
+        report("encoding", "messages_2000_gzip_bytes", messagesPacked.transferred.toString())
+
+        // The common poll: nothing happened in the two seconds since the last one.
+        val etag = requireNotNull(messages.etag) { "the route offered no validator, status ${messages.status}" }
+        val unchanged = rawMeasured("/api/messages", auth, "If-None-Match" to etag)
+        report("encoding", "unchanged_wire_bytes", unchanged.transferred.toString())
+        report("encoding", "unchanged_status", unchanged.status.toString())
+
+        val times = LongArray(15)
+        repeat(15) { i ->
+            times[i] = elapsed { rawMeasured("/api/messages", auth, "If-None-Match" to etag) }
+        }
+        report("encoding", "unchanged_poll_p50_ms", percentile(times, 0.50).toString())
+        report("encoding", "unchanged_poll_p95_ms", percentile(times, 0.95).toString())
+        val full = LongArray(15)
+        repeat(15) { i ->
+            full[i] = elapsed { rawMeasured("/api/messages", auth) }
+        }
+        report("encoding", "full_poll_p50_ms", percentile(full, 0.50).toString())
+        report("encoding", "full_poll_p95_ms", percentile(full, 0.95).toString())
+    }
+
+    /**
+     * A wire read that waits for the flood guard instead of measuring it.
+     *
+     * The bucket is per address and every client in this probe is loopback, so a probe that has just
+     * posted two thousand messages is exactly the case that earns a 429 — and a 429 has no validator,
+     * no body and nothing to compress, which would make every row below it a number about the guard.
+     */
+    private fun rawMeasured(path: String, headers: Map<String, String>, vararg extra: Pair<String, String>): Wire {
+        var attempt = 0
+        while (attempt++ < 60) {
+            val answer = http.raw("GET", path, headers + extra.toMap())
+            if (answer.status != 429) return answer
+            Thread.sleep(250)
+        }
+        error("the flood guard never let $path through")
+    }
 
     @Test
     fun transferThroughputAndInterference() {

@@ -73,6 +73,26 @@ and the tab pays it *in full* every time anything changes.
 Six requests to catch up (`/api/messages`, `/api/threads`, `/api/files`, `/api/peers`, `/api/info`,
 `/api/typing`), 0 ms of handler time against an empty room, `requests_per_reconnect = 6`.
 
+### What a poll costs once the answer is compressed and revalidatable
+
+Measured over a real socket after the second batch (`encodingOnTheWire`), so the bytes are what the
+radio carried — headers and chunk framing included — and the times include connecting:
+
+| Measurement | Value |
+| --- | --- |
+| `GET /` on the wire | 237,812 B → **58,378 B** gzipped (4.1×) |
+| `GET /api/messages` @ 2000 on the wire | 517,160 B → **63,193 B** gzipped (8.2×) |
+| The same poll when nothing changed | **227 B** (a `304` header block, no body) |
+| Full poll over a socket | p50 10 ms / p95 20 ms |
+| Unchanged poll over a socket | p50 9 ms / p95 14 ms |
+
+The timing rows are the uncomfortable ones and they are the reason this document keeps "bytes" and
+"latency" apart: on this machine an unchanged poll is ~1 ms faster, not 10× faster, because the route
+still serialises the whole visible history before there is anything to fingerprint. What the `304`
+actually removes is 517 KB of transfer, the browser's parse of it, and the re-render that follows —
+none of which this host can time, because the browser is not on it. Handler time was never the
+bottleneck here (11 ms p95 in §1); the payload was.
+
 ---
 
 ## Confirmed bottlenecks, one per symptom
@@ -159,10 +179,12 @@ asked for them to be revalidated rather than copied.
    "prefer WebRTC" is a proposal to add a dependency, not to fix a lie.
 3. **"A boot request waterfall."** A fresh tab issues six reads (`requests_per_reconnect` above) and
    they are not on the critical path of first paint; there is no measured startup cascade to untangle.
-4. **"Add gzip and caching headers."** Correct that there is no `Content-Encoding`, `ETag` or `Vary`
-   anywhere in the server package — so the 236 KB document and the 517 KB message payload go out
-   uncompressed and un-revalidatable, every time. This is a real gap, but it is a *decision* about
-   response handling in NanoHTTPD, not a patch to slip in quietly.
+4. **"Add gzip and caching headers."** Correct as measured: at the time these rows were taken there
+   was no `Content-Encoding`, `ETag` or `Vary` anywhere in the server package, so the 236 KB document
+   and the 517 KB message payload went out uncompressed and un-revalidatable, every time. It was a
+   real gap, and a *decision* about how responses leave NanoHTTPD rather than a patch to slip in
+   beside R-12 — which is why it is closed in this batch's second half (§"What a poll costs") and not
+   in the first.
 
 ---
 
@@ -183,6 +205,21 @@ and this document with the probe as #80.
 The page grew by 1,875 bytes (234,513 → 236,388) as the discipline was added. That is the cost of
 one fix being paid by every tab, and it is worth stating next to the 517 KB it avoids re-reading.
 
+### Second half — what leaves the phone (`perf/response-encoding`)
+
+| Change | Files | Test |
+| --- | --- | --- |
+| `gzip` for `application/json` and `text/html` bodies of at least 1 KiB, through NanoHTTPD's own `useGzipWhenAccepted` hook so the chunked framing stays the library's. Streams, media and archives are excluded by MIME and by being unmeasurable without draining. | `server/PulseDropServer.kt` (`useGzipWhenAccepted`) | `ResponseEncodingTest` — asserts the encoding, the framing, and that the decoded bytes are identical to the identity response |
+| `ETag` over the exact bytes each caller would receive, `Vary: Accept-Encoding`, and a `304` that carries neither a body nor a `Content-Length`. | same file (`revalidate`, `NotModified`) | same test, including that a `304` leaves the keep-alive connection usable for the next request |
+| The tab offers its validator and treats `304` as "unchanged" rather than as an outage (`Response.ok` is false for 304). | `server/WebClientHtml.kt` | `the page offers its validator and does not read the answer as an outage` |
+| Test transport: `RoomHttp.raw` / `Wire`, which rejoin chunk records and undo gzip, and count the bytes the socket actually carried. | `RoomHttp.kt`, `TabSession.kt` | used by the encoding test and by the probe's `encodingOnTheWire` |
+
+Measured result, and the honest half of it: the message payload goes 517,160 → 63,193 B compressed →
+227 B when nothing changed, and the document 237,812 → 58,378 B. Poll *latency* over a socket barely
+moves (p95 20 ms → 14 ms), because the route still serialises everything before anything can be
+fingerprinted. The saving is transfer and browser work, which is where the symptom lives, and neither
+of those is measurable on this host.
+
 ---
 
 ## Ranked remaining work
@@ -192,10 +229,10 @@ owner, because "fast" and "allowed" are different questions.
 
 | # | Item | Evidence | Risk / needs a decision |
 | --- | --- | --- | --- |
-| P1-1 | Give `/api/messages` a cursor (`?since=`), so a tab reads what changed instead of the room's whole life. | §1: 517 KB per read, `:2094` | Changes an endpoint's shape and every reader of it. Needs approval. |
-| P1-2 | Get `startServer()` and `startWithSettle` off the main thread. | §5: `MainViewModel.kt:1159,1317` | Touches lifecycle, no test coverage of `MainViewModel` exists today. Needs a device to prove. |
-| P1-3 | Compress and revalidate the document. | §4 correction 4: no gzip/ETag anywhere | NanoHTTPD has no built-in encoding; needs a response hook. Needs approval. |
-| P1-4 | Bound `webOut` in bytes, not frames, and stop the camera/mic when the tab reading them is gone. | §7: `CallEngine.kt:367` | A watchdog that kills a call is a behaviour change. Needs a device. |
+| P1-1 | Delta `/api/messages` — but not as `?since=`. Reading the list's lifecycle first says the naive cursor is wrong in three separate ways, and a sound one needs a server-assigned revision *re-issued on retraction* plus a visibility epoch that forces a full resync when the phone changes which groups a browser may read. | §"R-12 in the backlog" for each of the three; `:1133`, `:1146`, `:1167`, `:507`, `:668` | Three coordinated changes and a new field on the wire format. The `304` in this batch already removed the idle cost, so what is left is the cost of a busy room. Needs a decision. |
+| P1-2 | Get `startServer()` and `startWithSettle` off the main thread. | §5: `MainViewModel.kt:1159,1317` | Touches lifecycle, `MainViewModel` has no tests, and internal callers currently rely on the server being listening when the call returns. Making it async without a device or a harness is how a startup race gets shipped silently. Deliberately not attempted blind. |
+| P1-3 | ~~Compress and revalidate the document.~~ **Fixed in this batch** — see "Second half" above. | §4 correction 4 | NanoHTTPD had the hook all along (`useGzipWhenAccepted`); the part that needed care was the `304` framing. |
+| P1-4 | Bound `webOut` in bytes, not frames, and stop the camera/mic when the tab reading them is gone. | §7: `CallEngine.kt:367` | The byte bound is a local queue policy and can be tested here; the watchdog that ends a call is a behaviour change and needs a device. Split on purpose. |
 | P2-1 | Let the ladder step back up, or delete `stepUp`. | §6: no production call site | Small, but only measurable in a call. |
 | P2-2 | Decide the browser media lane: WebRTC (a new dependency, and no mandatory external service is allowed) vs adaptive JPEG profiles. | §7 | The PRD prefers WebRTC; §17 says do not replace a working API without a demonstrated benefit. Not demonstrated yet, because nothing here has a camera. |
 | P2-3 | Audio priority / separate queues. | not instrumented | Needs a call to observe. |
@@ -213,13 +250,31 @@ owner, because "fast" and "allowed" are different questions.
 ./gradlew :app:testDebugUnitTest                        # again, over the tree this document describes
     BUILD SUCCESSFUL in 4m 57s — 70 classes, 548 tests, 5 skipped, 0 failures, 0 errors
 ./gradlew :app:lintDebug
-    BUILD SUCCESSFUL in 32s — no issues reported
+    BUILD SUCCESSFUL in 32s — no issues reported        # re-read below: it had 62 warnings
 PULSEDROP_PROBE=true ./gradlew :app:testDebugUnitTest --tests '…HostBaselineProbe'
     BUILD SUCCESSFUL in 1m 13s — the rows above
+./gradlew :app:testDebugUnitTest --tests '…ResponseEncodingTest'
+    BUILD SUCCESSFUL — 8 tests, 0 failures
+PULSEDROP_PROBE=true PULSEDROP_PROBE_OUT=… ./gradlew :app:testDebugUnitTest --tests '…HostBaselineProbe'
+    BUILD SUCCESSFUL — the encoding-on-the-wire rows, after the 429 retry below
+./gradlew :app:testDebugUnitTest :app:lintDebug      # the whole suite plus lint, over this batch
+    BUILD SUCCESSFUL in 4m 28s — 71 classes, 557 tests, 6 skipped, 0 failures, 0 errors
+    lint: 0 errors, 62 warnings, none at a line this batch wrote
 ```
 
-Five skipped: the probe's own tests, which stay skipped in an ordinary run on purpose, so no CI job
-turns a loopback timing into a flaky failure.
+The correction to the record: `lintDebug` does report 62 warnings, all of them pre-existing
+(`StaticFieldLeak`, `UseKtx` and the like), and an earlier line here said "no issues reported". That
+was the exit status read as the report. The build is clean of errors; the warnings are real and are
+not this batch's. The 62 are counted so the next reader can tell a new one from an old one.
+
+Six skipped: the probe's own tests, which stay skipped in an ordinary run on purpose, so no CI job
+turns a loopback timing into a flaky failure. The one added here is `encodingOnTheWire`.
+
+The 429 in that first probe run was not a bug in the change. Seeding 2000 messages POSTs as fast as a
+socket allows, and the per-address flood guard (120 at rest, 30/s — `RequestRateLimiter.kt:16-17`)
+answers exactly that. The probe now sleeps and retries on 429 instead of asking the guard to be
+loosened, which is the only correct order: a measurement that needed the security control turned down
+would not be a measurement of the shipped phone.
 
 **Not run, and not claimed:** no instrumented or on-device test ran (no adb, no emulator, no KVM); no
 browser was opened, so nothing in *Web client* above is a browser measurement; no call was placed, so

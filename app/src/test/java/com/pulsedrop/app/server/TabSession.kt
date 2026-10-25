@@ -79,7 +79,9 @@ class TabAnswer(response: Response) {
     val headers: Map<String, String?> = mapOf(
         "content-disposition" to response.getHeader("Content-Disposition"),
         "x-content-type-options" to response.getHeader("X-Content-Type-Options"),
-        "cache-control" to response.getHeader("Cache-Control")
+        "cache-control" to response.getHeader("Cache-Control"),
+        "etag" to response.getHeader("ETag"),
+        "vary" to response.getHeader("Vary")
     )
     val mimeType: String? = response.mimeType
 }

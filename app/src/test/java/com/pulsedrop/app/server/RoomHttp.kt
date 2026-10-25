@@ -57,6 +57,36 @@ class RoomHttp(private val port: Int) {
         }
     }
 
+    /**
+     * A request whose answer is undressed the way a browser undresses it — chunk records rejoined,
+     * gzip undone — so a test can compare the bytes the phone put on the wire with the bytes the
+     * handler happened to hold in memory.
+     *
+     * Buffered whole, because [Wire] needs to know how many bytes the socket carried and
+     * `Connection: close` ends the response. Right for a JSON answer; wrong for a download.
+     */
+    fun raw(
+        method: String,
+        path: String,
+        headers: Map<String, String> = emptyMap(),
+        body: String? = null
+    ): Wire {
+        val payload = body?.toByteArray() ?: ByteArray(0)
+        val request = StringBuilder("$method $path HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n")
+        headers.forEach { (k, v) -> request.append("$k: $v\r\n") }
+        if (body != null) request.append("Content-Length: ${payload.size}\r\n")
+        request.append("Connection: close\r\n\r\n")
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 15000
+            socket.getOutputStream().apply {
+                write(request.toString().toByteArray())
+                write(payload)
+                flush()
+            }
+            return Wire.read(socket.getInputStream().readBytes())
+        }
+    }
+
     /** A multipart POST, because `/upload` and `/chatupload` are the only routes that take one. */
     fun postMultipart(
         path: String,
@@ -307,6 +337,104 @@ class LiveStream(val socket: Socket) {
     fun close() {
         runCatching { socket.close() }
         ended = true
+    }
+}
+
+/**
+ * A whole response, taken off the socket and undressed the way a browser undresses it.
+ *
+ * NanoHTTPD frames a compressed body as chunked transfer, and the room's JSON arrives gzipped once
+ * the tab says it can read that, so the bytes worth asserting on sit under two layers of framing.
+ * [transferred] counts every byte the socket carried — status line, headers and chunk records
+ * included — because that total rather than the payload is what the radio actually paid for.
+ */
+class Wire private constructor(
+    val status: Int,
+    val head: String,
+    /** The body exactly as the handler wrote it, before any of the wire's framing was added. */
+    val text: String,
+    /** Payload bytes as they arrived on the wire, so a compressed body is measured compressed. */
+    val onTheWire: Int,
+    val transferred: Int
+) {
+    val etag: String? get() = header("ETag")
+    val compressed: Boolean get() = header("Content-Encoding")?.contains("gzip", ignoreCase = true) == true
+
+    fun header(name: String): String? = head.lineSequence()
+        .drop(1)
+        .firstOrNull { it.substringBefore(':').trim().equals(name, ignoreCase = true) }
+        ?.substringAfter(':')?.trim()
+
+    /** Whether the field is present at all: the difference between `Content-Length: 0` and a
+     * response that promises no body, which is the thing a `304` must get right. */
+    fun hasHeader(name: String): Boolean = head.lineSequence().drop(1).any {
+        it.substringBefore(':').trim().equals(name, ignoreCase = true)
+    }
+
+    companion object {
+        private val blank = byteArrayOf('\r'.code.toByte(), '\n'.code.toByte(), '\r'.code.toByte(), '\n'.code.toByte())
+
+        fun read(all: ByteArray): Wire {
+            val cut = all.indexOfSequence(blank)
+            if (cut < 0) return Wire(-1, String(all, Charsets.US_ASCII), "", all.size, all.size)
+            val head = String(all, 0, cut + 2, Charsets.US_ASCII)
+            val framed = all.copyOfRange(cut + 4, all.size)
+            val payload = if (head.isChunked()) decodeChunks(framed) else framed
+            val body = if (head.isGzipped()) java.util.zip.GZIPInputStream(payload.inputStream()).readBytes() else payload
+            val status = head.lineSequence().first().split(" ").getOrNull(1)?.toIntOrNull() ?: -1
+            return Wire(status, head, String(body, Charsets.UTF_8), framed.size, all.size)
+        }
+
+        private fun String.isChunked() = lineSequence().any {
+            it.substringBefore(':').trim().equals("Transfer-Encoding", ignoreCase = true) &&
+                it.contains("chunked", ignoreCase = true)
+        }
+
+        private fun String.isGzipped() = lineSequence().any {
+            it.substringBefore(':').trim().equals("Content-Encoding", ignoreCase = true) &&
+                it.contains("gzip", ignoreCase = true)
+        }
+
+        /** Chunk-size records rejoined; the last record and any trailers are framing, not payload. */
+        private fun decodeChunks(framed: ByteArray): ByteArray {
+            val reader = LineReader(framed)
+            val out = java.io.ByteArrayOutputStream()
+            while (true) {
+                val size = reader.readLine()?.trim()?.substringBefore(';')?.toIntOrNull(16) ?: break
+                if (size == 0) break
+                out.write(reader.read(size))
+                reader.readLine()
+            }
+            return out.toByteArray()
+        }
+
+        private fun ByteArray.indexOfSequence(want: ByteArray): Int {
+            outer@ for (i in 0..size - want.size) {
+                for (j in want.indices) if (this[i + j] != want[j]) continue@outer
+                return i
+            }
+            return -1
+        }
+    }
+
+    private class LineReader(private val bytes: ByteArray) {
+        private var at = 0
+
+        /** A CRLF-terminated line without its framing, or null once the bytes run out. */
+        fun readLine(): String? {
+            if (at >= bytes.size) return null
+            val start = at
+            while (at < bytes.size && bytes[at] != '\n'.code.toByte()) at++
+            val line = if (at >= bytes.size) bytes.copyOfRange(start, at) else bytes.copyOfRange(start, at).also { at++ }
+            return String(line, Charsets.US_ASCII).removeSuffix("\r")
+        }
+
+        fun read(n: Int): ByteArray {
+            val take = minOf(n, bytes.size - at)
+            val out = bytes.copyOfRange(at, at + take)
+            at += take
+            return out
+        }
     }
 }
 

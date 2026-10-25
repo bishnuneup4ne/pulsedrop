@@ -1576,6 +1576,8 @@ object WebClientHtml {
     /* The whole-history read, serialised: one in flight, and one more queued if anything asked during it. */
     var messagesInFlight = false;
     var messagesWanted = false;
+    // The fingerprint of the last body this tab fully read, so an unchanged room costs nothing.
+    var messagesEtag = '';
     /* Messages this tab was not allowed to retract, plus a revision that says "redraw the bubbles". */
     var localHidden = {};
     var chatRev = 0;
@@ -1723,6 +1725,8 @@ object WebClientHtml {
       }
       localStorage.removeItem('pulse_token');
       authToken = '';
+      // The next login answers a different room than the one this validator described.
+      messagesEtag = '';
       // A dead session cannot mint a ticket, so stop reconnecting until a new login succeeds.
       eventsStopped = true;
       try { if (eventsStream) eventsStream.close(); } catch (e) {}
@@ -2706,12 +2710,23 @@ object WebClientHtml {
       if (messagesInFlight) { messagesWanted = true; return; }
       messagesInFlight = true;
       try {
-        var res = await fetch('/api/messages', { headers: authHeaders() });
+        var headers = authHeaders();
+        // Offered as a header rather than left to the browser cache: JSON answers carry no-store
+        // on purpose, so nothing is stored to revalidate, but the copy this tab is holding is
+        // exactly the body that fingerprint was taken over.
+        if (messagesEtag) headers['if-none-match'] = messagesEtag;
+        var res = await fetch('/api/messages', { headers: headers });
         if (res.status === 401 && REQUIRES_PIN) { lockOut(); return; }
-        if (!res.ok) { setConnected(false); return; }
-        setConnected(true);
-        var msgs = await res.json();
-        processMessages(msgs);
+        // 304 is not `ok` to fetch, and treating it as a failure would drop the tab offline every
+        // time the phone agreed nothing had changed.
+        if (res.status === 304) { setConnected(true); }
+        else if (!res.ok) { setConnected(false); return; }
+        else {
+          setConnected(true);
+          messagesEtag = res.headers.get('etag') || '';
+          var msgs = await res.json();
+          processMessages(msgs);
+        }
       } catch (e) { setConnected(false); }
       finally {
         messagesInFlight = false;
