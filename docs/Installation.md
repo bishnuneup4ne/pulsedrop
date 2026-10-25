@@ -39,12 +39,12 @@ The hash is also a permanent VirusTotal link:
 `https://www.virustotal.com/gui/file/<sha256>` — the permalink always points at that exact
 file, so it cannot be quietly swapped later.
 
-For reference, the newest published release at the time of writing, **2.1.1**, is 16,816,025
-bytes with SHA-256 `e7065d4c79e375064e1d0c0801fc4f8febf72c87aa10743162513b6d3dbaa0fe`; its
+For reference, the newest published release at the time of writing, **2.2.0**, is 16,832,405
+bytes with SHA-256 `25890f5c26808edb12a89497e10ec04022917e2fb86523324ce431e55bd3a5b8`; its
 VirusTotal report is
-<https://www.virustotal.com/gui/file/e7065d4c79e375064e1d0c0801fc4f8febf72c87aa10743162513b6d3dbaa0fe>.
-The previous release, 2.0.2, was 16,545,126 bytes with SHA-256
-`876fd6d34f71dc2ff5fbfb623be21c782ac90d585e56c10a0eadc0a76d4f45aa`.
+<https://www.virustotal.com/gui/file/25890f5c26808edb12a89497e10ec04022917e2fb86523324ce431e55bd3a5b8>.
+The previous release, 2.1.1, was 16,816,025 bytes with SHA-256
+`e7065d4c79e375064e1d0c0801fc4f8febf72c87aa10743162513b6d3dbaa0fe`.
 
 From 2.0.1 the app's name is `PulseDrop <version>` in the launcher and in the drawer header,
 generated from the build's own `versionName`. Two installs side by side — this one and an older

@@ -7,7 +7,7 @@ redefines an old field.
 ## Version namespace
 
 `/api/info` keeps `"version"` starting with `"2"` (`2.2.0` in this tree; the newest published
-build is `2.1.1`). This is load-bearing:
+build is `2.2.0`). This is load-bearing:
 `LanScanner` classifies a peer as pair-capable only when the version starts with `"2"`, and the
 KDF gate compares the same string. The MAJOR only moves when old phones are *expected* to stop
 pairing, which is never while an upgrade path exists. The value must come from
