@@ -56,7 +56,7 @@ AWS control plane** (security groups, EBS snapshots, alarms). Those need owner c
 | Android app + LAN server (`PulseDropServer.kt`) | On the user's phone | The LAN only | The product. HTTP on 8080, HTTPS on a second port with a process-lifetime self-signed cert (`WebTls.kt`). |
 | Browser client (`WebClientHtml.kt`, 4 752 lines) | Served by the phone to LAN tabs | The LAN only | No CDN, no internet dependency — correct for offline use. |
 | Calls / relay / pairing | Phone-to-phone on the LAN | The LAN only | Relay mailbox is hosted by one phone, not by a cloud. |
-| APK releases | **GitHub Releases** | Public | `PulseDrop-<version>.apk` + SHA-256 in release notes; VirusTotal per release. This is the only real public distribution surface. |
+| APK releases | **GitHub Releases** | Public | One `app-release.apk` per release (since 1.7.0; `PulseDrop-<version>.apk` before), with its SHA-256 in the CI-opened "VirusTotal scan: v…" issue and, when present, in the release notes. That hash is the permanent VirusTotal link. This is the only real public distribution surface. |
 | Update check | `api.github.com/repos/<repo>/releases` | Public GitHub | `UpdateManager.kt:61` — no self-hosted endpoint. |
 | Install stats site (`site/`) | **Not deployed anywhere** | Nothing | `INSTALL_PING_URL` and `INSTALL_STATS_URL` are both `""` in `app/build.gradle.kts:39-40`, so the reporter stays silent in every shipped build. `dev/stats-local/server.mjs` is a local stub only. |
 | GitHub Actions | `ci.yml`, `virustotal-scan.yml` | GitHub-hosted | Unit tests, lint, unsigned release assembly. |
