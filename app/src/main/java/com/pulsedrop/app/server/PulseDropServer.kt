@@ -1594,13 +1594,41 @@ class PulseDropServer(
         // Browser-initiated call: drives the ringing popup on the phone.
         if (uri == "/api/events" && method == Method.GET) {
             markActivity()
-            val stream = EventStream(clientIp)
-            // Cap the fan-out: a page left open for days must not accumulate streams.
-            while (eventStreams.size >= maxEventStreams) {
-                val oldest = eventStreams.firstOrNull() ?: break
-                eventStreams.remove(oldest)
-                oldest.closed = true
+            // One stream is one handler thread held for the life of the tab, so the listener caps
+            // how many it takes. The cap is answered by refusing whoever is asking, not by cutting
+            // a tab that already has a stream: evicting the oldest meant the ninth page silenced
+            // the first, the first's reconnect silenced the second, and a room with one tab too
+            // many ended up with nine tabs cycling through a stream none of them kept. The refused
+            // page is not left dead — it keeps the 2 s poll, so it loses the fast path, not the
+            // chat, and every page that already had push keeps it.
+            eventStreams.removeAll { it.closed }
+            if (eventStreams.size >= maxEventStreams) {
+                // Every seat looks taken until a write proves otherwise, and a handler parked on its
+                // queue does not learn for up to a heartbeat that its tab closed. So look properly
+                // before turning someone away: hand each stream a comment frame — not delivery, a
+                // browser ignores it — which wakes that handler and makes it write to whoever is
+                // really still there. A dead socket fails the write (the first attempt after a close
+                // can still be swallowed by the kernel buffer, so this earns its keep on the retry),
+                // the handler closes its body and the seat comes back — in the next second rather
+                // than in the next twenty.
+                eventStreams.forEach { it.queue.offer(":probe\n\n") }
+                val settle = System.currentTimeMillis() + 300
+                while (eventStreams.size >= maxEventStreams && System.currentTimeMillis() < settle) {
+                    Thread.sleep(50)
+                    eventStreams.removeAll { it.closed }
+                }
             }
+            if (eventStreams.size >= maxEventStreams) {
+                val busy = newFixedLengthResponse(
+                    Response.Status.SERVICE_UNAVAILABLE,
+                    "application/json",
+                    """{"success":false,"error":"This phone is already streaming every other tab"}"""
+                )
+                busy.addHeader("Retry-After", "15")
+                busy.addHeader("Cache-Control", "no-store")
+                return busy
+            }
+            val stream = EventStream(clientIp)
             eventStreams.add(stream)
             // Anything that changed while the tab was reconnecting is delivered on subscribe.
             val pending = webCall

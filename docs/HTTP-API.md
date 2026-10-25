@@ -65,6 +65,21 @@ pushes:
 Polling still works and still backs everything; the stream is a latency optimisation, so a
 tab that cannot hold an open connection falls back to the same endpoints at its own cadence.
 
+Two things about that cadence are worth knowing from the client side:
+
+- **The phone holds eight streams.** Each one pins a server thread for as long as the tab keeps
+  it, so a ninth `GET /api/events` is refused with `503`, `Retry-After: 15` and
+  `Cache-Control: no-store`. The refused tab keeps polling and loses only the fast path, while
+  every tab already streaming keeps its stream. Refusing the newcomer beats cutting an
+  established tab, because an evicted tab's reconnect evicts the next one and a room that is one
+  tab too large ends up with every tab intermittently silent.
+- **A stream that stops draining is dropped, not waited on.** Each tab has a 64-frame queue;
+  when it fills, the newest frame is discarded rather than blocking whatever just happened. An
+  empty stream sends a `:hb` comment every 20 seconds, and a comment is not an event.
+
+The `message` event is not sent back to the address that posted the message — a tab already has
+what it just sent — so it names the id and lets the recipient's own poll do the rest.
+
 ## Relay (one hub, phones with no server)
 
 A paired phone that runs no server of its own sends and receives through the host's
