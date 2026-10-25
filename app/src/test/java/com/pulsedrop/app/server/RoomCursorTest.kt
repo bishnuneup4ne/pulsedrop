@@ -27,6 +27,13 @@ import org.robolectric.annotation.Config
  * minute. And a retraction rewrites an entry where it stands — a reader that only watches the tail
  * would keep showing a message whose text the phone has already deleted, which is a correctness bug
  * wearing a performance label.
+ *
+ * The last three are the claims that were only ever written down: what a marker older than the
+ * retained room answers with, whether a `304` (which carries no cursor, by design) can strand a tab
+ * that then misses a message, and what an unreadable marker does to a reader that offered one. The
+ * second of those is the interesting one, because it is this cursor meeting the validator from #81 —
+ * two mechanisms shipped a batch apart, on the same route, with the same job of deciding what a tab
+ * does not need to be sent twice.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -213,5 +220,82 @@ class RoomCursorTest {
             page.contains("lastMsgs[at[m.id]] = m;"))
         assertTrue("the marker survives a logout it has no right to survive",
             page.contains("roomCursor = '';"))
+    }
+
+    /**
+     * A marker from further back than the room now reaches.
+     *
+     * Retention evicts from the front at 2,000 messages, so a tab that slept through that much
+     * traffic holds a revision older than anything the phone still has. The claim in the backlog is
+     * that this cannot *miss* a message — the filter simply keeps everything retained, and the tab
+     * repeats what it already holds. Repeating is the cost; missing one would be the bug, and it is
+     * the bug an offset-based cursor would have shipped silently.
+     */
+    @Test
+    fun `a marker older than the retained room misses nothing`() {
+        val first = server.addMessage("the oldest note", "another device", clientIp = "10.0.0.9")
+        val stale = read("/api/messages").cursor()
+
+        // Enough traffic to push the message the marker was minted against off the front.
+        repeat(2001) { i ->
+            server.addMessage("flood $i", "another device", clientIp = "10.0.0.9")
+        }
+        assertFalse("retention did not evict, so this test proves nothing",
+            ids(read("/api/messages").text).contains(first.id))
+
+        val patch = read("/api/messages?since=$stale")
+        assertEquals("1", patch.header("X-Room-Delta"))
+        val whole = ids(read("/api/messages").text)
+        assertEquals("retention did not cap the room at 2000", 2000, whole.size)
+        assertEquals(
+            "the patch is not everything the phone still holds",
+            whole.sorted(), ids(patch.text).sorted()
+        )
+    }
+
+    /**
+     * The two mechanisms from #81 and #83 together, which is the pair most likely to fight.
+     *
+     * A `304` carries no `X-Room-Cursor` — there is no new answer to stamp — so a tab that took the
+     * 304 keeps the marker it already had. That is only safe while nothing moved, which is exactly
+     * what a matching validator promises. The case worth asserting is the one after: the tab still
+     * offers the *old* validator with its cursor, and the room has since grown, so the answer must be
+     * a patch and not a `304` that hides a message behind bytes the tab never asked for.
+     */
+    @Test
+    fun `an unchanged read that came back 304 does not strand the cursor`() {
+        server.addMessage("before", "another device", clientIp = "10.0.0.9")
+        val whole = read("/api/messages")
+        val cursor = whole.cursor()
+        val etag = requireNotNull(whole.etag) { "the room answered with no validator" }
+
+        assertEquals(304, read("/api/messages", "If-None-Match" to etag).status)
+
+        val newer = server.addMessage("after", "another device", clientIp = "10.0.0.9")
+        val patch = read("/api/messages?since=$cursor", "If-None-Match" to etag)
+        assertEquals("a changed room was answered 304 to a tab holding an old validator", 200, patch.status)
+        assertEquals("1", patch.header("X-Room-Delta"))
+        assertEquals(listOf(newer.id), ids(patch.text))
+    }
+
+    /**
+     * A marker the phone cannot make sense of is not an error and not an empty room. Three shapes
+     * reach this: nothing offered, junk offered, and a well-formed marker minted for a different
+     * caller. All three answer the whole room without the patch flag, because the worst a server can
+     * do to a reader it cannot trust is give it more than it needed.
+     */
+    @Test
+    fun `a marker the phone cannot read is answered as the whole room`() {
+        server.addMessage("room note", "another device", clientIp = "10.0.0.9")
+        val mine = read("/api/messages").cursor()
+        val foreignScope = "0:" + mine.split(":")[1] + ":" + "f".repeat(16)
+
+        listOf("", "not-a-marker", "7:1834", "seven:eighteen:${mine.split(":")[2]}", foreignScope)
+            .forEach { offered ->
+                val answer = read(if (offered.isEmpty()) "/api/messages?since=" else "/api/messages?since=$offered")
+                assertEquals("an unreadable marker was answered with $answer", 200, answer.status)
+                assertNull("an unreadable marker was honoured as a patch", answer.header("X-Room-Delta"))
+                assertTrue("the whole room was not in the answer", answer.text.contains("room note"))
+            }
     }
 }
