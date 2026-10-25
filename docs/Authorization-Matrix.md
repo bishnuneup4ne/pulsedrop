@@ -25,8 +25,8 @@ not by where the branch sits.
 `server/AuthorizationPolicy.kt` — what the route demands, and `authorize()` applies that answer before
 any handler runs. The decision is a row, not a position in the chain: a route that is not in the table
 falls back to `SESSION`, so forgetting to list a new route makes it *protected*, not public. This
-replaced the three-tier flat chain in 2.1.1 (backlog S-3); the tier names in §§2–4 are kept as a
-reading aid, not as a description of where the check runs.
+replaced the three-tier flat chain on `main` during the security series (backlog S-3); the tier names
+in §§2–4 are kept as a reading aid, not as a description of where the check runs.
 
 | Access | What the caller must present |
 | --- | --- |
