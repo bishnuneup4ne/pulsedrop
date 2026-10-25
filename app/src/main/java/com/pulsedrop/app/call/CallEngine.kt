@@ -927,7 +927,9 @@ class CallEngine(
      * leg down over one oversized image.
      */
     private fun writeWebFrame(type: Int, payload: ByteArray) {
-        webOut.offer(FrameCodec.encode(type, payload))
+        val lane = if (type == TYPE_CAMERA || type == TYPE_SCREEN)
+            WebOutbox.Lane.VIDEO else WebOutbox.Lane.REALTIME
+        webOut.offer(FrameCodec.encode(type, payload), lane)
     }
 
     /** Returns false when the write failed, so the caller can drop just that connection. */

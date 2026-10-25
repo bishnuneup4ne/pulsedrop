@@ -153,4 +153,53 @@ class WebOutboxTest {
         assertTrue("a producer or the reader was still alive", all.none { it.isAlive })
         assertFalse("byte or frame budget was exceeded: ${box.queuedBytes} / ${box.queuedFrames}", breached)
     }
+
+    /** The lane rule itself: a backlog that must give bytes gives up its oldest picture, not its voice. */
+    @Test
+    fun `video is shed before audio and before call state`() {
+        val box = WebOutbox(maxFrames = 96, maxBytes = 180)
+        box.offer(frame(40, tag = 1), WebOutbox.Lane.REALTIME)   // a roster snapshot
+        box.offer(frame(40, tag = 2), WebOutbox.Lane.VIDEO)
+        box.offer(frame(40, tag = 3), WebOutbox.Lane.VIDEO)
+        box.offer(frame(40, tag = 4), WebOutbox.Lane.VIDEO)
+        box.offer(frame(40, tag = 5), WebOutbox.Lane.REALTIME)   // 100 ms of mixed audio
+        assertEquals("four frames, not five, fit the 180-byte budget", 4, box.queuedFrames)
+        assertEquals(160, box.queuedBytes)
+        val kept = generateSequence { box.poll(0) }.map { it[0].toInt() }.toList()
+        // Both realtime frames are still here and exactly one byte's worth of video paid for them.
+        assertEquals(listOf(1, 3, 4, 5), kept)
+    }
+
+    /**
+     * Priority is not a licence to exceed the bound. Once a stalled tab's backlog is only audio —
+     * which is what a long silence with a live mic looks like — the oldest audio chunk goes, because
+     * a queue that only ever shrinks other people's frames is not a bound.
+     */
+    @Test
+    fun `audio is shed too once there is no video left to pay with`() {
+        val box = WebOutbox(maxFrames = 96, maxBytes = 120)
+        repeat(4) { i -> box.offer(frame(40, tag = i + 1), WebOutbox.Lane.REALTIME) }
+        assertEquals(120, box.queuedBytes)
+        assertEquals(3, box.queuedFrames)
+        assertEquals(2, box.poll(0)?.get(0)?.toInt())
+    }
+
+    /**
+     * The case the shipped encoder produces: video at frame rate, audio every 100 ms, one tab that
+     * stopped reading. Every audio frame the storm generated is still queued, and the backlog was
+     * paid for entirely in pictures — which is the PRD's §8.6, stated as an assertion.
+     */
+    @Test
+    fun `a jpeg storm costs pictures and not the voice`() {
+        val box = WebOutbox()
+        val audioFrames = (0 until 30).count { it % 3 == 0 }
+        repeat(30) { i ->
+            box.offer(frame(1024 * 1024, tag = 7), WebOutbox.Lane.VIDEO)
+            if (i % 3 == 0) box.offer(frame(3200, tag = 9), WebOutbox.Lane.REALTIME)
+        }
+        assertTrue(box.queuedBytes <= WebOutbox.DEFAULT_MAX_BYTES)
+        val kept = generateSequence { box.poll(0) }.toList()
+        assertEquals("every audio frame survives the backlog", audioFrames, kept.count { it[0].toInt() == 9 })
+        assertTrue("the backlog was paid for in video", kept.count { it[0].toInt() == 7 } < 30)
+    }
 }

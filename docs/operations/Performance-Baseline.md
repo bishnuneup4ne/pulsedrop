@@ -253,7 +253,7 @@ of those is measurable on this host.
 
 | Change | Files | Test |
 | --- | --- | --- |
-| `webOut` becomes `WebOutbox`: a byte budget (8 MiB) enforced beside the frame budget (96) it already had, shedding the oldest frame on either. | `call/WebOutbox.kt` (new), `call/CallEngine.kt` (`webOut`, `writeWebFrame`, `nextWebOutFrame`) | `WebOutboxTest` — 9 tests: both caps binding, which one binds in the small-frame and the large-frame case, drop-oldest order, exact byte total across mixed traffic, refusal of a single frame larger than the budget, `clear`, timeout and wakeup, and the invariant under four concurrent producers |
+| `webOut` becomes `WebOutbox`: a byte budget (8 MiB) enforced beside the frame budget (96) it already had, shedding the oldest frame on either. | `call/WebOutbox.kt` (new), `call/CallEngine.kt` (`webOut`, `writeWebFrame`, `nextWebOutFrame`) | `WebOutboxTest` — 9 tests at this change, 12 since the lanes landed: both caps binding, which one binds in the small-frame and the large-frame case, drop-oldest order, exact byte total across mixed traffic, refusal of a single frame larger than the budget, `clear`, timeout and wakeup, and the invariant under four concurrent producers |
 | A frame that alone exceeds the budget is refused instead of evicting every real frame to hold something undecodable. | same | `one frame larger than the whole budget is refused and changes nothing` |
 | The queue's size diagnostics read under the lock. | `call/WebOutbox.kt` | found by the concurrency test: an unsynchronized reader could see a frame added and its bytes not yet shed, and report an over-budget queue at the moment it was exactly at budget |
 
@@ -286,6 +286,26 @@ message the phone has dropped off its own 2,000 cap stays on a long-lived tab's 
 is read whole — a reload, a logout, or the phone opening or closing a thread. The alternative is
 replacing the list on every poll, which is the 517 KB this change exists to stop sending.
 
+### Fifth half — which frame a stalled tab loses (`perf/audio-lanes`)
+
+| Change | Files | Test |
+| --- | --- | --- |
+| `WebOutbox.offer` takes a lane, and shedding walks the queue for the oldest *video* frame before it touches anything else. Audio and call state are the last thing a backlog gives up. | `call/WebOutbox.kt` (`Lane`, `shedOldestLocked`), `call/CallEngine.kt` (`writeWebFrame`) | `WebOutboxTest` — 12 tests, the three new ones being `video is shed before audio and before call state`, `a jpeg storm costs pictures and not the voice`, `audio is shed too once there is no video left to pay with` |
+
+The shipped mix is one audio frame per 100 ms against camera or screen frames at 15–30 per second, so
+a stalled tab's 8 MiB backlog is overwhelmingly pictures: at a 1 MiB frame the budget holds eight of
+them and about 32 KB of audio, which means there is almost always a video frame left to shed and the
+voice is never what pays. That is the PRD's §8.6, and it is one queue rather than two, because the
+leg's reader is a single chunked response — two queues would need the pump to interleave them, and
+ordering between an audio chunk and a picture is not something a browser can be handed to reconcile.
+
+Two things this does not claim. Audio never drops is not proven, because nothing was heard: no call
+was placed and there is no camera here, so what is tested is the shed *order*, which is a property of
+this queue and can be asserted directly. And once a backlog contains no video at all — a long silence
+with a live mic, where the queue is audio only — the oldest audio chunk is shed like anything else,
+which the third test pins on purpose: a bound that only ever shrinks one kind of frame is not a bound,
+and 8 MiB of stale audio is a tab that cannot catch up by definition.
+
 ---
 
 ## Ranked remaining work
@@ -301,7 +321,7 @@ owner, because "fast" and "allowed" are different questions.
 | P1-4 | ~~Bound `webOut` in bytes, not frames~~ **done in `perf/webout-byte-bound`**; stop the camera/mic when the tab reading them is gone. | §7: `CallEngine.kt:367` | The byte bound was a local queue policy and is tested here. The watchdog that ends a call is a behaviour change and needs a device — that half is still open, not skipped by accident. |
 | P2-1 | Let the ladder step back up, or delete `stepUp`. | §6: no production call site | Small, but only measurable in a call. |
 | P2-2 | Decide the browser media lane: WebRTC (a new dependency, and no mandatory external service is allowed) vs adaptive JPEG profiles. | §7 | The PRD prefers WebRTC; §17 says do not replace a working API without a demonstrated benefit. Not demonstrated yet, because nothing here has a camera. |
-| P2-3 | Audio priority / separate queues. | not instrumented | Needs a call to observe. |
+| P2-3 | ~~Audio priority / separate queues.~~ **done in `perf/audio-lanes`** — one queue, lane-aware shedding. | §8.6, `WebOutboxTest` | Video goes first; audio and call state go last. What still needs a device is the *audible* half: that a real tab under a real stall hears unbroken speech, which no unit test on this host can observe. |
 | P2-4 | Modularise the web client into `web/js/*.js` with no CDN. | X-3: it is JS inside a Kotlin string, invisible to linters and extractors | Changes packaging. Belongs to the Architecture PRD, not to this one. |
 
 ---
@@ -343,6 +363,13 @@ PULSEDROP_PROBE=true PULSEDROP_PROBE_OUT=… ./gradlew :app:testDebugUnitTest --
 ./gradlew :app:testDebugUnitTest :app:lintDebug --rerun-tasks   # over merged main (a25e9ea)
     BUILD SUCCESSFUL in 5m — 73 classes, 575 tests, 7 skipped, 0 failures, 0 errors
     lint: 0 errors, 62 warnings — nothing the merges introduced, and nothing cached
+./gradlew :app:testDebugUnitTest --tests '…call.WebOutboxTest'  # the lane cases
+    BUILD SUCCESSFUL in 23s — 12 tests, 0 failures
+./gradlew :app:testDebugUnitTest :app:lintDebug --rerun-tasks   # over the lane branch
+    BUILD SUCCESSFUL in 5m 35s — 73 classes, 578 tests, 7 skipped, 0 failures, 0 errors
+    lint: 0 errors, 62 warnings — the same 62, and no new one from the lanes
+./gradlew :app:testDebugUnitTest --tests '…call.WebOutboxTest'  # after a local rename in the shed loop
+    BUILD SUCCESSFUL in 17s — 12 tests, 0 failures
 ```
 
 The first `WebOutboxTest` run failing twice is worth keeping in the record rather than editing out.
