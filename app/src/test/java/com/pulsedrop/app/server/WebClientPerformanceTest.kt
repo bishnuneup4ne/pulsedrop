@@ -51,6 +51,25 @@ class WebClientPerformanceTest {
     }
 
     @Test
+    fun `a large shelf paints in slices the browser can interrupt`() {
+        val body = js("renderFiles")
+        assertTrue("the shelf is painted in one uninterruptible pass: $body",
+            body.contains("paintSlice()") && body.contains("requestAnimationFrame(function next()"))
+        // A card count is not a budget: appending costs more the bigger the grid already is, so the
+        // same 150 cards measured 12 ms at the top of 6,000 files and 113 ms near the bottom.
+        assertTrue("a slice is sized by card count, which stops being short as the grid grows: $body",
+            body.contains("performance.now() - start < shelfBudgetMs"))
+        // One card goes in per call whatever the clock says, so a slow device still finishes.
+        assertTrue("a render can stall on a frame that appends nothing: $body",
+            body.contains("do {") && body.contains("at++;"))
+        // A render that is still appending cards when a newer one starts would interleave two lists
+        // into one grid.
+        assertTrue("an abandoned render keeps appending: $body", body.contains("if (gen !== shelfRender) return;"))
+        assertTrue("a buried tab stretches its render over throttled frames: $body",
+            body.contains("if (document.hidden) { while (at < total) paintSlice(); return; }"))
+    }
+
+    @Test
     fun `opening a folder does not repaint the whole shelf`() {
         val toggle = Regex("""toggle\.addEventListener\('click'[\s\S]*?\n      \};""")
             .find(html)?.value

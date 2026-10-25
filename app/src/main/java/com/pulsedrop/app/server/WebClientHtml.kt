@@ -2213,6 +2213,15 @@ object WebClientHtml {
       grid.appendChild(wrap);
     }
 
+    /* A large shelf is one uninterruptible task: at 3,000 files it measured ~250 ms of dead page,
+       which is a quarter of a second the browser cannot answer a click in. The shelf paints until
+       its frame budget is spent, hands the frame back, and continues — so the page stays responsive
+       while a real change lands. The budget is time and not a card count because appending gets
+       pricier as the grid grows: a fixed 150 slices cost 12 ms at the top of 6,000 files and 113 ms
+       near the bottom. `shelfRender` is the generation: a newer render abandons the one in flight. */
+    var shelfBudgetMs = 8;
+    var shelfRender = 0;
+
     function renderFiles(list) {
       var grid = el('filesGrid');
       // The shelf is rebuilt by a poll every few seconds and a few hundred cards cost more than a
@@ -2224,6 +2233,7 @@ object WebClientHtml {
       }
       if (grid._fp === key) return;
       grid._fp = key;
+      var gen = ++shelfRender;
       grid.textContent = '';
       if (list.length === 0) {
         grid.appendChild(allFiles.length === 0 ? emptyShelfNode() : emptyFilterNode());
@@ -2236,10 +2246,30 @@ object WebClientHtml {
         if (root) { (folders[root] = folders[root] || []).push(f); }
         else loose.push(f);
       });
-      Object.keys(folders).sort().forEach(function (root) {
-        grid.appendChild(buildFolderCard(root, folders[root]));
+      var roots = Object.keys(folders).sort();
+      var total = roots.length + loose.length;
+      var at = 0;
+      function paintSlice() {
+        var start = performance.now();
+        // The card goes in before the clock is read, so a slow device still makes progress and the
+        // render can never stall on a frame that appends nothing.
+        do {
+          if (at < roots.length) grid.appendChild(buildFolderCard(roots[at], folders[roots[at]]));
+          else grid.appendChild(buildFileCard(loose[at - roots.length], list));
+          at++;
+        } while (at < total && performance.now() - start < shelfBudgetMs);
+      }
+      paintSlice();
+      if (at >= total) return;
+      // Nobody is watching a buried tab, and a background tab is given no frames to hand back —
+      // its timers are throttled to a second, which would stretch a large shelf over half a minute.
+      // Finish those in one go.
+      if (document.hidden) { while (at < total) paintSlice(); return; }
+      requestAnimationFrame(function next() {
+        if (gen !== shelfRender) return;
+        paintSlice();
+        if (at < total) requestAnimationFrame(next);
       });
-      loose.forEach(function (f) { grid.appendChild(buildFileCard(f, list)); });
     }
 
     function downloadHref(id) {

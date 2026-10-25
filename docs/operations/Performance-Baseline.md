@@ -408,3 +408,39 @@ The PRD's §4 targets that are still unproven here — input-to-visible under 10
 phone. The cheapest version of that is one session with Chrome's Performance panel on a room with
 2000 messages, and one call from a phone to a laptop browser, with the frame counters the code
 already keeps. Everything in P1-1 and P1-3 is otherwise a guess dressed as a number.
+
+---
+
+## Addendum — a browser was opened after all, and one row of §"Web client" was wrong
+
+*Commands actually run* says no browser was opened, and at the time that was true. Headless Chromium
+on this machine can now drive the served page, which settles the shelf-rebuild question that a
+server-side measurement could only guess at.
+
+Method: the same scratch Robolectric server on loopback (300 seeded files, never committed), one
+tab, `fetchFiles` stubbed so the 5 s poll does not replace the injected list mid-render, and the
+grid's `childElementCount` polled per frame — counting nodes per frame would have added the probe's
+own work to the tasks being measured. `blocking` is the synchronous part of one data change; `idle`
+is how long a `setTimeout(0)` waited, i.e. how long the page could not answer anything.
+
+| files | blocking before | blocking after | idle before | idle after | full shelf before | full shelf after |
+| --- | --- | --- | --- | --- | --- | --- |
+| 300 | 28.4 ms | 11.5 ms | 48.7 ms | 40.4 ms | 77.4 ms | 79.2 ms |
+| 1,500 | 141.3 ms | 12.7 ms | 200.7 ms | 40.2 ms | 350.6 ms | 454.2 ms |
+| 3,000 | 260.3 ms | 25.3 ms | 476.0 ms | 45.6 ms | 744.8 ms | 1,270.7 ms |
+| 6,000 | 479.9 ms | 46.2 ms | 802.8 ms | 48.8 ms | 1,289.9 ms | 3,412.6 ms |
+
+`renderFiles` now paints until 8 ms of the frame is spent, hands the frame back, and continues, with
+a generation counter so a newer change abandons the render still in flight and a hidden tab finishes
+in one synchronous pass (a background tab is given no frames, and its throttled timers would stretch
+a large shelf over half a minute). A supersede check confirms the abandoned render leaves no stale
+card behind: 4,000 injected, 0 `old`, 4,000 `new`.
+
+What this does **not** buy: the whole shelf lands about 500 ms later at 3,000 files and 2 s later at
+6,000. That is the intended trade — the first cards are visible as fast as before and the page takes
+a click throughout — but it is a real regression for anyone waiting for the bottom of the list.
+Batching each slice into a `DocumentFragment` was tried and measured no different (1,186 → 1,215 ms
+at 3,000), so the cost is card construction and layout, not insertions, and it was reverted rather
+than kept as unmeasured complexity. Slices at 6,000 files still contain tasks up to ~100 ms, which is
+the browser's own layout of a grid that large; shrinking the budget trades that against a slower
+completion, and 8 ms is where the click-availability curve had already flattened.
