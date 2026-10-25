@@ -66,11 +66,18 @@ class WebClientRequestDisciplineTest {
             assertFalse("$handler issues its own history request", handler.contains("fetch('/api/messages'"))
         }
         // The route is written to (POST) from one place and read from exactly one place; a second
-        // reader is how the stacked requests came back.
+        // reader is how the stacked requests came back. The read's URL is a variable now, because a
+        // room cursor has to ride on it as a query — so the check is one call site *and* that the
+        // room path is the literal it builds that URL from.
         assertEquals(
             "/api/messages must be read by fetchMessages alone",
             1,
-            Regex("fetch\\('/api/messages',\\s*\\{\\s*headers").findAll(html).count()
+            Regex("fetch\\(url,\\s*\\{\\s*headers").findAll(html).count()
+        )
+        assertEquals(
+            "the read must not have gained a second room URL",
+            1,
+            Regex("var url = roomCursor \\? '/api/messages\\?since='").findAll(html).count()
         )
     }
 
