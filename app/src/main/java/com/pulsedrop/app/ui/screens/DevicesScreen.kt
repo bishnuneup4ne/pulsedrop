@@ -470,8 +470,9 @@ fun DevicesScreen(
                     PulseStatePanel(
                         icon = Icons.Default.Link,
                         title = "No trusted devices yet",
-                        message = "Pairing gives you chat, calls and encrypted transfers with that " +
-                            "device. You confirm the safety code on both screens before anything is trusted.",
+                        message = "Pairing gives you end-to-end encrypted chat and file transfers " +
+                            "with that device, and lets you call it. You confirm the safety code on " +
+                            "both screens before anything is trusted.",
                         actionLabel = "See nearby devices",
                         onAction = { filter = DeviceFilter.NEARBY }
                     )

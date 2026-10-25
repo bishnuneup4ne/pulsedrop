@@ -962,7 +962,8 @@ fun MainScreen(viewModel: MainViewModel) {
                                 "bridged through this device"
                     else null,
                     hint = "Accept to connect audio${if (incoming.video) ", video and screen sharing" else ""} " +
-                            "over your encrypted pairing, or decline to send them back to the chat."
+                            "directly over your local network. Call media is not end-to-end " +
+                            "encrypted (chat between paired phones is); decline to stay in the chat."
                 ),
                 onAccept = { withCallPermissions(incoming.video) { viewModel.respondToCall(true) } },
                 onDecline = { viewModel.respondToCall(false) }
