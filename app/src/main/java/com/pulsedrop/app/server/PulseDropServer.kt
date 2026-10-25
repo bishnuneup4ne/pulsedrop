@@ -92,6 +92,30 @@ private const val RELAY_VISITOR_TTL_MS = 90_000L
 private const val EVENT_TICKET_SCOPE = "events"
 private const val MAX_TLS_FAILURE_CHARS = 200
 
+/**
+ * What the browser client is allowed to load. It is one inline page plus its own API, fonts and
+ * previews, so `default-src 'none'` is the accurate starting point rather than a restrictive one:
+ * every fetch, EventSource, XHR, `<img>`, `<audio>`, `<video>` and PDF `<iframe>` in the client names
+ * a path on this origin, and the only foreign scheme is the `blob:` URL that carries a remote call's
+ * JPEG frame. The two `'unsafe-inline'` grants are the page's own shape, not an oversight: its style
+ * block and every button's handler are inline, and a nonce cannot cover handler attributes. What the
+ * policy still buys is that an injected string cannot load script from another host, call `eval`,
+ * retarget `<base>`, post a form off-origin, or frame the room — the sinks `WebClientSafetyTest`
+ * already refuses, now with a second line behind them.
+ */
+private const val WEB_CLIENT_CSP =
+    "default-src 'none'; " +
+        "script-src 'self' 'unsafe-inline'; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: blob:; " +
+        "media-src 'self' blob:; " +
+        "frame-src 'self'; " +
+        "connect-src 'self'; " +
+        "font-src 'self'; " +
+        "base-uri 'none'; " +
+        "form-action 'none'; " +
+        "frame-ancestors 'none'"
+
 /** Types a browser renders as a document, where script would run if the file were navigated to. */
 private val ACTIVE_DOCUMENT_TYPES = setOf(
     "text/html",
@@ -1396,6 +1420,7 @@ class PulseDropServer(
             if (!secureOrigin.get()) retryTls()
             val html = WebClientHtml.getHtml(deviceName, isPinRequired && !pinCode.isNullOrBlank())
             val res = newFixedLengthResponse(Response.Status.OK, "text/html; charset=UTF-8", html)
+            res.addHeader("Content-Security-Policy", WEB_CLIENT_CSP)
             return res
         }
 

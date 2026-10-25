@@ -128,6 +128,46 @@ class ResponseHardeningTest {
         assertNoCrossOriginGrant(answer)
     }
 
+    @Test
+    fun `the page names what it may load and nothing else`() {
+        val answer = http.call("GET", "/")
+        assertEquals(200, answer.status)
+        val csp = valuesOf(answer, "Content-Security-Policy").single()
+        // Parsed rather than string-compared, so adding a source to one directive cannot silently
+        // rewrite another. The page's needs are inline script/style, its own API, fonts and previews,
+        // and one blob: JPEG frame; anything else appearing here should fail this test first.
+        val directives = csp.split(';').associate { part ->
+            val words = part.trim().split(' ')
+            words.first() to words.drop(1)
+        }
+        assertEquals("nothing loads unless a directive says so", listOf("'none'"), directives["default-src"])
+        assertEquals("script is this origin and the page's own handlers", listOf("'self'", "'unsafe-inline'"), directives["script-src"])
+        assertEquals("style is this origin and the page's own block", listOf("'self'", "'unsafe-inline'"), directives["style-src"])
+        assertFalse(
+            "no host, scheme-wide grant, or wildcard may appear in a script source",
+            directives.getValue("script-src").any { it == "*" || it.contains("//") }
+        )
+        assertEquals(listOf("'self'"), directives["connect-src"])
+        assertTrue("the remote call feed is a blob: image", directives.getValue("img-src").contains("blob:"))
+        assertEquals(listOf("'self'"), directives["frame-src"])
+        assertEquals(listOf("'none'"), directives["base-uri"])
+        assertEquals(listOf("'none'"), directives["form-action"])
+        assertEquals(listOf("'none'"), directives["frame-ancestors"])
+    }
+
+    @Test
+    fun `the document policy is not repeated onto answers that are not documents`() {
+        // JSON, an error and a font are not asked to obey a document policy; applying it there would
+        // suggest the header is a blanket and make the previews' own `sandbox` look like a conflict.
+        val json = http.call("GET", "/api/files", mapOf("X-Pulse-Auth" to token))
+        assertEquals(200, json.status)
+        assertTrue(valuesOf(json, "Content-Security-Policy").isEmpty())
+        val missing = http.call("GET", "/nothing-here", mapOf("X-Pulse-Auth" to token))
+        assertTrue(valuesOf(missing, "Content-Security-Policy").isEmpty())
+        val font = http.call("GET", "/fonts/google-sans-regular.ttf")
+        assertTrue(valuesOf(font, "Content-Security-Policy").isEmpty())
+    }
+
     /** Header values in wire order; empty when the reply never declared the header at all. */
     private fun valuesOf(answer: RoomHttp.Answer, name: String): List<String> =
         answer.headers.lines()

@@ -16,6 +16,13 @@ not a hostile one. Everything below is defense-in-depth for that assumption, and
 Pairing runs over cleartext HTTP. Its security does not come from the transport; it comes
 from ECDH plus the safety code you read aloud.
 
+The browser page is served with its own `Content-Security-Policy`: nothing loads by default,
+script and style are this origin plus the page's own inline code, images and media may also use the
+`blob:` frame of a remote call, and `<base>`, forms and framing are denied. It is a second line
+behind the escaping and constant-markup rules, not a replacement for them. HSTS is not sent: the
+certificate is process-lifetime and self-signed, and the host is usually an IP literal, for which a
+pinned origin would only make the browser warning unskippable.
+
 ## PIN
 
 - 4 digits, optional, enforced **per client IP**.

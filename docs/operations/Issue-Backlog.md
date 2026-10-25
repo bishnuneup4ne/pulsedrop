@@ -391,13 +391,22 @@ now carry `nosniff` and `Referrer-Policy`, plus a `sandbox` CSP when the recorde
 exists, and a TLS failure shown to a browser never names a private path and stays bounded.
 `FileNameAdversarialTest` asserts the inline-safety headers on `/preview/{id}`.
 
-### R-6 [partly fixed] CSP, security headers, and request-hardening baseline
+### R-6 [mostly fixed] CSP, security headers, and request-hardening baseline
 Done: `serve()` adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to every
 response, including 401/404 and inline previews, and `Cache-Control: no-store` to JSON that did not set
-its own cache policy (`ResponseHardeningTest`). Open: a CSP **tested against the embedded inline CSS/JS
-and blob media first** (report-only until it passes), `Strict-Transport-Security` on the TLS listener,
-and read/idle timeouts, concurrent-request caps and per-endpoint body caps (the last partly covered by
-R-2).
+its own cache policy (`ResponseHardeningTest`). The browser document now carries a CSP:
+`default-src 'none'`, `script-src`/`style-src` `'self'` plus `'unsafe-inline'` for the page's own
+inline code and handlers, `img-src`/`media-src` also `blob:` for the remote call's frame,
+`frame-src`/`connect-src`/`font-src` `'self'`, and `base-uri`, `form-action`, `frame-ancestors`
+`'none'`. `ResponseHardeningTest` parses it directive by directive, pins that no host or wildcard
+reached `script-src`, and pins that JSON, 404 and font answers do not inherit a document policy.
+Read/idle timeouts needed no change: NanoHTTPD 2.3.1's `ServerRunnable` applies `SO_TIMEOUT` (5 s)
+to accepted sockets (verified against the pinned jar), so a wrapper would only have duplicated it.
+`Strict-Transport-Security` is decided against rather than deferred: the certificate is self-signed
+and process-lifetime and the host is usually an IP literal, so HSTS would make the browser warning
+unbypassable while not even being applied to IP hosts. Still open: concurrent-request caps — the
+limiter bounds requests per address over time, not handlers alive at once — and the streaming quotas
+tracked under R-2.
 
 ### R-7 [fixed] Call media confidentiality is labelled imprecisely
 `docs/Security-Model.md` already states call media is not E2E encrypted. The UI did not: the ringing

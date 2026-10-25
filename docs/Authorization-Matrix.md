@@ -217,9 +217,23 @@ JSON answers are `Cache-Control: no-store` by default: the wrapper adds it when 
 a policy of its own, so the file list and message page are not left for the back button to find. SSE,
 the media leg and login already set their own `no-store`; the page and its fonts stay cacheable.
 
-Still missing: `Content-Security-Policy` (the page is inline CSS/JS and blob media, so this needs a
-browser pass first, not a guessed header) and `Strict-Transport-Security` on the TLS listener.
-Backlog R-6 carries the remainder.
+The page carries its own `Content-Security-Policy`: `default-src 'none'`, with `script-src` and
+`style-src` limited to `'self'` plus `'unsafe-inline'` (the client is one inline script and one inline
+style block, and its buttons use inline handlers, which a nonce cannot cover), `img-src` and
+`media-src` extended with `blob:` for the remote call's JPEG frame, `frame-src`, `connect-src` and
+`font-src` at `'self'`, and `base-uri`, `form-action` and `frame-ancestors` at `'none'`. Every fetch,
+EventSource, XHR and element URL in the client is relative, so this forbids nothing the client does
+and everything it never did: loading a script from another host, `eval`, retargeting `<base>`, posting
+a form off-origin, or framing the room. `ResponseHardeningTest` parses the header by directive rather
+than matching the string. It is attached only to the document; JSON, errors and fonts keep the pair,
+and previews that are documents keep their narrower `sandbox` policy.
+
+`Strict-Transport-Security` is deliberately absent rather than forgotten. The TLS listener's
+certificate is self-signed and process-lifetime, and the host is usually an IP literal: browsers do
+not apply HSTS to IP-address hosts, and where they did, pinning the origin would make the one-time
+certificate warning non-bypassable and each app restart's new certificate unreachable. Read timeouts
+are already present — NanoHTTPD applies `SO_TIMEOUT` (5 s) to accepted sockets when the server
+starts. Concurrent-request caps are still open; backlog R-6 carries that remainder.
 
 No URL credential outlives its purpose any more: a ticket is minutes long, names one object, and
 belongs to one address. `Referrer-Policy: no-referrer` now applies to the whole origin, so a
@@ -354,16 +368,19 @@ The table-driven suite must, for **each row above**, assert status and body-shap
     page's origin;
     *Half written:* the offered `.html` is served `application/octet-stream`, because the MIME type is
     guessed from the saved extension by a table with no HTML or SVG row and nothing consults the uploaded
-    bytes. That closes the route's own half. It does not close the claim: this server sends **no CSP**
-    (`R-6`) and the shipped tab builds its file list from `/api/files` names, so whether a name can
-    execute is a question about `WebClientHtml.kt`'s rendering (`R-5`), not about this response.
+    bytes. That closes the route's own half. A file whose *recorded* type is a document gets
+    `Content-Security-Policy: sandbox`, the page itself now carries a policy (`R-6`), and whether a
+    *name* can execute is a question about `WebClientHtml.kt`'s rendering (`R-5`, fixed), not about
+    this response.
 15. every response shape, not just data routes: `GET /`, a 401, a 404, a font, an `OPTIONS` preflight
     and a successful mutation — each must carry `X-Content-Type-Options: nosniff` and
     `Referrer-Policy: no-referrer`, and none may carry an `Access-Control-Allow-*` header; every JSON
     answer must be `Cache-Control: no-store` unless the route set its own policy.
     *Written:* `ResponseHardeningTest` asserts exactly that, once per shape, against the wire — a 401
     and an authorized `/api/files` both carry `no-store`. The font case also pins that the global pair
-    did not displace `Cache-Control: public, max-age=…`, since NanoHTTPD stores headers by name.
+    did not displace `Cache-Control: public, max-age=…`, since NanoHTTPD stores headers by name. The
+    same file parses the page's CSP directive by directive, pins that no host or wildcard reached
+    `script-src`, and pins that a JSON answer, a 404 and a font do not inherit the document policy.
 15. session lifecycle (after S-1): issue, use, expire, logout, PIN change, server restart,
     revoked-token reuse;
 16. SSE: `/api/events` from two tabs, assert an event meant for one does not disclose the
