@@ -229,7 +229,7 @@ a ceiling first, from the declared `Content-Length`, with `413` and `Cache-Contr
 | `POST /api/auth` (no credential) | 8 KiB |
 | `POST /api/pair/*`, `/api/call/*`, `/api/relay/*` (key-gated, not PIN-gated) | 64 KiB |
 | `POST /api/call/web`, `/api/delete`, `/api/messages`, `/api/ticket` | 64 KiB |
-| `POST /api/webcall/up` | 256 KiB — one ~10 Hz batch of base64 frames |
+| `POST /api/webcall/up` | 2 MiB — one 100 ms batch of base64 frames, sized for a 1600 px screen JPEG; each decoded frame is capped separately (1 MiB video, 64 KiB audio/control, 64 frames per batch, 4 MPix JPEG) |
 | `POST /upload`, `POST /chatupload` | free space on the cache volume less 64 MiB headroom, floored at 32 MiB |
 
 The upload ceiling is measured per request rather than fixed, because the honest answer to "how big a

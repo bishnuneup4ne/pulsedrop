@@ -30,6 +30,7 @@ import com.pulsedrop.app.media.h264.ScreenLane
 import com.pulsedrop.app.media.ladder.QualityLadder
 import com.pulsedrop.app.media.ladder.QualityTier
 import com.pulsedrop.app.media.protocol.FrameCodec
+import com.pulsedrop.app.media.protocol.MediaLimits
 import com.pulsedrop.app.media.protocol.TYPE_AUDIO
 import com.pulsedrop.app.media.protocol.TYPE_CAMERA
 import com.pulsedrop.app.media.protocol.TYPE_CONF_AUDIO
@@ -365,7 +366,7 @@ class CallEngine(
     @Volatile private var webOnly = false
     private val webOut = java.util.concurrent.LinkedBlockingQueue<ByteArray>(96)
     /** A batch may end mid-frame, so the remainder waits here for the next one. */
-    private val webIn = FrameCodec.BatchParser()
+    private val webIn = FrameCodec.BatchParser(MediaLimits.MAX_FRAME_BYTES)
 
     /**
      * A browser tab riding along in a hosted conference. The host is the bridge, so this is
@@ -809,12 +810,24 @@ class CallEngine(
     /**
      * Accept one uplink batch: zero or more `[1b type][4b BE len][payload]` frames. A trailing
      * partial frame is held until the next batch completes it.
+     *
+     * The web leg's frames are checked here, not in [FrameCodec], because the socket leg's input
+     * comes from a peer this phone chose to pair with while a tab's comes from whoever holds the
+     * room credential. A batch is three frames from the shipped client; anything past
+     * [MediaLimits.MAX_FRAMES_PER_BATCH] is a caller buying work with one request, and a frame past
+     * its type's cap is skipped rather than handed to a decoder or the audio track.
      */
     fun ingestWebFrames(bytes: ByteArray) {
         if ((!webOnly && !webAttached) || !running) return
-        for (f in webIn.feed(bytes)) {
+        val frames = webIn.feed(bytes)
+        if (frames.size > MediaLimits.MAX_FRAMES_PER_BATCH) {
+            webIn.reset()
+            return
+        }
+        for (f in frames) {
             val type = f.type
             val payload = f.payload
+            if (!MediaLimits.frameAllowed(type, payload.size)) continue
             handleFrame(WEB_PID, type, payload)
             // In a hosted conference the tab is a seat like any other member.
             if (webAttached && !webOnly) {
@@ -1118,8 +1131,16 @@ class CallEngine(
         publishStats()
     }
 
+    /**
+     * Decode a JPEG only after its dimensions say the bitmap is affordable. The byte length says
+     * nothing about the allocation: a small file can declare an enormous canvas, and this runs for
+     * frames from both legs.
+     */
     private fun decodeJpeg(payload: ByteArray): Bitmap? = try {
-        BitmapFactory.decodeByteArray(payload, 0, payload.size)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(payload, 0, payload.size, bounds)
+        if (!MediaLimits.jpegAllowed(bounds.outWidth, bounds.outHeight)) null
+        else BitmapFactory.decodeByteArray(payload, 0, payload.size)
     } catch (e: Exception) {
         null
     }

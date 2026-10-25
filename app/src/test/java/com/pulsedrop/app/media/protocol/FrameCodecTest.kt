@@ -137,6 +137,18 @@ class FrameCodecTest {
     }
 
     @Test
+    fun batchParserHonoursALoweredCap() {
+        // 1024 bytes is legal on the wire but above the 64-byte cap this caller set. The batch is
+        // dropped without waiting for the payload, so the bytes can never be accumulated 64 at a
+        // time by repeated posts.
+        val parser = FrameCodec.BatchParser(64)
+        assertEquals(0, parser.feed(hex("02 00 00 04 00")).size)
+        val exact = parser.feed(FrameCodec.encode(2, ByteArray(64)))
+        assertEquals("a frame at the cap is still a frame", 1, exact.size)
+        assertEquals(64, exact[0].payload.size)
+    }
+
+    @Test
     fun batchParserResetDiscardsPartial() {
         val parser = FrameCodec.BatchParser()
         parser.feed(hex("01 00 00 00 10 01 02")) // promised 16-byte payload, only 2 arrived
