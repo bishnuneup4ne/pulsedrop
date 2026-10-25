@@ -605,11 +605,17 @@ frames go through `FrameCodec`, whose cap is 4 MiB — so a tab that stopped rea
 that much live JPEG on a phone's heap. `WebOutboxTest` holds both caps, the exact byte total, the
 drop-oldest order under both, the refusal of a frame larger than the whole budget, and the invariant
 under four concurrent producers.
+*Fixed, and it was the second half:* the PRD's §8.6 priority is now the queue's shed *order* rather
+than a second queue — `offer(frame, lane)` and video-first shedding, so a stalled tab's backlog gives
+up pictures before it gives up the voice that made the call (`WebOutboxTest`'s three lane cases). One
+queue, not two, because the leg's reader is a single chunked response and interleaving two would put
+the ordering problem in the browser.
 Still open here, and open on purpose: stopping the camera and mic when the tab that was reading them
-is gone (a watchdog that ends a call needs a device to judge, not a unit test), and keeping audio
-frames when a video backlog is shed (the PRD's §8.6 priority lanes — a second queue, not a second
-bound on this one). The PRD's "prefer WebRTC" is a new dependency against a rule that local-network
-operation must not need an external service; that decision belongs to the owner, not to a patch.
+is gone (a watchdog that ends a call needs a device to judge, not a unit test), and whether the
+audible half of the lane rule is what it sounds like — that a real tab under a real stall hears
+unbroken speech is asserted about this queue's behaviour, not observed over a call. The PRD's "prefer
+WebRTC" is a new dependency against a rule that local-network operation must not need an external
+service; that decision belongs to the owner, not to a patch.
 
 ### R-18 [fixed] Nothing about the payloads was compressed or revalidated
 There was no `Content-Encoding`, `ETag` or `Vary` anywhere in the server package, and the index route
