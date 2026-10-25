@@ -27,23 +27,24 @@ that case as a bare "App not installed" with no explanation. See
 
 ## Verifying what you downloaded
 
-Every release's SHA-256 is published twice: on the release page, and in the
-"VirusTotal scan: v…" issue the CI opens automatically when the release goes out. Compare
-locally:
+The "VirusTotal scan: v…" issue that CI opens automatically for every release carries the APK's
+SHA-256 and the permanent report; release notes repeat the hash in an Integrity block when they
+include one. Compare locally:
 
 ```
 sha256sum app-release.apk
 ```
 
-The hash doubles as a permanent VirusTotal link:
+The hash is also a permanent VirusTotal link:
 `https://www.virustotal.com/gui/file/<sha256>` — the permalink always points at that exact
 file, so it cannot be quietly swapped later.
 
-For reference, the current release **2.0.1** APK is 16,545,119 bytes with SHA-256
-`9eaea8564572656b45da061decf3b43d08d5c11c4dfc060a172ac42ffaf8441e`, and its VirusTotal report is
-https://www.virustotal.com/gui/file/9eaea8564572656b45da061decf3b43d08d5c11c4dfc060a172ac42ffaf8441e —
-which CI files as an issue on the release too. The previous release, 2.0.0, was 16,545,351 bytes
-with SHA-256 `0389647c84dec72e8e06bac2cf03e93f940932ea7d4a010e98245046eed684c2`.
+For reference, the newest published release at the time of writing, **2.0.2**, is 16,545,126
+bytes with SHA-256 `876fd6d34f71dc2ff5fbfb623be21c782ac90d585e56c10a0eadc0a76d4f45aa`; its
+VirusTotal report is
+<https://www.virustotal.com/gui/file/876fd6d34f71dc2ff5fbfb623be21c782ac90d585e56c10a0eadc0a76d4f45aa>.
+The previous release, 2.0.1, was 16,545,119 bytes with SHA-256
+`9eaea8564572656b45da061decf3b43d08d5c11c4dfc060a172ac42ffaf8441e`.
 
 From 2.0.1 the app's name is `PulseDrop <version>` in the launcher and in the drawer header,
 generated from the build's own `versionName`. Two installs side by side — this one and an older

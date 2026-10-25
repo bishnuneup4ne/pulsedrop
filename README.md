@@ -45,7 +45,7 @@ after granting it.
 ## Requirements
 
 - **Building:** an Android SDK providing `compileSdk` 37, and any JDK 21+ to launch the wrapper.
-  The Gradle daemon is pinned to JDK 25 in `gradle/gradle-daemon-jvm.properties`; Gradle 9.3.1
+  The Gradle daemon is pinned to JDK 25 in `gradle/gradle-daemon-jvm.properties`; Gradle 9.6.0
   and the JDK are fetched for you (Foojay resolver), so no local install of either is required.
 - **Running:** Android 7.0 (API 24) or newer. Camera and microphone are optional — the app is
   useful for file transfer without either.
@@ -78,21 +78,22 @@ on demand.
 
 ### Verifying a downloaded APK
 
-Every release ships a per-version APK (`PulseDrop-<version>.apk`, e.g. `PulseDrop-1.3.0.apk`)
-signed with APK Signature Scheme v2 + v3. To confirm the file you downloaded is byte-for-byte
-what this repository published, compare its SHA-256
-(`sha256sum PulseDrop-<version>.apk`) against the hash in the release notes. That hash doubles as the
-permanent VirusTotal link:
+Every release attaches one APK, signed with APK Signature Scheme v2 + v3. From 1.7.0 the file is
+named `app-release.apk`; 1.6.0 and earlier used `PulseDrop-<version>.apk`, so the release **tag**,
+not the filename, is what tells versions apart. To confirm the file you downloaded is
+byte-for-byte what this repository published, compare its SHA-256
+(`sha256sum app-release.apk`) against the hash in the release notes or in the "VirusTotal scan: v…"
+issue the CI opens for every publish. That hash is also the permanent VirusTotal link:
 
 ```
 https://www.virustotal.com/gui/file/<sha256>
 ```
 
-Live reports for current releases:
+Reports for recent published releases:
 
-- **v1.4.0** — <https://www.virustotal.com/gui/file/8b5f82a3d52b8a3d9f8a5eaf2d994031bb850d486926e6a1c597cafecad13870>
-- **v1.3.0** — <https://www.virustotal.com/gui/file/87f1bdd18b4b6deec7f3feaf3d03eb9e0a1d7056d049c1b97b57632c26ce14de>
-- **v1.1.2** — <https://www.virustotal.com/gui/file/6fc547fbc61922502d4b6118b2add02e8653f1f99cee1af1048d05f2b02b4b3a>
+- **v2.0.2** — <https://www.virustotal.com/gui/file/876fd6d34f71dc2ff5fbfb623be21c782ac90d585e56c10a0eadc0a76d4f45aa>
+- **v2.0.1** — <https://www.virustotal.com/gui/file/9eaea8564572656b45da061decf3b43d08d5c11c4dfc060a172ac42ffaf8441e>
+- **v2.0.0** — <https://www.virustotal.com/gui/file/0389647c84dec72e8e06bac2cf03e93f940932ea7d4a010e98245046eed684c2>
 
 `.github/workflows/virustotal-scan.yml` submits each published release to VirusTotal
 automatically and posts the permalink as an issue — set the `VT_API_KEY` repository secret
