@@ -50,11 +50,38 @@ it already has must not be sent to it twice, and the bytes it does not have shou
   page remembers the validator for its own polls and clears it on logout, since the next login
   answers a different room.
 
+## The room cursor
+
+`GET /api/messages` answers the whole visible history unless the request offers a marker:
+
+```
+GET /api/messages?since=7:1834:c0ffee1122334455    (values illustrative)
+    X-Room-Cursor: 7:1841:c0ffee1122334455
+    X-Room-Delta: 1
+    [{"id": … only the entries that moved … }]
+```
+
+`X-Room-Cursor` is sent on every answer and is opaque: the visibility generation, the room's revision,
+and a digest of the caller's address with the phone's. `X-Room-Delta: 1` says the array is a patch on
+what the caller holds rather than the room — the only signal that lets a client merge instead of
+replace, since a two-entry array and a two-thousand-entry array are otherwise the same shape.
+
+The server sends the whole room, without the delta flag, when it will not honour a marker: no marker
+offered, a marker minted before the phone changed which groups a browser may read, or a marker minted
+for another address or another host address. A refusal is a normal full answer, so a client that
+ignores both headers keeps working unchanged, and one that holds a stale marker costs itself one full
+read rather than missing messages.
+
+The array's shape never changes, so a reader that does not use the cursor is unaffected. A marker is a
+place in a list and not a credential: it holds no PIN, no session token and nothing about the room's
+contents, which is what lets it ride in a query string at all. The message *contents* stay out of
+URLs everywhere.
+
 ## Chat
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET / POST | `/api/messages` | Poll / send chat messages |
+| GET / POST | `/api/messages` | Poll / send chat messages. `?since=` asks for only what moved — see [The room cursor](#the-room-cursor) |
 | DELETE | `/api/messages` | Retract a message — only what the calling tab itself wrote, and only from the same address |
 | GET | `/api/typing` | Active typing senders (public, like `/api/info`) |
 | POST | `/api/typing` | Report typing (`sender`, `typing`) — held for 6 s; requires `X-Pulse-Auth`, keyed by caller address, one write per 400 ms |

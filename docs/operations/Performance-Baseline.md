@@ -267,6 +267,25 @@ No claim of a latency or FPS improvement is made here, and none could be: no cal
 is no camera on this host, and the queue's size only matters while a real tab stalls. The measurable
 part is the bound itself, which is what `WebOutboxTest` tests.
 
+### Fourth half — reading only what moved (`perf/room-cursor`)
+
+| Change | Files | Test |
+| --- | --- | --- |
+| A revision stamped on every mutation of the room — an arrival, an in-place retraction, and the eviction retention causes — plus a generation for the visibility rules. | `server/PulseDropServer.kt` (`roomRev`, `entryRevs`, `visibilityEpoch`, `stampRoomLocked`, the `webThreads` setter) | `RoomCursorTest` — 8 tests |
+| `GET /api/messages?since=<marker>` answers only the entries that moved and says so with `X-Room-Delta: 1`. A marker from another address, or from before a thread was opened, is refused and the room goes out whole. | same route (`roomScope`, `parseRoomCursor`) | `one address's cursor is not another address's`, `a thread opened after a cursor forces a whole read rather than a patch` |
+| The marker travels in `X-Room-Cursor`, so the array keeps the shape every reader already parses — a tab that sends no `since` gets exactly what it got before. | same | `a first read is the whole room and hands back a marker for the next one`, `the cursor carries no credential` |
+| The tab offers its marker and folds a patch into what it holds instead of replacing the room with the patch. | `server/WebClientHtml.kt` (`roomCursor`, `mergeRoomPatch`, `processMessages`) | `the tab folds a patch and replaces a whole room`; the one-reader rule in `WebClientRequestDisciplineTest` now matches the URL-as-variable shape |
+
+Three refusals are the design, not the delta: ids are random UUIDs so `?since=<id>` orders nothing,
+retention evicts from the front so a position is not stable, and a retraction rewrites an entry where
+it stands so a tail read leaves deleted words on the screen. The fourth is visibility, which changes
+what a tab may read without changing the room at all.
+
+What it costs, stated rather than left to be discovered: a patch is merged, not substituted, so a
+message the phone has dropped off its own 2,000 cap stays on a long-lived tab's screen until the room
+is read whole — a reload, a logout, or the phone opening or closing a thread. The alternative is
+replacing the list on every poll, which is the 517 KB this change exists to stop sending.
+
 ---
 
 ## Ranked remaining work
@@ -276,7 +295,7 @@ owner, because "fast" and "allowed" are different questions.
 
 | # | Item | Evidence | Risk / needs a decision |
 | --- | --- | --- | --- |
-| P1-1 | Delta `/api/messages` — but not as `?since=`. Reading the list's lifecycle first says the naive cursor is wrong in three separate ways, and a sound one needs a server-assigned revision *re-issued on retraction* plus a visibility epoch that forces a full resync when the phone changes which groups a browser may read. | §"R-12 in the backlog" for each of the three; `:1133`, `:1146`, `:1167`, `:507`, `:668` | Three coordinated changes and a new field on the wire format. The `304` in this batch already removed the idle cost, so what is left is the cost of a busy room. Needs a decision. |
+| P1-1 | ~~Delta `/api/messages` — but not as `?since=`~~ **done in `perf/room-cursor`**, as a revision + visibility-generation marker rather than an id or a position. | the three naive-cursor failures listed here: `:1133`, `:1146`, `:1167`, `:507`, `:668` | Shipped as a header-borne opaque marker so the array's shape never changed for a reader that does not use it. What is left is the browser's own parse of a big first read, which needs a real browser to time. |
 | P1-2 | Get `startServer()` and `startWithSettle` off the main thread. | §5: `MainViewModel.kt:1159,1317` | Touches lifecycle, `MainViewModel` has no tests, and internal callers currently rely on the server being listening when the call returns. Making it async without a device or a harness is how a startup race gets shipped silently. Deliberately not attempted blind. |
 | P1-3 | ~~Compress and revalidate the document.~~ **Fixed in this batch** — see "Second half" above. | §4 correction 4 | NanoHTTPD had the hook all along (`useGzipWhenAccepted`); the part that needed care was the `304` framing. |
 | P1-4 | ~~Bound `webOut` in bytes, not frames~~ **done in `perf/webout-byte-bound`**; stop the camera/mic when the tab reading them is gone. | §7: `CallEngine.kt:367` | The byte bound was a local queue policy and is tested here. The watchdog that ends a call is a behaviour change and needs a device — that half is still open, not skipped by accident. |
@@ -314,6 +333,13 @@ PULSEDROP_PROBE=true PULSEDROP_PROBE_OUT=… ./gradlew :app:testDebugUnitTest --
 ./gradlew :app:testDebugUnitTest :app:lintDebug --rerun-tasks   # over the byte-bound branch
     BUILD SUCCESSFUL in 4m 55s — 72 classes, 566 tests, 6 skipped, 0 failures, 0 errors
     lint: 0 errors, 62 warnings — the same 62, so nothing here added one
+./gradlew :app:testDebugUnitTest --tests '…server.RoomCursorTest'
+    BUILD SUCCESSFUL in 9s — 8 tests, 0 failures, 0 errors
+PULSEDROP_PROBE=true PULSEDROP_PROBE_OUT=… ./gradlew :app:testDebugUnitTest --tests '…HostBaselineProbe'
+    BUILD SUCCESSFUL in 3m 21s — the encoding rows above and the cursor rows
+./gradlew :app:testDebugUnitTest :app:lintDebug      # the whole suite plus lint, over the cursor
+    BUILD SUCCESSFUL in 5m 50s — 73 classes, 575 tests, 7 skipped, 0 failures, 0 errors
+    lint: 0 errors, 62 warnings — the same 62 again
 ```
 
 The first `WebOutboxTest` run failing twice is worth keeping in the record rather than editing out.
@@ -330,8 +356,9 @@ The correction to the record: `lintDebug` does report 62 warnings, all of them p
 was the exit status read as the report. The build is clean of errors; the warnings are real and are
 not this batch's. The 62 are counted so the next reader can tell a new one from an old one.
 
-Six skipped: the probe's own tests, which stay skipped in an ordinary run on purpose, so no CI job
-turns a loopback timing into a flaky failure. The one added here is `encodingOnTheWire`.
+Seven skipped: the probe's own tests, which stay skipped in an ordinary run on purpose, so no CI job
+turns a loopback timing into a flaky failure. The two added since this section was first written are
+`encodingOnTheWire` and `cursorPollingOnTheWire`.
 
 The 429 in that first probe run was not a bug in the change. Seeding 2000 messages POSTs as fast as a
 socket allows, and the per-address flood guard (120 at rest, 30/s — `RequestRateLimiter.kt:16-17`)

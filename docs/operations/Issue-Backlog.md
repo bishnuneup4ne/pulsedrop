@@ -535,29 +535,34 @@ Numbering continues the `R-` family. These are ranked, annotated and evidenced i
 [Performance-Baseline.md](Performance-Baseline.md); the short version, including what could *not* be
 measured on the machine that produced the numbers, is there rather than repeated here.
 
-### R-12 [partly fixed] Every message read is the whole history
+### R-12 [fixed] Every message read is the whole history
 `GET /api/messages` (`PulseDropServer.kt:2094-2131`) serialises every visible message under
 `synchronized(messages)` with no cursor, so the cost of an idle tab grows with everything the room
 has ever said: measured 257 B at one message, 51,491 B at 200, **516,891 B at the 2000 retention
 cap** — re-read on the client's 2 s tick and on every doorbell.
-*Fixed:* the client no longer starts a second, third and fourth concurrent copy of that read when a
-doorbell lands while one is in flight (it serialises and re-runs once at the end), asserted by
-`WebClientRequestDisciplineTest`; and an unchanged read now costs nothing at all, because the route
-carries a validator (R-18).
-*Still open:* a cursor. Reading the list's lifecycle first showed `?since=` is not the shape it
-should take, and any version of it is three changes, not one:
+*Fixed in three steps:* the client no longer starts a second, third and fourth concurrent copy of that
+read when a doorbell lands while one is in flight (`WebClientRequestDisciplineTest`); an unchanged read
+now costs 227 B, because the route carries a validator (R-18); and a read where something *did* change
+costs what changed, because the tab may offer a marker (`perf/room-cursor`). Measured at the retention
+cap: whole room 63,239 B gzipped with p95 15 ms, one new message 575 B with **p95 2 ms**
+(`cursorPollingOnTheWire`) — the first row in this backlog where the latency moved as much as the
+bytes, since serialising two thousand messages was the latency.
+The shape is not `?since=<id>`, and the three reasons it cannot be are what the design answers:
 - nothing monotonic exists to cursor on — ids are `UUID.randomUUID()` (`:1133`) and `timestamp`
-  collides within a millisecond, so a cursor would have to be a new server-assigned revision;
-- a retraction re-issues the *same entry* (`markMessageDeleted` replaces it in place at `:1167`), so
-  a filter on the entry's original revision would never re-send the tombstone, and a tab that had
-  already shown the message would keep showing text its sender retracted;
+  collides within a millisecond. Answer: a server-assigned revision, bumped on every mutation and
+  kept per entry in `entryRevs`.
+- a retraction re-issues the *same entry* (`markMessageDeleted` replaces it in place at `:1167`), so a
+  filter on the entry's original revision would never re-send the tombstone. Answer: the retraction
+  restamps that entry, so a tab holding an old marker is told its message lost its text
+  (`a retraction reaches a tab that already read the message`).
 - visibility is not monotonic — `threadIsVisibleTo` (`:668`) is evaluated per request against
-  `@Volatile webThreads` (`:507`), reassigned from the phone whenever its group list changes, so
-  old messages can become newly visible *and* visible messages can vanish without any revision
-  moving. A forward cursor cannot express either direction; it needs a visibility epoch that forces a
-  full resync, which is the payload this was meant to stop sending.
-Also `while (messages.size > SERVER_CHAT_RETENTION) messages.removeAt(0)` (`:1146`, `:1190`): the
-front falls off at 2000, so an offset-based cursor silently skips rather than signals a gap.
+  `@Volatile webThreads` (`:507`), so old messages can become newly visible with no revision moving.
+  Answer: the generation of that list rides in the marker, and a marker from an older generation is
+  refused — the tab gets the room whole, which is the payload a cursor exists to stop sending, and
+  the price of correctness exactly once per group opened.
+Retention's falling front (`:1146`, `:1190`) is not a gap in this design: eviction retires the stamps
+of what it removes, and a marker older than the room's oldest entry yields everything retained, which
+the tab merges by id. It cannot miss a message, only repeat one it already has.
 
 ### R-13 [fixed] The event-stream cap silenced tabs instead of refusing one
 `maxEventStreams = 8` (`:557`) was enforced by evicting the oldest stream, so the ninth tab's arrival

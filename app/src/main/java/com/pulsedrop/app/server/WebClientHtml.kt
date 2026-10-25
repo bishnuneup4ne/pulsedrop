@@ -2752,6 +2752,11 @@ object WebClientHtml {
      * half of the list. A retraction replaces the message where it stands, an arrival is appended,
      * and nothing is re-sorted: the phone sends oldest-first, so appending keeps the order the
      * bubbles are already in.
+     *
+     * The one thing this costs is honesty about retention: a message the phone has dropped off its
+     * 2000 cap stays on this screen until the room is read whole again, which happens on a reload, a
+     * logout, or the phone opening or closing a thread. Reading the room as a replacement to avoid
+     * that would be the 517 KB this exists to stop sending.
      */
     function mergeRoomPatch(msgs) {
       if (!msgs.length) return;
