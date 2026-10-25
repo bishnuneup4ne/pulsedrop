@@ -478,4 +478,61 @@ class HostBaselineProbe {
         report("reconnect", "full_refetch_round_trip_ms", all.toString())
         report("reconnect", "requests_per_reconnect", routes.size.toString())
     }
+
+    /**
+     * What starting the host costs the thread that asks for it.
+     *
+     * R-15 is the only P1 item with no number beside it: `MainViewModel.startServer()` runs on the
+     * caller's thread and `startWithSettle` retries `server.start()` after `Thread.sleep(350 *
+     * attempt)`, so the backlog says "up to ~2 s of dead UI". That is arithmetic about a worst case
+     * that needs a *refused bind* to occur at all, and it mixes two different risks. Measured apart:
+     * what a successful start costs on the way in, and what a port somebody else holds costs before
+     * the first sleep. The second is the one that decides whether the freeze is the bind or the ladder.
+     */
+    @Test
+    fun startupCostAndBindConflict() {
+        val starts = LongArray(10)
+        val ready = LongArray(10)
+        repeat(10) { i ->
+            val fresh = RoomHttp.freePort()
+            val extra = PulseDropServer(
+                port = fresh,
+                bindAddress = "127.0.0.1",
+                context = RoomHttp.appContext(),
+                initialDeviceName = "Probe Phone",
+                initialPinCode = pin,
+                initialIsPinRequired = true,
+                initialListener = SilentListener
+            )
+            starts[i] = elapsed { extra.start() }
+            ready[i] = elapsed { RoomHttp.awaitListening(fresh) }
+            extra.stop()
+        }
+        report("startup", "start_p50_ms", percentile(starts, 0.50).toString())
+        report("startup", "start_p95_ms", percentile(starts, 0.95).toString())
+        report("startup", "listening_p50_ms", percentile(ready, 0.50).toString())
+        report("startup", "listening_p95_ms", percentile(ready, 0.95).toString())
+
+        // The case the settle loop exists for: a port that will not be handed over.
+        val squatter = java.net.ServerSocket(0, 4, java.net.InetAddress.getByName("127.0.0.1"))
+        val conflict = PulseDropServer(
+            port = squatter.localPort,
+            bindAddress = "127.0.0.1",
+            context = RoomHttp.appContext(),
+            initialDeviceName = "Probe Phone",
+            initialPinCode = pin,
+            initialIsPinRequired = true,
+            initialListener = SilentListener
+        )
+        val began = System.nanoTime()
+        val outcome = runCatching { conflict.start() }
+        val conflictMs = (System.nanoTime() - began) / 1_000_000
+        conflict.stop()
+        squatter.close()
+        report("startup", "bind_conflict_ms", conflictMs.toString())
+        report("startup", "bind_conflict_outcome",
+            outcome.exceptionOrNull()?.javaClass?.simpleName ?: "returned without throwing")
+        report("startup", "settle_sleep_ladder_ms", (350L * (1 + 2 + 3)).toString())
+        assertTrue("the refused bind took $conflictMs ms to answer, which is its own story", conflictMs < 5000)
+    }
 }
