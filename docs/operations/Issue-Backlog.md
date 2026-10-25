@@ -385,10 +385,16 @@ Add `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Co
 private responses, and a CSP **tested against the embedded inline CSS/JS first** (report-only until it
 passes). Add read/idle timeouts, concurrent-request caps, and per-endpoint body caps.
 
-### R-7 [needs test] Call media confidentiality is labelled imprecisely
-`docs/Security-Model.md` already states call media is not E2E encrypted — the docs are honest, the UI
-may not be. Label it before start/accept. *Also:* `GET /api/relay/...` style probing aside, verify
-`CallEngine.handleInvite` rejects unknown pairing ids so an invite cannot be spoofed.
+### R-7 [fixed] Call media confidentiality is labelled imprecisely
+`docs/Security-Model.md` already states call media is not E2E encrypted. The UI did not: the ringing
+screen said "over your encrypted pairing", and the devices onboarding said "chat, calls and encrypted
+transfers", both readable as a promise about the media. The ringing hint now says media is not
+end-to-end encrypted (chat between paired phones is), and onboarding names encrypted chat and transfers
+separately from calling.
+
+*Verified:* `CallEngine.handleInvite` requires `findPairing(pid)`, so an invite carrying an id this
+phone does not hold is refused and never raises `incomingCall`. `CallInviteTest` pins that refusal and
+the control that a real pairing still rings.
 
 ### R-8 [confirmed, partially fixed] Route-shape leakage via OPTIONS and 401/404 asymmetry
 `OPTIONS` returns 200 for any path with wildcard CORS (`:1074`), and `GET /api/auth` reaches the global
