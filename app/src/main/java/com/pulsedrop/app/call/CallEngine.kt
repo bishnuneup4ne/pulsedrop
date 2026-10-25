@@ -364,7 +364,7 @@ class CallEngine(
      * POST appending to [webIn]. Both carry the same [type][len][payload] framing as a socket.
      */
     @Volatile private var webOnly = false
-    private val webOut = java.util.concurrent.LinkedBlockingQueue<ByteArray>(96)
+    private val webOut = WebOutbox()
     /** A batch may end mid-frame, so the remainder waits here for the next one. */
     private val webIn = FrameCodec.BatchParser(MediaLimits.MAX_FRAME_BYTES)
 
@@ -803,7 +803,7 @@ class CallEngine(
     /** Block for the next frame headed to the tab. Null means the leg is gone. */
     fun nextWebOutFrame(timeoutMs: Long): ByteArray? {
         if (!webOnly && !webAttached) return null
-        val f = webOut.poll(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        val f = webOut.poll(timeoutMs)
         return if (f == null && !webOnly && !webAttached) null else f
     }
 
@@ -918,11 +918,16 @@ class CallEngine(
     }
 
     /**
-     * The tab drains [webOut] as one chunked stream, so a stalled reader must never build a
+     * The tab drains [webOut] as one chunked response, so a stalled reader must never build a
      * backlog: live media only ever wants the newest frame.
+     *
+     * The refusal [WebOutbox.offer] returns for a frame larger than the whole budget is ignored on
+     * purpose. The only producer here is this phone's own encoder, so reaching it means capture has
+     * already gone wrong, and dropping the frame is what a call should do rather than tearing the
+     * leg down over one oversized image.
      */
     private fun writeWebFrame(type: Int, payload: ByteArray) {
-        while (!webOut.offer(FrameCodec.encode(type, payload))) webOut.poll()
+        webOut.offer(FrameCodec.encode(type, payload))
     }
 
     /** Returns false when the write failed, so the caller can drop just that connection. */
