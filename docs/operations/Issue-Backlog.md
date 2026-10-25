@@ -241,16 +241,20 @@ explicit mode and testing legacy clients.
 *Work:* honest status labels ("secure listener ready" ≠ "browser trusts this certificate"), one-tap
 stop/pause, optional strict mode that disables unpaired endpoints.
 
-### S-8 [confirmed] A paired sender can upload but cannot read its own traffic
+### S-8 [decided: upload-only] A paired sender can upload but cannot read its own traffic
 
-`pairedSenderIsAuthorized` is consulted on `/upload` only (`:1009`), so a paired phone whose host has
-since rotated the PIN can still push files but gets 401 on `/api/messages`, `/api/threads` and
-`/api/files` — it cannot confirm what it sent was delivered, and the browser tab cannot retract it.
-Documented here because it is a *product* decision as much as a security one: either the pairing
-secret is a credential for the read routes too, or the pairing UI has to say that pairing grants
-upload-only.
-*Work:* decide the intent, then make `isAuthorized` agree with it in one place, and label the pairing
-screen to match.
+`pairedSenderIsAuthorized` is consulted on `/upload` only, so a paired phone whose host has since
+rotated the PIN can still push files but gets 401 on `/api/messages`, `/api/threads` and
+`/api/files` — it cannot confirm what it sent was delivered, and a tab cannot retract it.
+Documented here because it is a *product* decision as much as a security one.
+*Decision:* the read routes stay on the room credential. A pairing key is long-lived, survives a PIN
+change and has no per-session revoke story, so accepting it for reads would let a device that was
+paired once read everything forever. Upload-only is the narrower capability, and the 401 on a read is
+the honest answer rather than a bug.
+*Labelled:* the **Devices** screen's trust panel and the Help answer now say that a paired phone can
+send without a PIN but does not read files, message history or the browser room;
+`docs/Pairing-and-Devices.md` and `docs/Security-Model.md` say the same. `isAuthorized` already
+expressed the decision in one place; what was missing was the UI saying it out loud.
 
 ---
 
@@ -516,7 +520,7 @@ Found while checking whether the security automation added to `main` on 2026-10-
 | X-3 | CodeQL cannot analyse the browser client. It is JavaScript inside a Kotlin string literal (`WebClientHtml.kt`), and extractors are chosen by file extension — so the app's most exposed input-handling code gets Kotlin queries only. The `javascript-typescript` matrix entry sees `site/` and `dev/`. Fixing this properly means shipping the client as an asset file, which changes packaging: design it, do not slip it into a security PR. | [confirmed] — blind spot is documented in the workflow header meanwhile |
 | X-4 | CodeQL alert #1, CWE-927 (implicit/mutable `PendingIntent`) at `diag/CrashReporter.kt`. The mutable half was already false (`FLAG_IMMUTABLE`); the real half was that the intent was *implicit* (`ACTION_VIEW` + a `github.com` URL), so it resolved to whichever app claimed that host, with the crash markdown — device model, Android version, stack trace — in the query string and in browser history. **Fixed:** the notification now targets `CrashReportActivity` explicitly (and `exported=false`); it carries only the report's file name, the screen reads the report from private storage, shows it, copies it on request and opens the *empty* new-issue page. No report text enters an intent or a URL. Proved by `CrashReportIntentTest`. | [fixed] P2 |
 | X-5 | Dependabot *security* updates (the ones that patch a known-vulnerable dependency) are a repository setting under Code security, not something this file can turn on. Needs someone with administration. | [recommendation] owner action |
-| X-6 | `actions/setup-java@v4`'s current tip commit is literally "Deprecate setup-java v4", and checkout/upload-artifact/setup-android/setup-gradle are one to three majors behind. Deliberately **not** bumped here: pinning preserves behaviour exactly, a major bump does not, and it can only be judged on a real runner. | [recommendation] separate PR |
+| X-6 | `actions/setup-java@v4`'s current tip commit was literally "Deprecate setup-java v4", and checkout/upload-artifact/setup-android/setup-gradle were one to three majors behind. | **Fixed** by Dependabot on `main`: checkout `v7.0.1`, setup-java `v6.1.0`, setup-android `v4.0.4`, setup-gradle `v6.4.0`, upload-artifact `v7.0.2`, CodeQL `v4` — each a full-SHA pin and each the current release when checked. Nothing left to bump by hand. |
 | X-7 | `gradle-wrapper.properties` named a distribution URL without `distributionSha256Sum`, so the wrapper would execute whatever the CDN returned for that URL. The 9.6.0 bump made this a fresh URL nobody had vetted; the checksum is now pinned (verified against a fresh download). | **Fixed** on `ci/wrapper-checksum` |
 | X-8 | `androidx.navigation:navigation-compose` 2.10.2 cannot be adopted alone: it forces Compose UI 1.11.2 over the BOM's 1.7.2 and requires `compileSdk 37`, so the build is either half-upgraded or does not configure. Verified on a scratch tree that a coherent stack (BOM `2026.06.01`, lifecycle 2.11.0, `compileSdk 37.2`) makes all 363 tests pass with two test adaptations (one asserts the first child of a status row, one clicks below the fold). Reverted on `main` instead, because a Material3 1.4 upgrade changes rendering and belongs on a device, not in a CI repair. | [recommendation] coordinated upgrade with on-device review |
 
