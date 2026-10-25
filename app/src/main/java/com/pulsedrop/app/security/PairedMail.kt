@@ -385,6 +385,11 @@ class PairedMail(
             }
             true
         } catch (e: Exception) {
+            // Records are written as they authenticate, so a stream that turns bad halfway has left
+            // its healthy prefix on disk under a name the received listing reads. Refusing the upload
+            // is only fail-closed if the plaintext the refusal describes goes with it, and that cannot
+            // be left to whichever caller happens to remember a cleanup.
+            finalFile.delete()
             false
         }
     }

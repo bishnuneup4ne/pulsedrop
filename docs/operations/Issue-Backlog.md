@@ -513,9 +513,22 @@ first message after a confirmed pairing threw during ECDH or derivation. Proved 
 Still open, and written down rather than papered over:
 * the safety code covers the two identity keys, not the chosen KDF. An on-path attacker can strip
   `kdf` from the answer, leaving the acceptor on V2 and the requester on V1. Both derivations are
-  strong, and the mismatch fails closed on the first message, so this is a denial of service rather
-  than a confidentiality downgrade. Binding the version into what the humans compare would make old
-  and new codes disagree, so it needs a protocol/UI version, not a quiet edit.
+  strong, and the mismatch fails closed on the first message — a claim that used to be prose and is
+  now `DerivationMismatchTest`: mail sealed under the other derivation routes nothing, a retraction
+  retracts nothing, an upload sealed under it lands no file, and the same envelopes sealed under the
+  agreed derivation *do* work, so a green refusal cannot be a broken pipe. Driving the file path to
+  that point found one place where the claim was not true on its own: records are written as they
+  authenticate, so a stream that turned bad halfway left its authenticated prefix in the landing file,
+  kept readable only for as long as its caller remembered to delete it. `PairedMail.decryptUpload` now
+  removes the output it is refusing. Both directions are covered (`the refusal is the same whichever
+  half ended on v1`). What remains is the usability half of the same fact: the host already answers a
+  direct send with `delivered: false` when it could not authenticate the envelope
+  (`PulseDropServer.kt:451`), and the sender reads only `success` (`PairedMail.kt:199`) — so a
+  mismatched pair looks like it is working from the phone that sent, and relayed mail is dropped and
+  acknowledged without ever being read (`RelayClient.kt:130-133`). Saying so on screen is a sender-side
+  change, not a protocol change, since the field is already on the wire; it is deliberately not slipped
+  in here, because "your pairing has stopped working" is a user-visible behaviour that wants its own
+  decision about wording and about the peer build that omits the field.
 * the human comparison is still the authentication step. Six digits is a usability trade, and no
   test can prove the user looked.
 
