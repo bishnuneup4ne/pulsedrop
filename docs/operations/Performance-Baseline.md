@@ -168,8 +168,9 @@ asked for them to be revalidated rather than copied.
 
 ## What this batch changes
 
-Four fixes, each with a test that fails without it, all currently **uncommitted in the working
-tree** — nothing here is pushed, per the PRD's own rule that committing needs explicit approval.
+Four fixes, each with a test that fails without it, split into one PR per concern so each trade is
+approved or rejected on its own: #77 request discipline, #78 event admission, #79 main-thread UI,
+and this document with the probe as #80.
 
 | Change | Files | Test |
 | --- | --- | --- |
