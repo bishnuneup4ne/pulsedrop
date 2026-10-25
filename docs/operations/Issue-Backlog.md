@@ -256,7 +256,7 @@ screen to match.
 
 ## P1 — next release cycle
 
-### R-1 [partly fixed] `/api/webcall/up` has no bound on the body or decoded frames
+### R-1 [fixed] `/api/webcall/up` has no bound on the body or decoded frames
 `:1344-1359`: base64 batches are decoded and handed to the engine with no size cap; `parseBody` has
 already buffered the request. NanoHTTPD 2.3.1 has **no** ceiling of its own — it copies
 `Content-Length` bytes into a Java String for a JSON post, or into a file in `cacheDir` for a
@@ -287,11 +287,22 @@ relay's own budget with a 413 the sender cannot act on, instead of the relay's o
 it can. The dispatcher now has `RELAY_BODY_LIMIT` = four envelopes. The comment above that guard
 reasoned from an SDP offer — true of `/api/call/*`, and the reason 64 KiB looked generous — without
 noticing `/api/relay/*` shares the line.
-*Still open:* the per-frame and per-batch decoded-size caps and the bounded egress queue — a client
-inside the 256 KiB ceiling can still send many batches, and the frames are decoded without a bound on
-what one batch may expand to. **Frequency is now bounded** by a per-address token bucket in `serve()`
-(120 burst, 30/s) and a tighter one on presence writes; what remains open is decoded-size expansion,
-not how often a caller may ask.
+*Fixed in `security/web-media-limits`:* the decoded side now has its own caps, in `MediaLimits`.
+The web leg's `BatchParser` is constructed with a 1 MiB frame cap, so a declared 4 MiB frame is
+dropped instead of accumulated 190 KB at a time across posts; a batch above 64 frames is discarded
+whole (the shipped tab flushes three, or 24 after shedding a backlog); and per type, audio and control
+frames are held to 64 KiB while video may use the full 1 MiB. A JPEG is refused on its declared
+dimensions — 4 MPix — before `BitmapFactory` allocates, because a small file can name an enormous
+canvas; screen capture tops out at a 1920 px edge and 1080p camera at 2.1 MPix, so real media passes.
+The egress queue was already bounded (`LinkedBlockingQueue(96)` with the oldest frame dropped).
+*Also fixed here:* the 256 KiB body ceiling was too small for the client it guards. The tab sends a
+shared screen 1600 px wide at quality 0.75 and base64 costs a third more, so ordinary dense desktop
+frames were refused and screen share simply stopped mid-call. The ceiling is now 2 MiB, with the
+decoded caps above doing the work the byte count cannot.
+*Tests:* `FrameCodecTest` — a parser with a lowered cap drops an over-cap declaration, does not wait
+for its payload, and accepts a frame exactly at the cap. `MediaLimitsTest` — per-type boundaries and
+the pixel cap, including the largest square frame this app can capture. `ObjectScopeTest` still pins
+the pre-read 413.
 *One ceiling worth a second look, not changed without the owner:* `POST /api/messages` at 64 KiB is
 the smallest JSON ceiling on the app's most text-shaped route. The composer puts no `maxlength` on
 the message box and nothing clips `text` server-side, so pasting a log larger than ~60 K characters

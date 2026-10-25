@@ -45,7 +45,8 @@ anyone could act on.
   in JavaScript.
 - Frames go up with batched `POST /api/webcall/up` (base64, flushed every 100 ms) and arrive
   on a chunked `GET /api/webcall/down` stream — no WebRTC, no external STUN/TURN, works
-  fully offline.
+  fully offline. A batch is capped at 2 MiB, each decoded frame at 1 MiB (64 KiB for audio or
+  control), and a JPEG wider or taller than 4 MPix is refused before it is decoded.
 - The phone's `CallEngine` mixes every leg (app sockets + web clients) in a conference
   bridge, so phone and browser participants see each other.
 - Refreshing the page restores the call from `sessionStorage` and rejoins seamlessly.
