@@ -1290,6 +1290,19 @@ class PulseDropServer(
     }
 
     override fun serve(session: IHTTPSession): Response {
+        val response = dispatch(session)
+        // NanoHTTPD reads exactly Content-Length and then loops over the same stream, so bytes
+        // appended after a short body are parsed as the next request. Nothing upstream can inject
+        // them in this deployment, but a second request on a connection the tab already used is a
+        // desync primitive with no legitimate user. Ending the connection here discards the
+        // surplus; bodyless polling keeps connection reuse.
+        if (session.headers.keys.any { it == "content-length" || it == "transfer-encoding" }) {
+            response.closeConnection(true)
+        }
+        return response
+    }
+
+    private fun dispatch(session: IHTTPSession): Response {
         val uri = session.uri
         val method = session.method
         val requestIp = session.remoteIpAddress ?: "127.0.0.1"
