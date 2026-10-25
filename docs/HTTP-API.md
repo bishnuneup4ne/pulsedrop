@@ -236,6 +236,12 @@ The upload ceiling is measured per request rather than fixed, because the honest
 file may I send you" is "however much this phone has left". A volume that `StatFs` cannot measure falls
 back to 2 GiB rather than to unlimited.
 
+A per-request ceiling cannot see two requests at once, so both upload routes also reserve their
+declared length in one server-wide in-flight budget before `parseBody` and release it on every exit
+(including a refused or failed body). The sum of uploads alive at one moment therefore fits the
+volume. A request that would overflow that sum answers `503 Service Unavailable` with
+`Retry-After: 5`: the body itself is the right size, so it may succeed later.
+
 A client that *under*-declares `Content-Length` is not refused and is not read: `parseBody` stops at the
 declared count, so the remaining bytes stay in the socket to be parsed as the next pipelined request.
 

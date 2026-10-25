@@ -321,7 +321,7 @@ PIN guess (with the control that twelve distinct wrong guesses *are*), and a str
 `SESSION` route is refused for credentials before being told anything about size. Each is verified to fail when
 only its own rule is broken.
 
-### R-2 [partly fixed] Upload limits must hold *while streaming*
+### R-2 [fixed] Upload limits must hold *while streaming*
 `/upload` takes `?path=` from the query, has a free-space preflight and timestamp-suffix duplicate
 handling, but nothing bounded the *declared* length: a POST for a file larger than the phone has room
 for was buffered whole into `cacheDir` before `hasFreeSpaceFor` was asked whether the destination
@@ -351,27 +351,38 @@ could hold it. `/chatupload` had no preflight at all.
   binds. The match is deliberately narrow: `sanitizeFileName` trims leading dots, so no received name
   can look like a landing file, while `movie.part`, `.nomedia` and `.not-a-uuid.part` are left alone.
   `PartialUploadSweepTest` seeds each of those and proves both halves.
-*Still open, and it is not a small remainder:* per-client, per-concurrent and total quotas; the
-`?path=` collision policy is undecided — the second sender of one name gets a timestamp suffix when
-the first has already landed and the same name when it has not, and whether a collision should instead
-be a `409` is a response-shape question, not a security one; and the ceiling bounds the *declared*
-length only. That last point is weaker than it sounds in one direction and stronger in the other: a
-client that over-declares is refused, and a client that under-declares is not read at all —
-`parseBody` stops at `Content-Length`. The unconsumed bytes used to sit in the socket to be parsed as
-the next pipelined request; that half is closed by ending the connection after any request declaring
-a body (`R-11`), not by reading the surplus.
+*Fixed on `security/upload-sharing`:* the ceiling answers one request body, and two tabs could each
+declare less than it and together fill `cacheDir`, because both measured the volume before either
+wrote. `InFlightUploadBudget` reserves each admitted request's declared length before `parseBody`
+and releases it in a `finally` on every exit, so the sum of uploads alive at one moment fits what the
+volume can spare. A request that would overflow the shared budget answers `503` with `Retry-After: 5`
+— a retry, not a refusal, because the body itself is the right size. What the reservation trusts is
+still the *declared* length only: an under-declaring client is not read past it (`parseBody` stops at
+`Content-Length`), and the surplus-is-a-next-request half is R-11's, closed by ending the connection.
+*Collision policy, decided:* the existing behaviour stays. A name that already exists gets a
+timestamp suffix; two requests that picked one name before either landed both succeed and the last
+rename wins the name, with the bytes never interleaving (the `.uuid.part` landing already guarantees
+that). A `409` would cost a transfer, and the page has no rename/retry affordance to recover it;
+neither outcome is a security question. Per-client quotas are deliberately not added: one client can
+already reserve the whole budget with a single legitimate body, so splitting by address would add
+policy without shrinking the exposure — the shared sum is the invariant.
 *Tests:* `UploadCeilingTest` — declared length above the budget → 413 on `/upload` and `/chatupload`;
 a 40 MB body streamed against a 32 MiB budget is refused *and* the client could not finish pushing
 it, which is what proves the refusal precedes the read; an upload that fits still arrives byte for
 byte; a completed upload leaves no `.part`; an encrypted upload for an unknown pairing writes nothing
-anywhere; and the budget is `availableBytes - headroom`, floored, tested against `StatFs` rather
-than against the shadow's arithmetic. `FileNameAdversarialTest` — the traversal, control-character,
-header-injection, markup, bidirectional-override, over-long-name, blank-name, reserved-name and
-same-name-collision cases on `/upload?path=`, the same sanitizer's two other users
-(`/download-folder?path=` and `/chatupload?filename=`), and the symlink case that only the canonical
-check can answer. `PartialUploadSweepTest` — an orphaned landing file in the root and in a `?path=`
-subdirectory is gone after `start()`, while a finished upload, a name with no extension, `.nomedia`,
-`movie.part` and a `.uuid.part.txt` all survive.
+anywhere; the budget is `availableBytes - headroom`, floored, tested against `StatFs` rather than
+against the shadow's arithmetic; and (on `security/upload-sharing`) a 20 MiB upload held with an
+unfinished body reserves its length, a second 20 MiB upload against the same 32 MiB budget answers
+503, and the next upload is admitted once the held socket closes.
+`InFlightUploadBudgetTest` pins the arithmetic and that a release cannot create space that was never
+reserved. `FileNameAdversarialTest` — the traversal, control-character, header-injection, markup,
+bidirectional-override, over-long-name, blank-name, reserved-name and same-name-collision cases on
+`/upload?path=`, the same sanitizer's two other users (`/download-folder?path=` and
+`/chatupload?filename=`), the symlink case that only the canonical check can answer, and a race of two
+same-name uploads whose overlapped copies may take the name but never interleave bytes.
+`PartialUploadSweepTest` — an orphaned landing file in the root and in a `?path=` subdirectory is
+gone after `start()`, while a finished upload, a name with no extension, `.nomedia`, `movie.part`
+and a `.uuid.part.txt` all survive.
 
 ### R-3 [fixed] Unauthenticated typing presence is forgeable and fillable
 `/api/typing` POST took `sender` verbatim with no credential, and `typingSenders.remove(sender)` on

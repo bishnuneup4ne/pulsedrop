@@ -33,6 +33,7 @@ import android.os.StatFs
 class UploadCeilingTest {
 
     private val pin = "424242"
+    private var port = 0
     private lateinit var server: PulseDropServer
     private lateinit var http: RoomHttp
     private lateinit var token: String
@@ -40,7 +41,7 @@ class UploadCeilingTest {
 
     @Before
     fun startServer() {
-        val port = RoomHttp.freePort()
+        port = RoomHttp.freePort()
         server = PulseDropServer(
             port = port,
             bindAddress = "127.0.0.1",
@@ -122,6 +123,51 @@ class UploadCeilingTest {
             body = "a", declareContentLength = tooBig
         )
         assertEquals(413, answer.status)
+    }
+
+    @Test
+    fun `two uploads that each fit cannot spend the same free space twice`() {
+        // The cache volume is registered at the 32 MiB floor, so each declaration passes the
+        // per-request ceiling and the pair does not fit in the same budget. The first request is
+        // held with an unfinished body, which is precisely the overlap the ceiling cannot see.
+        val declared = 20L * 1024 * 1024
+        val held = java.net.Socket("127.0.0.1", port).apply { soTimeout = 2000 }
+        try {
+            held.getOutputStream().apply {
+                write(
+                    ("POST /upload?path=Held.bin HTTP/1.1\r\n" +
+                        "Host: 127.0.0.1:$port\r\n" +
+                        "X-Pulse-Auth: $token\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----held\r\n" +
+                        "Content-Length: $declared\r\n\r\n").toByteArray()
+                )
+                flush()
+            }
+            val admitted = System.currentTimeMillis() + 3000
+            while (server.uploadsInFlightBytes() != declared && System.currentTimeMillis() < admitted) {
+                Thread.sleep(10)
+            }
+            assertEquals(
+                "the admitted upload's declared length must be reserved",
+                declared, server.uploadsInFlightBytes()
+            )
+
+            val second = http.call(
+                "POST", "/upload?path=Second.bin",
+                mapOf("Content-Type" to "multipart/form-data; boundary=----x", "X-Pulse-Auth" to token),
+                body = "a", declareContentLength = declared.toInt()
+            )
+            assertEquals("both declared lengths cannot come out of one volume", 503, second.status)
+            assertTrue(second.body.contains("free space"))
+        } finally {
+            held.close()
+        }
+
+        val released = System.currentTimeMillis() + 3000
+        while (server.uploadsInFlightBytes() != 0L && System.currentTimeMillis() < released) Thread.sleep(10)
+        assertEquals("a closed upload must release its reservation", 0L, server.uploadsInFlightBytes())
+        val after = http.postMultipart("/upload?path=After.txt", mapOf("after.txt" to "ok"), token)
+        assertEquals("and the next upload must be admitted", 200, after.status)
     }
 
     @Test
