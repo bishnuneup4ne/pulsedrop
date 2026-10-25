@@ -271,7 +271,7 @@ part is the bound itself, which is what `WebOutboxTest` tests.
 
 | Change | Files | Test |
 | --- | --- | --- |
-| A revision stamped on every mutation of the room — an arrival, an in-place retraction, and the eviction retention causes — plus a generation for the visibility rules. | `server/PulseDropServer.kt` (`roomRev`, `entryRevs`, `visibilityEpoch`, `stampRoomLocked`, the `webThreads` setter) | `RoomCursorTest` — 8 tests |
+| A revision stamped on every mutation of the room — an arrival, an in-place retraction, and the eviction retention causes — plus a generation for the visibility rules. | `server/PulseDropServer.kt` (`roomRev`, `entryRevs`, `visibilityEpoch`, `stampRoomLocked`, the `webThreads` setter) | `RoomCursorTest` — 14 tests: 8 from `perf/room-cursor`, 3 asserting the claims that were only prose, 3 for the window below |
 | `GET /api/messages?since=<marker>` answers only the entries that moved and says so with `X-Room-Delta: 1`. A marker from another address, or from before a thread was opened, is refused and the room goes out whole. | same route (`roomScope`, `parseRoomCursor`) | `one address's cursor is not another address's`, `a thread opened after a cursor forces a whole read rather than a patch` |
 | The marker travels in `X-Room-Cursor`, so the array keeps the shape every reader already parses — a tab that sends no `since` gets exactly what it got before. | same | `a first read is the whole room and hands back a marker for the next one`, `the cursor carries no credential` |
 | The tab offers its marker and folds a patch into what it holds instead of replacing the room with the patch. | `server/WebClientHtml.kt` (`roomCursor`, `mergeRoomPatch`, `processMessages`) | `the tab folds a patch and replaces a whole room`; the one-reader rule in `WebClientRequestDisciplineTest` now matches the URL-as-variable shape |
@@ -282,10 +282,30 @@ retention evicts from the front so a position is not stable, and a retraction re
 it stands so a tail read leaves deleted words on the screen. The fourth is visibility, which changes
 what a tab may read without changing the room at all.
 
-What it costs, stated rather than left to be discovered: a patch is merged, not substituted, so a
-message the phone has dropped off its own 2,000 cap stays on a long-lived tab's screen until the room
-is read whole — a reload, a logout, or the phone opening or closing a thread. The alternative is
-replacing the list on every poll, which is the 517 KB this change exists to stop sending.
+What it costs, stated rather than left to be discovered: a patch is merged, not substituted. That
+particular cost turned out to be real and is closed by the next half.
+
+### Fifth half — the window a patch cannot describe (`perf/cursor-trim-watermark`)
+
+A marker says what the tab has *seen*; nothing in the answer says what the phone has *forgotten*. Past
+`SERVER_CHAT_RETENTION` every arrival retires the room's oldest entry, and that retirement is invisible
+to a tab holding a marker — the entry is not sent, because the marker already counts it as seen. So the
+tab's own list grows without bound and a bubble the phone dropped stays on the screen until the room is
+read whole again. Measured in a browser, one tab, 300 entries read and then 2000 added: the phone held
+2000, the tab held **2300**, and the retired entry was still on screen. The tab's memory and the room
+two readers disagree about are the whole of it; the bytes on the wire did not change.
+
+| Change | Files | Test |
+| --- | --- | --- |
+| The answer names the window it trims to: `X-Room-Window: 2000`. Additive, and a reader that ignores it behaves exactly as before. | `server/PulseDropServer.kt` (the `GET /api/messages` headers) | `the room tells a tab how much of it the phone keeps`, `a room past its cap retires entries the tab is still holding` |
+| The tab prunes to that window from the front — the same end the phone trims from — after folding a patch. Only a retired entry can fall outside it, because the tab's list is a subset of the room's, so this cannot drop a live message. | `server/WebClientHtml.kt` (`roomWindow`, `processMessages`, `mergeRoomPatch`'s comment) | `the tab prunes to the window the phone sent`; in the browser, `/tmp/pd_window_probe.py` — 7 checks, including that the two id sets end up equal and that the converging read was still a patch |
+
+Why not refuse the cursor at an eviction instead, which needs no new header: a cursor is minted as the
+room's head at read time, and an eviction after that read removes entries with *lower* revisions than
+the marker, so the marker alone cannot tell "trimmed before I read" from "trimmed after". Making it
+able to means a second generation counter, and above the cap the room slides on every message — every
+poll would be refused and go out whole, which is the 517 KB the cursor exists to stop sending. The
+window trades a number in a header for keeping the patch.
 
 ### Fifth half — which frame a stalled tab loses (`perf/audio-lanes`)
 
