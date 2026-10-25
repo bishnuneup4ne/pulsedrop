@@ -240,6 +240,19 @@ UI must not overstate it. Do **not** make a breaking transport change without st
 explicit mode and testing legacy clients.
 *Work:* honest status labels ("secure listener ready" ≠ "browser trusts this certificate"), one-tap
 stop/pause, optional strict mode that disables unpaired endpoints.
+*One label is fixed* (`ui/honest-call-note`): the answered browser-call sheet said "voice and video flow
+over the secure link", which is the word that covers encryption *and* identity while this phone can only
+promise encryption with a certificate nobody vouched for — and it trained the user to treat the one
+warning that would say "somebody else is answering for the phone" as an inconvenience. It now names both
+halves, and `WebCallScreenTest` keeps the phrase from coming back.
+*Measured narrowing of what is left:* the browser is already told the truth — `/api/info` carries
+`tlsUp` (`PulseDropServer.kt:1708`), the page hides "Secure mode" when it is false, and a tab refuses the
+camera on an insecure page. The phone is not: `tlsUp()` and `tlsError()` have no caller outside the
+server at all, so no phone-side screen can even ask which listener it is advertising — while Home's own
+header comment frames that page as "is the server up, what is the address" (`ui/screens/HomeScreen.kt:67`).
+Telling the user which of the two listeners the printed address is, and what `tlsError()` says when it
+is not the encrypted one, is the remaining label work — and the "stop/pause" and "strict mode" items
+above are still UI and policy decisions for the owner, not tests.
 
 ### S-8 [decided: upload-only] A paired sender can upload but cannot read its own traffic
 
