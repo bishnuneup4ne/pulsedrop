@@ -759,6 +759,12 @@ class PulseDropServer(
 
     private val pinAttempts = mutableMapOf<String, PinAttempts>()
 
+    /** Shared by both listeners: the TLS delegate calls this instance's `serve`. */
+    private val inFlightUploads = InFlightUploadBudget()
+
+    /** What admitted uploads currently promise to write; a leak here would refuse later uploads. */
+    internal fun uploadsInFlightBytes(): Long = inFlightUploads.reservedBytes()
+
     /**
      * Chat attachments live here instead of [sharedFiles]: a file sent in a conversation
      * stays in that conversation and never shows up in hosted files, history or stats.
@@ -1329,6 +1335,21 @@ class PulseDropServer(
             "{\"success\":false,\"error\":\"Too many requests\"}"
         )
         res.addHeader("Retry-After", "1")
+        res.addHeader("Cache-Control", "no-store")
+        return res
+    }
+
+    /**
+     * The volume cannot spare this body while the uploads already admitted are still paying for
+     * theirs. This is not the sender's fault, so it is a retry rather than a refusal.
+     */
+    private fun uploadsBusy(): Response {
+        val res = newFixedLengthResponse(
+            Response.Status.SERVICE_UNAVAILABLE,
+            "application/json",
+            "{\"success\":false,\"error\":\"Another upload is already using the free space\"}"
+        )
+        res.addHeader("Retry-After", "5")
         res.addHeader("Cache-Control", "no-store")
         return res
     }
@@ -2309,18 +2330,35 @@ class PulseDropServer(
         }
     }
 
+    /**
+     * Admits the declared length before NanoHTTPD buffers anything and releases it on every exit.
+     * The per-request ceiling alone lets two tabs each spend the same free space, because both see
+     * the volume as it was before either wrote; this reservation is the sum that keeps the pair from
+     * filling it. `0` for a request that is already refused by the ceiling, which is cheap.
+     */
     private fun handleFileUpload(session: IHTTPSession): Response {
+        // The body is buffered whole in `cacheDir` by `parseBody`, so this is the last moment the
+        // phone can decline it cheaply. `hasFreeSpaceFor` below guards the *destination*; this
+        // guards the temporary copy, which is a second full-size file on a different volume and
+        // the one that was never bounded at all.
+        val budget = uploadBudgetBytes(context.cacheDir)
+        bodyTooLarge(session, budget)?.let { return it }
+        val declared = session.headers["content-length"]?.trim()?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        if (!inFlightUploads.reserve(declared, budget)) return uploadsBusy()
+        return try {
+            handleFileUploadBody(session)
+        } finally {
+            inFlightUploads.release(declared)
+        }
+    }
+
+    private fun handleFileUploadBody(session: IHTTPSession): Response {
         val transferId = UUID.randomUUID().toString()
         val clientIp = session.remoteIpAddress ?: "127.0.0.1"
         // Declared outside the try so the catch can remove a partially written file.
         var finalFile: File? = null
 
         return try {
-            // The body is buffered whole in `cacheDir` by `parseBody`, so this is the last moment the
-            // phone can decline it cheaply. `hasFreeSpaceFor` below guards the *destination*; this
-            // guards the temporary copy, which is a second full-size file on a different volume and
-            // the one that was never bounded at all.
-            bodyTooLarge(session, uploadBudgetBytes(context.cacheDir))?.let { return it }
             val filesMap = HashMap<String, String>()
             session.parseBody(filesMap)
 
@@ -2514,8 +2552,19 @@ class PulseDropServer(
 
     /** Browser-side chat upload: identical bytes, but registered only as a chat attachment. */
     private fun handleChatUpload(session: IHTTPSession): Response {
+        val budget = uploadBudgetBytes(context.cacheDir)
+        bodyTooLarge(session, budget)?.let { return it }
+        val declared = session.headers["content-length"]?.trim()?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        if (!inFlightUploads.reserve(declared, budget)) return uploadsBusy()
         return try {
-            bodyTooLarge(session, uploadBudgetBytes(context.cacheDir))?.let { return it }
+            handleChatUploadBody(session)
+        } finally {
+            inFlightUploads.release(declared)
+        }
+    }
+
+    private fun handleChatUploadBody(session: IHTTPSession): Response {
+        return try {
             val filesMap = HashMap<String, String>()
             session.parseBody(filesMap)
             val entry = filesMap.entries.firstOrNull { it.key != "postData" }
