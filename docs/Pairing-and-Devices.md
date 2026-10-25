@@ -92,6 +92,13 @@ Pairing runs ECDH; both sides then derive the same AES-256-GCM key from the shar
 secret is never stored — it is re-derived at runtime, which is why a pairing survives an app update
 but not a key change.
 
+**Trust is not access to the room.** The pairing secret is accepted on `/upload` only
+(`pairedSenderIsAuthorized`): a paired phone can send this phone a file without knowing the PIN, but
+it cannot list files, read messages or threads, or mint a browser session. A browser tab is a
+separate credential with its own lifetime (`Security-Model.md`). The Devices screen and the Help
+answer say this in as many words, because "trusted device" would otherwise read as access to
+everything.
+
 **Which derivation is used is decided once, by the device accepting the request**, and then
 frozen for the life of that pair:
 

@@ -158,7 +158,10 @@ class ObjectScopeTest {
             body = "A".repeat(1024),
             declareContentLength = 400_000_000
         )
-        assertEquals("256 KiB is the ceiling for a ~10 Hz frame batch", 413, answer.status)
+        assertEquals(
+            "one frame batch is capped, and 400 MB is not one",
+            413, answer.status
+        )
     }
 
     @Test
