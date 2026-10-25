@@ -23,6 +23,10 @@ behind the escaping and constant-markup rules, not a replacement for them. HSTS 
 certificate is process-lifetime and self-signed, and the host is usually an IP literal, for which a
 pinned origin would only make the browser warning unskippable.
 
+Each listener admits at most 256 open handlers; a connection beyond that is closed instead of being
+given a thread, and its slot returns when the socket closes. A phone on the LAN can therefore open
+connections, but it cannot turn them into unbounded threads.
+
 ## PIN
 
 - 4 digits, optional, enforced **per client IP**.

@@ -233,7 +233,11 @@ certificate is self-signed and process-lifetime, and the host is usually an IP l
 not apply HSTS to IP-address hosts, and where they did, pinning the origin would make the one-time
 certificate warning non-bypassable and each app restart's new certificate unreachable. Read timeouts
 are already present — NanoHTTPD applies `SO_TIMEOUT` (5 s) to accepted sockets when the server
-starts. Concurrent-request caps are still open; backlog R-6 carries that remainder.
+starts — and concurrency is bounded per listener: `BoundedAsyncRunner` admits at most
+`MAX_CONCURRENT_REQUESTS` (256) handlers and closes a connection beyond that instead of giving it a
+thread, with the slot released when the handler's socket closes. `RequestConcurrencyTest` holds the
+only slot with a declared body that never arrives, observes the next connection closed, and gets a
+200 again once the held socket closes. Streaming quotas remain with R-2.
 
 No URL credential outlives its purpose any more: a ticket is minutes long, names one object, and
 belongs to one address. `Referrer-Policy: no-referrer` now applies to the whole origin, so a

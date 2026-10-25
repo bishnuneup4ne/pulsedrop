@@ -116,6 +116,52 @@ private const val WEB_CLIENT_CSP =
         "form-action 'none'; " +
         "frame-ancestors 'none'"
 
+/**
+ * NanoHTTPD accepts a socket and hands it to its own thread, then that thread lives for the whole
+ * connection (5 s idle after the last response, and as long as an SSE tab stays open). A LAN peer
+ * that opens connections and never writes would otherwise turn each one into a thread; the
+ * per-address limiter counts requests and cannot see a socket that never sends one. This ceiling is
+ * far above what a household of tabs and calls holds at once and far below what exhausts a phone.
+ */
+internal const val MAX_CONCURRENT_REQUESTS = 256
+
+/**
+ * Replaces [NanoHTTPD.DefaultAsyncRunner] only to refuse a connection once [MAX_CONCURRENT_REQUESTS]
+ * are already open. The refusal is a close, not an HTTP answer: building a response would need the
+ * thread the cap exists to avoid, and overload is the one case where the client is not owed a body.
+ * Below the ceiling this behaves exactly like the default runner, and `closed` runs from the
+ * handler's own `finally`, so a slot is released when the socket is.
+ */
+internal class BoundedAsyncRunner(
+    private val limit: Int = MAX_CONCURRENT_REQUESTS
+) : NanoHTTPD.AsyncRunner {
+
+    private val running = java.util.concurrent.ConcurrentHashMap.newKeySet<NanoHTTPD.ClientHandler>()
+    private var spawned = 0L
+
+    override fun exec(code: NanoHTTPD.ClientHandler) {
+        // `exec` is called from the single accept thread, so the size check and the add are not
+        // racing each other; `closed` removing concurrently is what the set is for.
+        if (running.size >= limit) {
+            code.close()
+            return
+        }
+        running.add(code)
+        val number = ++spawned
+        Thread(code, "PulseDrop-http-$number").apply { isDaemon = true }.start()
+    }
+
+    override fun closed(code: NanoHTTPD.ClientHandler) {
+        running.remove(code)
+    }
+
+    override fun closeAll() {
+        val open = running.toList()
+        for (handler in open) handler.close()
+        running.clear()
+    }
+}
+
 /** Types a browser renders as a document, where script would run if the file were navigated to. */
 private val ACTIVE_DOCUMENT_TYPES = setOf(
     "text/html",
@@ -175,6 +221,11 @@ class PulseDropServer(
 
     fun attachListener(newListener: ServerTransferListener) {
         listener = newListener
+    }
+
+    // Both listeners get their own counter, because a browser on the TLS port opens its own sockets.
+    init {
+        setAsyncRunner(BoundedAsyncRunner())
     }
 
     @Volatile
@@ -1005,6 +1056,7 @@ class PulseDropServer(
                         }
                     }
                     delegate.tempFileManagerFactory = androidTempFiles()
+                    delegate.setAsyncRunner(BoundedAsyncRunner())
                     delegate.makeSecure(factory, null)
                     delegate.start(SOCKET_READ_TIMEOUT, false)
                     if (tlsStopped) {
